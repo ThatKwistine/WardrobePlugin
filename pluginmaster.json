@@ -1,0 +1,21 @@
+[
+  {
+    "Author":             "ThatKwistine",
+    "Name":               "Wardrobe",
+    "InternalName":       "WardrobePlugin",
+    "AssemblyVersion":    "1.0.0.0",
+    "TestingAssemblyVersion": "1.0.0.0",
+    "Description":        "A visual wardrobe for Penumbra mods. Each entry targets a single equipment slot, so you can wear or unwear exactly what you want without disturbing the rest of your look. Handles items spanning several mods, mod option groups, hair and other customisation mods, image previews, tags, favourites, search and sort, and automated screenshot sessions.",
+    "Punchline":          "Per-slot wardrobe for Penumbra mods, with image previews.",
+    "ApplicableVersion":  "any",
+    "DalamudApiLevel":    15,
+    "LoadRequiredState":  0,
+    "Tags":               ["glamourer", "penumbra", "mods", "glamour", "wardrobe"],
+    "RepoUrl":            "https://github.com/ThatKwistine/WardrobePlugin",
+    "IconUrl":            "https://raw.githubusercontent.com/ThatKwistine/WardrobePlugin/main/images/icon.png",
+    "DownloadLinkInstall": "https://github.com/ThatKwistine/WardrobePlugin/releases/latest/download/latest.zip",
+    "DownloadLinkUpdate":  "https://github.com/ThatKwistine/WardrobePlugin/releases/latest/download/latest.zip",
+    "DownloadLinkTesting": "https://github.com/ThatKwistine/WardrobePlugin/releases/latest/download/latest.zip",
+    "DownloadCount":      0
+  }
+]

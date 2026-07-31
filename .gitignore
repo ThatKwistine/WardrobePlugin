@@ -1,0 +1,20 @@
+# Build output
+bin/
+obj/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+*.user
+*.suo
+*.userprefs
+
+# OS noise
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Crash dumps and packs, in case one is ever saved into the project
+*.dmp
+*.tspack
