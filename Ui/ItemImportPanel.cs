@@ -65,6 +65,9 @@ public class ItemImportPanel : IDisposable
     // Held separately so Cancel discards the change like every other edit-mode field.
     private readonly List<string> _editModCollections = new();
 
+    // Manual game-item search in edit mode
+    private string _itemSearch = string.Empty;
+
     // Single-select group → selected option index
     private readonly Dictionary<string, int> _groupSelections = new();
     // Multi-select (checkbox) group → set of checked option names
@@ -316,6 +319,9 @@ public class ItemImportPanel : IDisposable
             ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f), "No game item detected — Glamourer won't apply on Wear.");
         }
 
+        if (_editTarget != null && !_editTarget.Slot.IsCustomization())
+            DrawManualItemPicker(_editTarget);
+
         ImGui.SameLine();
         if (ImGui.SmallButton("Re-detect"))
             TryRedetectItem(_editTarget!);
@@ -503,6 +509,64 @@ public class ItemImportPanel : IDisposable
         {
             Close();
             return;
+        }
+    }
+
+    /// <summary>
+    /// Search-and-assign for the game item, when detection could not find one or found the wrong one.
+    /// </summary>
+    /// <remarks>
+    /// Some mods skin an existing item rather than replacing a model — piercings and similar are
+    /// often hung on an Emperor's New piece because it is invisible. Those are only visible while
+    /// that exact item is equipped, so the item has to be set by hand for Wear to work.
+    /// </remarks>
+    private void DrawManualItemPicker(WardrobeItem item)
+    {
+        if (!ImGui.CollapsingHeader("Set game item manually")) return;
+
+        ImGui.TextDisabled($"Searches equippable {item.Slot.DisplayName()} items.");
+        ImGui.TextDisabled("Use this for mods that skin an existing item, such as a");
+        ImGui.TextDisabled("piercing attached to an Emperor's New piece.");
+        ImGui.Spacing();
+
+        ImGui.SetNextItemWidth(-1);
+        ImGui.InputTextWithHint("##itemsearch", "Type at least 2 characters…", ref _itemSearch, 128);
+
+        var results = _itemLookup.SearchItems(_itemSearch, item.Slot);
+        if (results.Count == 0)
+        {
+            if (_itemSearch.Trim().Length >= 2)
+                ImGui.TextDisabled("No matching items for this slot.");
+            return;
+        }
+
+        ImGui.Spacing();
+        if (ImGui.BeginChild("##itemresults", new Vector2(-1, 160), true))
+        {
+            foreach (var (id, name) in results)
+            {
+                if (ImGui.Selectable($"{name}##pick_{id}", id == item.GlamourerItemId))
+                {
+                    item.GlamourerItemId   = id;
+                    item.GlamourerItemName = name;
+                    _config.Save();
+                    _log.Debug($"[Wardrobe] Edit: '{item.Name}' game item set manually to '{name}' (id={id})");
+                }
+            }
+        }
+        ImGui.EndChild();
+
+        if (item.GlamourerItemId.HasValue)
+        {
+            if (ImGui.SmallButton("Clear game item"))
+            {
+                item.GlamourerItemId   = null;
+                item.GlamourerItemName = null;
+                _config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Wear will stop equipping anything for this item,\n" +
+                                 "and Unwear will leave the slot alone.");
         }
     }
 

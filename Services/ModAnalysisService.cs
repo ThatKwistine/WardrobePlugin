@@ -46,6 +46,11 @@ public class ModAnalysisService
         new(@"chara/human/c\d+/obj/(hair|face|tail|zear|body)/",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // chara/common/...  — textures shared across every character: piercings, tattoos, face paints,
+    // decals. Tied to no slot at all, so they land in EquipSlot.Other.
+    private static readonly Regex CommonPattern =
+        new(@"chara/common/", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -91,6 +96,12 @@ public class ModAnalysisService
         }
 
         slots.Remove(EquipSlot.Unknown);
+
+        // chara/common files are usually supporting assets for a real equipment mod — a shared ID
+        // texture shipped alongside an accessory model, for instance. Only treat them as a slot in
+        // their own right when nothing else was found, or every such mod gains a phantom Other slot.
+        if (slots.Count > 1) slots.Remove(EquipSlot.Other);
+
         return new ModAnalysisResult(slots, groups, setIds);
     }
 
@@ -212,7 +223,11 @@ public class ModAnalysisService
                 _      => EquipSlot.Unknown,
             };
             slots.Add(slot);
+            return;
         }
+
+        if (CommonPattern.IsMatch(gamePath))
+            slots.Add(EquipSlot.Other);
     }
 
     // ── JSON POCOs ────────────────────────────────────────────────────────────

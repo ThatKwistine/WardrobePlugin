@@ -1389,6 +1389,15 @@ public class PluginUi : Window, IDisposable
                 $"'{_config.DefaultCollection}' was not found in Penumbra.");
         }
 
+        // Easily the most common reason an item "does nothing": the mod enables successfully, in a
+        // collection the character is not using. Nothing looks wrong anywhere, so it needs saying.
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f), "This must match your character's collection.");
+        ImGui.TextDisabled("In Penumbra, check Collections → Your Character to see which");
+        ImGui.TextDisabled("collection applies (and whether an Individual Assignment");
+        ImGui.TextDisabled("overrules it). A mod enabled in any other collection will");
+        ImGui.TextDisabled("enable without error and simply never appear.");
+
         ImGui.Spacing();
 
         var hideImported = _config.HideImportedMods;

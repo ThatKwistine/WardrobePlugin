@@ -48,6 +48,46 @@ public class ItemLookupService
         return results;
     }
 
+    private string _lastSearchKey = string.Empty;
+    private IList<(ulong ItemId, string ItemName)> _lastSearchResults = Array.Empty<(ulong, string)>();
+
+    /// <summary>
+    /// Searches equippable items by name for a slot, for manually assigning the game item when
+    /// detection cannot find one.
+    /// </summary>
+    /// <remarks>
+    /// Needed for mods that skin a specific existing item rather than replacing a model — a
+    /// piercing hung on "The Emperor's New Ring", for instance. Such a mod is only visible while
+    /// that item is equipped, so the wardrobe has to know to equip it.
+    /// Results are capped and cached by query, since this scans the whole Item sheet.
+    /// </remarks>
+    public IList<(ulong ItemId, string ItemName)> SearchItems(string query, EquipSlot slot, int limit = 60)
+    {
+        if (_items == null || string.IsNullOrWhiteSpace(query) || query.Trim().Length < 2)
+            return Array.Empty<(ulong, string)>();
+
+        var trimmed = query.Trim();
+        var key     = $"{slot}|{trimmed}";
+        if (key == _lastSearchKey) return _lastSearchResults;
+
+        var results = new List<(ulong, string)>();
+        foreach (var item in _items)
+        {
+            if (!MatchesSlot(item, slot)) continue;
+
+            var name = item.Name.ExtractText();
+            if (string.IsNullOrEmpty(name)) continue;
+            if (name.IndexOf(trimmed, StringComparison.OrdinalIgnoreCase) < 0) continue;
+
+            results.Add(((ulong)item.RowId, name));
+            if (results.Count >= limit) break;
+        }
+
+        _lastSearchKey     = key;
+        _lastSearchResults = results;
+        return results;
+    }
+
     /// <summary>Returns the best single match (first result), or null if none found.</summary>
     public (ulong ItemId, string ItemName)? FindBestItem(ushort equipSetId, EquipSlot slot)
     {

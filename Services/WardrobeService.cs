@@ -187,8 +187,14 @@ public class WardrobeService : IDisposable
         return success;
     }
 
-    public void UnwearItem(WardrobeItem item, bool save = true)
+    /// <param name="redraw">
+    /// Force a Penumbra redraw when nothing else will refresh the character. Callers that unwear
+    /// several items, or immediately wear another, pass false and redraw once themselves.
+    /// </param>
+    public void UnwearItem(WardrobeItem item, bool save = true, bool redraw = true)
     {
+        var disabledAny = false;
+
         foreach (var mod in item.Mods)
         {
             if (string.IsNullOrEmpty(mod.ModDirectory)) continue;
@@ -201,8 +207,8 @@ public class WardrobeService : IDisposable
                     m.ModDirectory == mod.ModDirectory &&
                     string.Equals(m.Collection, mod.Collection, StringComparison.OrdinalIgnoreCase)));
 
-            if (!stillNeeded)
-                _penumbra.SetModEnabled(mod.Collection, mod.ModDirectory, mod.ModName, false);
+            if (!stillNeeded && _penumbra.SetModEnabled(mod.Collection, mod.ModDirectory, mod.ModName, false))
+                disabledAny = true;
         }
 
         var slotKey = item.Slot.ToString();
@@ -210,19 +216,37 @@ public class WardrobeService : IDisposable
             _config.WornItems.Remove(slotKey);
 
         // Set the slot to the Emperor's New item so it appears empty in Glamourer.
-        // Customisation slots have no equipped item — disabling the mod above is the whole revert.
-        if (item.Slot != EquipSlot.Unknown && !item.Slot.IsCustomization())
+        //
+        // Only ever revert a slot this item actually set. Without the GlamourerItemId check, a mod
+        // with no detected game item — a piercing, a tattoo, anything the user had to assign a slot
+        // to by hand — would empty a slot it never filled, removing real gear the user was wearing.
+        //
+        // Worse, many such mods attach themselves to an Emperor's New item precisely because it is
+        // invisible, so "emptying" the slot equips the very item the mod replaces.
+        var swappedItem = false;
+        if (item.Slot != EquipSlot.Unknown && !item.Slot.IsCustomization() && item.GlamourerItemId.HasValue)
         {
             var emperorsId = ItemLookupService.FindEmperorsNewItem(item.Slot);
             if (emperorsId.HasValue)
             {
                 _log.Debug($"[Wardrobe] UnwearItem: setting slot {item.Slot} to Emperor's New (id={emperorsId.Value})");
                 _glamourer.SetItem(item.Slot, emperorsId.Value);
+                swappedItem = true;
             }
             else
             {
                 _log.Warning($"[Wardrobe] UnwearItem: no Emperor's New item found for slot {item.Slot}");
             }
+        }
+
+        // Turning a redirection off does not reload anything already on the character. Swapping the
+        // Glamourer item normally forces that reload as a side effect, but a mod with no item to
+        // swap — hair, skin, or a shared texture like a piercing — would otherwise stay visible
+        // until something else redrew the character.
+        if (redraw && disabledAny && !swappedItem)
+        {
+            _log.Debug($"[Wardrobe] UnwearItem: redrawing for '{item.Name}' — no Glamourer item swap to force a reload");
+            _penumbra.RedrawPlayer();
         }
 
         if (save)

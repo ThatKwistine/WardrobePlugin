@@ -24,6 +24,12 @@ public enum EquipSlot
     Tail      = 22,
     VieraEars = 23,
     Skin      = 24,
+
+    /// <summary>
+    /// A mod that is not tied to any equipment slot — shared character textures such as
+    /// piercings, tattoos and face paints (chara/common/...). Wearing it simply toggles the mod.
+    /// </summary>
+    Other     = 25,
 }
 
 /// <summary>Icon set used to represent equipment slots. Values are persisted, so do not renumber.</summary>
@@ -54,6 +60,7 @@ public static class EquipSlotEx
         EquipSlot.Tail      => "Tail",
         EquipSlot.VieraEars => "Ears (Viera)",
         EquipSlot.Skin      => "Skin",
+        EquipSlot.Other     => "Other",
         _                   => "Unknown",
     };
 
@@ -63,7 +70,8 @@ public static class EquipSlotEx
     /// wearing one is purely a matter of enabling its Penumbra mod.
     /// </summary>
     public static bool IsCustomization(this EquipSlot s) => s is
-        EquipSlot.Hair or EquipSlot.Face or EquipSlot.Tail or EquipSlot.VieraEars or EquipSlot.Skin;
+        EquipSlot.Hair or EquipSlot.Face or EquipSlot.Tail or EquipSlot.VieraEars or EquipSlot.Skin
+        or EquipSlot.Other;
 
     public static readonly EquipSlot[] All =
     {
