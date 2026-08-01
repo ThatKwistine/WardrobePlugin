@@ -115,7 +115,9 @@ Outfit cards are drawn larger than item cards by default, since outfit previews 
 full-body shots rather than close-ups. **Large cards** turns that off to match the item grid.
 
 The edit panel lists every item in the outfit as a row with a small thumbnail, its name and slot,
-an **Equip / Unequip** toggle so pieces can be tried individually, and **Remove from outfit**. An
+an **Equip / Unequip** toggle so pieces can be tried individually, a **+ Dye** button that equips
+the piece with its configured dyes without wearing the rest of the outfit, and **Remove from
+outfit**. An
 **Add to outfit** picker at the bottom adds any wardrobe item not already in it, searchable by name.
 
 Each row also carries **Dye 1** and **Dye 2** pickers, listing the game's dyes with a colour swatch

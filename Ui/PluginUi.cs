@@ -1943,6 +1943,8 @@ public class PluginUi : Window, IDisposable
             ImGui.SetCursorPos(new Vector2(top.X + rowThumb + 8, top.Y + ImGui.GetTextLineHeightWithSpacing() * 2 + 2));
 
             var customization = item.Slot.IsCustomization();
+            var rowDye        = WardrobeService.GetDye(outfit, item.Id);
+
             if (worn)
             {
                 ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.55f, 0.08f, 0.08f, 1f));
@@ -1960,6 +1962,21 @@ public class PluginUi : Window, IDisposable
                 ImGui.PopStyleColor(2);
             }
 
+            // Plain Equip deliberately leaves the piece undyed, so the dyes can be judged against
+            // the bare item. This applies the outfit's dyes without wearing the whole outfit.
+            if (rowDye != null)
+            {
+                ImGui.SameLine();
+                ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.18f, 0.32f, 0.5f, 1f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.24f, 0.44f, 0.68f, 1f));
+                if (ImGui.SmallButton("+ Dye"))
+                    _wardrobe.WearItem(item, rowDye);
+                ImGui.PopStyleColor(2);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Equip this item with the dyes set below,\n" +
+                                     "without wearing the rest of the outfit.");
+            }
+
             ImGui.SameLine();
             if (ImGui.SmallButton("Remove from outfit"))
                 removeId = item.Id;
@@ -1975,9 +1992,8 @@ public class PluginUi : Window, IDisposable
             }
             else
             {
-                var dye = WardrobeService.GetDye(outfit, item.Id);
-                var s1  = dye?.Stain1 ?? 0;
-                var s2  = dye?.Stain2 ?? 0;
+                var s1 = rowDye?.Stain1 ?? 0;
+                var s2 = rowDye?.Stain2 ?? 0;
 
                 var half   = (ImGui.GetContentRegionAvail().X - 8) / 2;
                 var dyeTop = ImGui.GetCursorPos();
