@@ -42,11 +42,18 @@ public class WardrobeService : IDisposable
     {
         if (_config.WornItems.Count == 0) return;
 
+        // Re-apply the active outfit's dyes as well, or a redraw would strip them back to undyed
+        var outfit = _activeOutfitId is { } activeId
+            ? _config.Outfits.Find(o => o.Id == activeId)
+            : null;
+
         foreach (var itemId in _config.WornItems.Values.ToList())
         {
             var item = _config.WardrobeItems.Find(x => x.Id == itemId);
-            if (item?.GlamourerItemId.HasValue == true)
-                _glamourer.SetItem(item.Slot, item.GlamourerItemId.Value);
+            if (item?.GlamourerItemId is not { } glamId) continue;
+
+            var dye = outfit != null ? GetDye(outfit, item.Id) : null;
+            _glamourer.SetItem(item.Slot, glamId, dye?.Stain1 ?? 0, dye?.Stain2 ?? 0);
         }
     }
 
@@ -55,7 +62,7 @@ public class WardrobeService : IDisposable
     /// async resource reload completing after the initial SetItem call.
     /// Stops early if the item is unequipped between retries.
     /// </summary>
-    private void ScheduleGlamourerReapply(EquipSlot slot, ulong glamId, Guid itemId)
+    private void ScheduleGlamourerReapply(EquipSlot slot, ulong glamId, Guid itemId, byte stain1, byte stain2)
     {
         _ = Task.Run(async () =>
         {
@@ -66,14 +73,14 @@ public class WardrobeService : IDisposable
                 await Task.Delay(delayMs);
                 if (!_config.WornItems.TryGetValue(slot.ToString(), out var curId) || curId != itemId)
                     return; // item was unequipped in the meantime
-                await _framework.RunOnFrameworkThread(() => _glamourer.SetItem(slot, glamId));
+                await _framework.RunOnFrameworkThread(() => _glamourer.SetItem(slot, glamId, stain1, stain2));
             }
         });
     }
 
     // ── Wardrobe items ────────────────────────────────────────────────────────
 
-    public bool WearItem(WardrobeItem item)
+    public bool WearItem(WardrobeItem item, OutfitDye? dye = null)
     {
         var slotKey = item.Slot.ToString();
         _log.Debug($"[Wardrobe] WearItem '{item.Name}' slot={slotKey} glamItemId={item.GlamourerItemId?.ToString() ?? "null"} ({item.GlamourerItemName ?? "no name"})");
@@ -103,10 +110,13 @@ public class WardrobeService : IDisposable
         // snapshots its current state to re-apply when the reload completes.
         // Calling SetItem first ensures our item choice is in that snapshot, so the
         // post-reload re-apply shows the correct item instead of Emperor's New.
+        var stain1 = dye?.Stain1 ?? 0;
+        var stain2 = dye?.Stain2 ?? 0;
+
         if (item.GlamourerItemId.HasValue)
         {
             _log.Debug($"[Wardrobe]   Calling Glamourer.SetItem (pre-enable) slot={item.Slot} itemId={item.GlamourerItemId.Value} name='{item.GlamourerItemName}'");
-            if (!_glamourer.SetItem(item.Slot, item.GlamourerItemId.Value))
+            if (!_glamourer.SetItem(item.Slot, item.GlamourerItemId.Value, stain1, stain2))
                 _log.Warning($"[Wardrobe] Glamourer SetItem returned non-zero for '{item.Name}'");
             else
                 _log.Debug($"[Wardrobe]   Glamourer.SetItem (pre-enable) succeeded");
@@ -160,7 +170,7 @@ public class WardrobeService : IDisposable
         if (item.GlamourerItemId.HasValue)
         {
             _log.Debug($"[Wardrobe]   Calling Glamourer.SetItem (post-enable) slot={item.Slot} itemId={item.GlamourerItemId.Value}");
-            if (!_glamourer.SetItem(item.Slot, item.GlamourerItemId.Value))
+            if (!_glamourer.SetItem(item.Slot, item.GlamourerItemId.Value, stain1, stain2))
                 _log.Warning($"[Wardrobe] Glamourer SetItem (post-enable) returned non-zero for '{item.Name}'");
             else
                 _log.Debug($"[Wardrobe]   Glamourer.SetItem succeeded");
@@ -182,7 +192,7 @@ public class WardrobeService : IDisposable
         // and causes Glamourer to re-apply its prior design state, undoing our SetItem call.
         // Schedule repeated re-applies on the framework thread to win that race.
         if (anyNewlyEnabled && item.GlamourerItemId.HasValue)
-            ScheduleGlamourerReapply(item.Slot, item.GlamourerItemId.Value, item.Id);
+            ScheduleGlamourerReapply(item.Slot, item.GlamourerItemId.Value, item.Id, stain1, stain2);
 
         _config.Save();
         WardrobeChanged?.Invoke();
@@ -472,77 +482,126 @@ public class WardrobeService : IDisposable
         return added;
     }
 
-    // ── Legacy outfit system ──────────────────────────────────────────────────
+    // ── Outfits ───────────────────────────────────────────────────────────────
 
-    public bool WearOutfit(Outfit outfit)
+    // Last outfit worn, so redraws can re-apply its dyes. Not persisted: it only describes what is
+    // on the character right now, and Glamourer state does not survive a restart either.
+    private Guid? _activeOutfitId;
+
+    /// <summary>Dye configured for an item within an outfit, or null when undyed.</summary>
+    public static OutfitDye? GetDye(Outfit outfit, Guid itemId) =>
+        outfit.Dyes.TryGetValue(itemId.ToString(), out var dye) && !dye.IsUndyed ? dye : null;
+
+    /// <summary>Sets or clears an item's dye within an outfit.</summary>
+    public void SetDye(Outfit outfit, Guid itemId, byte stain1, byte stain2)
     {
-        if (_config.CurrentlyWornOutfitId.HasValue &&
-            _config.CurrentlyWornOutfitId.Value != outfit.Id)
-            UnequipCurrentOutfit(revertGlamourer: false);
+        var key = itemId.ToString();
+        if (stain1 == 0 && stain2 == 0)
+            outfit.Dyes.Remove(key);
+        else
+            outfit.Dyes[key] = new OutfitDye { Stain1 = stain1, Stain2 = stain2 };
 
-        var success = true;
-
-        if (!string.IsNullOrEmpty(outfit.PenumbraModDirectory))
-        {
-            _penumbra.ApplyModSettings(outfit.PenumbraCollection, outfit.PenumbraModDirectory,
-                outfit.Name, outfit.ModSettings);
-
-            if (!_penumbra.SetModEnabled(outfit.PenumbraCollection, outfit.PenumbraModDirectory,
-                outfit.Name, outfit.ModEnabled))
-            {
-                _log.Warning($"[Wardrobe] Failed to set mod state for outfit '{outfit.Name}'");
-                success = false;
-            }
-        }
-
-        if (!string.IsNullOrEmpty(outfit.GlamourerStateBase64))
-        {
-            if (!_glamourer.ApplyState(outfit.GlamourerStateBase64))
-            {
-                _log.Warning($"[Wardrobe] Failed to apply Glamourer state for '{outfit.Name}'");
-                success = false;
-            }
-        }
-
-        outfit.IsCurrentlyWorn        = success;
-        _config.CurrentlyWornOutfitId = success ? outfit.Id : null;
-        _config.Save();
-        return success;
-    }
-
-    public void UnequipCurrentOutfit(bool revertGlamourer = true)
-    {
-        if (!_config.CurrentlyWornOutfitId.HasValue) return;
-        var worn = _config.Outfits.Find(o => o.Id == _config.CurrentlyWornOutfitId.Value);
-        if (worn != null) UnequipOutfit(worn, revertGlamourer);
-        _config.CurrentlyWornOutfitId = null;
         _config.Save();
     }
 
-    public void UnequipOutfit(Outfit outfit, bool revertGlamourer = true)
+    /// <summary>Saves everything currently worn as a named outfit.</summary>
+    public Outfit? SaveCurrentAsOutfit(string name)
     {
-        if (!string.IsNullOrEmpty(outfit.PenumbraModDirectory) && outfit.ModEnabled)
-            _penumbra.SetModEnabled(outfit.PenumbraCollection, outfit.PenumbraModDirectory, outfit.Name, false);
+        var wornIds = _config.WornItems.Values.Distinct().ToList();
+        if (wornIds.Count == 0)
+        {
+            _log.Warning("[Wardrobe] Nothing is currently worn — no outfit saved.");
+            return null;
+        }
 
-        if (revertGlamourer)
-            _glamourer.RevertState();
+        var outfit = new Outfit
+        {
+            Name    = string.IsNullOrWhiteSpace(name) ? "New Outfit" : name.Trim(),
+            ItemIds = wornIds,
+        };
 
-        outfit.IsCurrentlyWorn = false;
+        _config.Outfits.Add(outfit);
+        _config.Save();
+        WardrobeChanged?.Invoke();
+
+        _log.Information($"[Wardrobe] Saved outfit '{outfit.Name}' with {wornIds.Count} item(s)");
+        return outfit;
     }
 
-    public bool CaptureGlamourerState(Outfit outfit)
+    /// <summary>Items in an outfit that still exist, in slot order.</summary>
+    public List<WardrobeItem> ResolveOutfit(Outfit outfit) =>
+        outfit.ItemIds
+            .Select(id => _config.WardrobeItems.Find(x => x.Id == id))
+            .Where(x => x != null)
+            .Select(x => x!)
+            .OrderBy(x => (int)x.Slot)
+            .ToList();
+
+    /// <summary>
+    /// Wears every item in an outfit, optionally removing anything worn that is not part of it.
+    /// </summary>
+    /// <remarks>
+    /// Goes through the normal per-item path, so each item's Penumbra mods are enabled and their
+    /// options applied — which is the whole reason for handling outfits here rather than leaving
+    /// it to a Glamourer design.
+    /// </remarks>
+    public void WearOutfit(Outfit outfit, bool removeOthers)
     {
-        var state = _glamourer.CaptureCurrentState();
-        if (state == null) return false;
-        outfit.GlamourerStateBase64 = state;
-        return true;
+        var items = ResolveOutfit(outfit);
+        var missing = outfit.ItemIds.Count - items.Count;
+        if (missing > 0)
+            _log.Warning($"[Wardrobe] Outfit '{outfit.Name}': {missing} item(s) no longer exist and were skipped.");
+
+        if (removeOthers)
+        {
+            var keep = items.Select(i => i.Id).ToHashSet();
+            foreach (var wornId in _config.WornItems.Values.ToList())
+            {
+                if (keep.Contains(wornId)) continue;
+                var worn = _config.WardrobeItems.Find(x => x.Id == wornId);
+                if (worn != null) UnwearItem(worn, save: false, redraw: false);
+            }
+        }
+
+        foreach (var item in items)
+            WearItem(item, GetDye(outfit, item.Id));
+
+        // Remembered so redraws re-apply the dyes too, not just the items
+        _activeOutfitId = outfit.Id;
+
+        _config.Save();
+        WardrobeChanged?.Invoke();
+        _log.Information($"[Wardrobe] Wore outfit '{outfit.Name}' ({items.Count} item(s))");
     }
 
-    public bool CaptureModSettings(Outfit outfit)
+    /// <summary>Removes every item in an outfit that is currently worn.</summary>
+    public void UnwearOutfit(Outfit outfit)
     {
-        if (string.IsNullOrEmpty(outfit.PenumbraModDirectory)) return false;
-        outfit.ModSettings = _penumbra.GetModSettings(
-            outfit.PenumbraCollection, outfit.PenumbraModDirectory, outfit.Name);
-        return true;
+        var items = ResolveOutfit(outfit).Where(IsItemWorn).ToList();
+        foreach (var item in items)
+            UnwearItem(item, save: false, redraw: false);
+
+        if (_activeOutfitId == outfit.Id) _activeOutfitId = null;
+
+        // One redraw at the end rather than per item
+        if (items.Count > 0) _penumbra.RedrawPlayer();
+
+        _config.Save();
+        WardrobeChanged?.Invoke();
+        _log.Information($"[Wardrobe] Removed outfit '{outfit.Name}' ({items.Count} item(s))");
+    }
+
+    /// <summary>True when every item in the outfit is currently worn.</summary>
+    public bool IsOutfitWorn(Outfit outfit)
+    {
+        var items = ResolveOutfit(outfit);
+        return items.Count > 0 && items.All(IsItemWorn);
+    }
+
+    public void DeleteOutfit(Outfit outfit)
+    {
+        _config.Outfits.Remove(outfit);
+        _config.Save();
+        WardrobeChanged?.Invoke();
     }
 }

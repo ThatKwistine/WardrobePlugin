@@ -20,12 +20,13 @@ A Dalamud plugin for managing individual clothing items across **Penumbra** mods
 - **Customisation mods** — hair, face, tail, Viera ears and skin mods are detected and managed the same way as gear
 - **Auto-detected game items** — the plugin analyses the mod's file paths to identify which FFXIV item it replaces; Glamourer is updated automatically on wear
 - **Multiple mods per item** — stack a primary mod with upscales, compatibility patches, etc.
+- **Outfits** — save everything currently worn as a named set, then wear or remove the whole thing in one click; shown in their own tab on the filter row, with their own preview images
 - **Variants** — copy an item to make another version of it with different mod options, for a colour swap or style change; each variant is its own entry with its own image
 - **Favourites** — mark items with the ♥ on their card and filter the grid down to just those
 - **Tags** — label items and filter the grid by tag; click a suggested tag to add it, right-click to load it into the box and edit it first
 - **Hourly backups** — copies the config to a folder of your choosing, skipping the write when nothing has changed
 - **Search and sort** — free-text search across item name, tags, mod names, and the detected game item; sort by name (A–Z / Z–A) or date added (newest / oldest)
-- **Image browser** — point the plugin at a folder of images and drag a thumbnail onto any item card to assign it as the preview
+- **Image browser** — point the plugin at a folder of images and drag a thumbnail onto any item or outfit card to assign it as the preview
 - **Screenshot sessions** — queue every item that has no preview image, equip each in turn, and pick up new screenshots from a watched folder automatically; optional per-slot GPose camera presets, a persisted "strip other items" mode, and a compact window mode that keeps the UI out of the shot
 - **Worn-item detection** — cross-references Penumbra's enabled mods and option selections against Glamourer's equipped items to work out what is already worn
 - **Clean unequip** — removing an item sets that Glamourer slot to the matching Emperor's New item so the slot appears empty
@@ -94,6 +95,42 @@ Click the **Wear** button on any card, or use the command:
 Multiple items can be worn simultaneously as long as they occupy different slots. Two items sharing the same underlying mod are handled correctly — the mod stays enabled until all items using it are unequipped.
 
 **Why the order matters.** Enabling a mod makes Penumbra start an async resource reload, and Glamourer snapshots its state when that reload begins, re-applying the snapshot when it finishes. Calling `SetItem` first puts the right item in that snapshot. Enabling the mod before applying its options matters for the same reason — options set on a disabled mod are not picked up by the initial enable-reload, whereas changing an option on an already-enabled mod triggers a fresh reload that reads the correct state. The delayed re-applies (350 ms / 750 ms / 1800 ms / 4500 ms) exist because a mod with missing material files can keep reloading for several seconds, and each reload can undo the Glamourer state.
+
+---
+
+## Outfits
+
+**Outfits** sits at the start of the slot filter row and switches the grid to your saved outfits.
+
+Wear a look you like, type a name, and **Save current look** records every item the wardrobe has on.
+Outfit cards then offer:
+
+- **Wear** — wears the outfit's items, leaving anything else you have on in place
+- **Only this** — wears them and removes everything else the wardrobe has on
+- **Remove** — takes the outfit's items back off
+- **Photo** — wears the outfit alone and waits for a screenshot, assigning it as the outfit's image
+- **Edit** — opens the outfit for renaming, setting a preview, taking its photo, and managing its contents
+
+Outfit cards are drawn larger than item cards by default, since outfit previews are usually
+full-body shots rather than close-ups. **Large cards** turns that off to match the item grid.
+
+The edit panel lists every item in the outfit as a row with a small thumbnail, its name and slot,
+an **Equip / Unequip** toggle so pieces can be tried individually, and **Remove from outfit**. An
+**Add to outfit** picker at the bottom adds any wardrobe item not already in it, searchable by name.
+
+Each row also carries **Dye 1** and **Dye 2** pickers, listing the game's dyes with a colour swatch
+and a search box. Dyes are stored on the *outfit*, not the item, so the same piece can be dyed
+differently in different outfits. They are applied through Glamourer when the outfit is worn, and
+re-applied after a redraw — otherwise a Penumbra reload would strip the colour back to undyed.
+Customisation items cannot be dyed and say so.
+
+Outfits store item IDs, not a Glamourer state blob, so wearing one goes through the normal per-item
+path — enabling each item's Penumbra mods and applying their options. That is the part a Glamourer
+design cannot do on its own. If an item is deleted later, the card shows how many are missing and
+the rest still work.
+
+**Screenshot Outfits** starts a session covering every outfit without a preview, exactly like the
+item sessions.
 
 ---
 
@@ -170,7 +207,8 @@ authoritative reference for these labels and signatures — check it before assu
 - **Variants share a mod but not its options.** **Create variant of this item** in the edit panel copies an item, inheriting its mods, collections, options, detected game item and image, then opens the copy so you can change what differs. Because variants occupy the same slot they are never worn at once, so each can hold its own option selections. Items sharing a mod across *different* slots are worn together, and Penumbra holds only one option state per mod — so those still share options, and editing one updates the others.
 - **Shared models.** Many FFXIV items share one model — the Hakama legs model backs Asuran, Yasha, Yanxian, Nameless and more. Detection picks the lowest row ID among them, which is arbitrary. When more than one item shares the detected model, a **Game item** dropdown appears (per slot when importing, and in the edit panel) listing every candidate so the intended one can be chosen. This matters beyond cosmetics: the stored item ID is what Glamourer equips and what worn-detection compares against.
 - **Re-detecting items:** if a mod is updated and its file paths change, open the item in the edit panel and click **Re-detect** to re-run the analysis.
-- **Stains:** `SetItem.V3` is called with stains `[0, 0]` (no dye). Dye state is whatever was last applied in Glamourer.
+- **Previews are always square.** Screenshot sessions crop the largest centred square out of the shot and save it at 512×512, so nothing is distorted. Images assigned by hand keep their original file untouched — they are centre-cropped **at draw time** by adjusting texture coordinates, so a portrait or landscape image fills the square without being stretched.
+- **Stains:** items worn on their own are applied undyed. Dyes are a property of an outfit, applied when that outfit is worn and re-applied after a redraw.
 - **`applyFlags = 0`** on `SetItem.V3` — this is the persistent mode that goes through Glamourer's state machine rather than a one-shot apply.
 - **The collection must be the one applied to your character.** This is the single most common reason a wardrobe item appears to do nothing. Penumbra enables the mod exactly as asked, reports success, and logs nothing unusual — but if that collection is not the one affecting your character, nothing shows up. In Penumbra, look at **Collections → Your Character** to see which collection applies, and note that an **Individual Assignment** for that character overrules it. Set **Settings → Default Collection** to the same one so imports start there.
 - **Keep an item's mods in one collection.** A mod is only visible on your character if it is enabled in the collection that character actually uses. If an item's main and supplementary mods end up in different collections, every mod still enables successfully and the log looks clean, but only some of them show up. Set **Settings → Default Collection** to the collection your character uses so imports start there. Existing items can be corrected under **Mods & Collections** in the edit panel, which flags a split and warns on wear. Changing a mod's collection there also moves every other item that referenced the same mod in the same old collection, so a mistake repeated across items only needs fixing once.

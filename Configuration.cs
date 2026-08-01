@@ -12,9 +12,8 @@ public class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
 
-    // ── Legacy outfit system (kept for backward compatibility) ────────────────
-    public List<Outfit>  Outfits              { get; set; } = new();
-    public Guid?         CurrentlyWornOutfitId { get; set; }
+    /// <summary>Saved outfits — named sets of wardrobe items worn and removed together.</summary>
+    public List<Outfit> Outfits { get; set; } = new();
 
     // ── Wardrobe items ────────────────────────────────────────────────────────
     public List<WardrobeItem>         WardrobeItems { get; set; } = new();
@@ -76,6 +75,15 @@ public class Configuration : IPluginConfiguration
 
     /// <summary>Ordering applied to the item grid.</summary>
     public ItemSortMode SortMode { get; set; } = ItemSortMode.NameAsc;
+
+    /// <summary>Ordering applied to the image browser.</summary>
+    public ImageSortMode ImageSortMode { get; set; } = ImageSortMode.NameAsc;
+
+    /// <summary>
+    /// Draw outfit cards larger than item cards. Outfit previews are usually full-body shots
+    /// rather than close-ups, so they need the room; off matches the item grid exactly.
+    /// </summary>
+    public bool LargeOutfitCards { get; set; } = true;
 
     /// <summary>
     /// Switch the character to the hairstyle a hair mod replaces when applying it. Without this a

@@ -8,6 +8,7 @@ using System.Text;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.ImGuiFileDialog;
 using Dalamud.Interface.Textures;
+using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 using WardrobePlugin;
@@ -32,6 +33,9 @@ public class PluginUi : Window, IDisposable
     // Texture is null when the file was missing — cached deliberately, so a broken path does not
     // re-hit the filesystem on every frame.
     private readonly Dictionary<Guid, (string Path, ISharedImmediateTexture? Texture)> _imageCache = new();
+
+    // Same arrangement for outfit previews
+    private readonly Dictionary<Guid, (string Path, ISharedImmediateTexture? Texture)> _outfitImageCache = new();
     private readonly FileDialogManager _fileDialog = new();
 
     // Slot filter: null = show all
@@ -59,6 +63,18 @@ public class PluginUi : Window, IDisposable
     private bool _showImageBrowser;
     private bool _showSettings;
     private bool _showTags;
+    // Grid shows saved outfits instead of items
+    private bool _outfitsView;
+
+    // Name field for saving the current look as an outfit
+    private string _newOutfitName = string.Empty;
+
+    // Outfit currently open in the edit panel, with its staged fields
+    private Outfit? _editingOutfit;
+    private string  _editOutfitName  = string.Empty;
+    private string  _editOutfitImage = string.Empty;
+    private string  _addToOutfitSearch = string.Empty;
+    private string  _dyeSearch         = string.Empty;
 
     // Mod-scan results: item IDs whose mods are detected enabled in Penumbra
     private readonly HashSet<Guid> _detectedWorn = new();
@@ -93,6 +109,10 @@ public class PluginUi : Window, IDisposable
     private const float CardPad     = 10f;
     private const float ThumbSize   = CardWidth - CardPad * 2; // 160 — square thumbnail
     private const float CardHeight  = 280f;
+
+    // Outfit previews are full-body shots rather than close-ups, so they get more room by default
+    private const float OutfitCardWidth  = 280f;
+    private const float OutfitCardHeight = 400f;
 
     public PluginUi(Configuration config, WardrobeService wardrobe,
         ITextureProvider textures, IPluginLog log, ItemImportPanel panel,
@@ -169,7 +189,8 @@ public class PluginUi : Window, IDisposable
 
         var totalW  = ImGui.GetContentRegionAvail().X;
         var totalH  = ImGui.GetContentRegionAvail().Y;
-        var rightOpen = _panel.IsOpen || _showImageBrowser || _showSettings || _showTags;
+        var rightOpen = _panel.IsOpen || _showImageBrowser || _showSettings || _showTags
+                        || _editingOutfit != null;
         var panelW    = rightOpen ? 360f : 0f;
         var gridW     = totalW - panelW - (rightOpen ? 8f : 0f);
 
@@ -183,7 +204,8 @@ public class PluginUi : Window, IDisposable
         ImGui.Separator();
 
         ImGui.BeginChild("##wardrobeGrid", new Vector2(-1, ImGui.GetContentRegionAvail().Y));
-        DrawGrid();
+        if (_outfitsView) DrawOutfitsGrid();
+        else              DrawGrid();
         ImGui.EndChild();
 
         ImGui.EndChild();
@@ -197,6 +219,8 @@ public class PluginUi : Window, IDisposable
 
             if (_panel.IsOpen)
                 _panel.Draw();
+            else if (_editingOutfit != null)
+                DrawOutfitEditPanel();
             else if (_showTags)
                 DrawTagFilter();
             else if (_showImageBrowser)
@@ -557,6 +581,7 @@ public class PluginUi : Window, IDisposable
             _showSettings     = false;
         });
 
+
         if (_session.CanStart)
         {
             ImGui.SameLine();
@@ -692,6 +717,23 @@ public class PluginUi : Window, IDisposable
     private void DrawSlotFilter()
     {
         ImGui.Spacing();
+
+        // Outfits is a view of its own rather than a slot filter, so it sits first and apart
+        var outfitsActive = _outfitsView;
+        if (outfitsActive)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.42f, 0.3f, 0.62f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.52f, 0.38f, 0.74f, 1f));
+        }
+        if (ImGui.Button("Outfits")) _outfitsView = !_outfitsView;
+        var outfitsHovered = ImGui.IsItemHovered();
+        if (outfitsActive) ImGui.PopStyleColor(2);
+        if (outfitsHovered)
+            ImGui.SetTooltip(outfitsActive
+                ? "Showing saved outfits. Click to go back to items."
+                : "Show saved outfits instead of items.");
+
+        ImGui.SameLine();
         DrawFilterButton("All", null);
 
         ImGui.SameLine();
@@ -1218,15 +1260,11 @@ public class PluginUi : Window, IDisposable
             _imageCache[item.Id] = entry;
         }
 
-        if (entry.Texture != null)
+        if (entry.Texture?.GetWrapOrDefault() is { } wrap)
         {
-            var wrap = entry.Texture.GetWrapOrDefault();
-            if (wrap != null)
-            {
-                ImGui.Image(wrap.Handle, size);
-                AcceptImageDrop(item);
-                return;
-            }
+            ImageDraw.Square(wrap, ThumbSize);
+            AcceptImageDrop(item);
+            return;
         }
 
         ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.07f, 0.07f, 0.09f, 1f));
@@ -1250,6 +1288,31 @@ public class PluginUi : Window, IDisposable
             var path = Encoding.UTF8.GetString((byte*)payload.Data, payload.DataSize).TrimEnd('\0');
             item.ImagePath = path;
             _imageCache.Remove(item.Id);
+            _config.Save();
+        }
+
+        ImGui.EndDragDropTarget();
+    }
+
+    /// <summary>Same drag target as items, for outfit cards.</summary>
+    private unsafe void AcceptOutfitImageDrop(Outfit outfit)
+    {
+        if (!ImGui.BeginDragDropTarget()) return;
+
+        var payload = ImGui.AcceptDragDropPayload("WRD_IMG");
+
+        // Null-guard the payload pointer before touching it — IsDelivery on null is a crash
+        if (Unsafe.As<ImGuiPayloadPtr, nint>(ref payload) != 0
+            && payload.IsDelivery()
+            && payload.DataSize > 0)
+        {
+            var path = Encoding.UTF8.GetString((byte*)payload.Data, payload.DataSize).TrimEnd('\0');
+            outfit.ImagePath = path;
+            _outfitImageCache.Remove(outfit.Id);
+
+            // Keep the editor's staged field in step if this outfit is open
+            if (_editingOutfit == outfit) _editOutfitImage = path;
+
             _config.Save();
         }
 
@@ -1284,6 +1347,21 @@ public class PluginUi : Window, IDisposable
         }
 
         ImGui.Spacing();
+        ImGui.TextDisabled("Sort");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(-1);
+
+        // Order must match the ImageSortMode enum values
+        var sortLabels = new[] { "Name (A–Z)", "Name (Z–A)", "Newest first", "Oldest first" };
+        var sortIdx    = (int)_config.ImageSortMode;
+        if (ImGui.Combo("##imgsort", ref sortIdx, sortLabels, sortLabels.Length))
+        {
+            _config.ImageSortMode = (ImageSortMode)sortIdx;
+            _config.Save();
+            RefreshBrowserImages(); // re-sorts; the date modes read the filesystem
+        }
+
+        ImGui.Spacing();
         ImGui.TextDisabled("Drag an image onto a wardrobe item card.");
         ImGui.Separator();
 
@@ -1297,19 +1375,17 @@ public class PluginUi : Window, IDisposable
         {
             ImGui.PushID(imgPath);
 
-            ImTextureID tex = default;
-            try
-            {
-                var wrap = _textures.GetFromFile(imgPath).GetWrapOrDefault();
-                if (wrap != null) tex = wrap.Handle;
-            }
+            IDalamudTextureWrap? wrap = null;
+            try { wrap = _textures.GetFromFile(imgPath).GetWrapOrDefault(); }
             catch { }
 
             var fname = Path.GetFileNameWithoutExtension(imgPath);
             var label = fname.Length > 13 ? fname[..11] + "…" : fname;
 
-            if (!tex.IsNull)
-                ImGui.ImageButton(tex, new Vector2(thumbW, thumbH));
+            if (wrap != null)
+            {
+                ImageDraw.SquareButton($"browse_{imgPath}", wrap, thumbW);
+            }
             else
             {
                 ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.1f, 0.1f, 0.12f, 1f));
@@ -1323,8 +1399,7 @@ public class PluginUi : Window, IDisposable
                 var bytes = Encoding.UTF8.GetBytes(imgPath + "\0");
                 ImGui.SetDragDropPayload("WRD_IMG", (ReadOnlySpan<byte>)bytes);
 
-                if (!tex.IsNull)
-                    ImGui.Image(tex, new Vector2(64, 64));
+                if (wrap != null) ImageDraw.Square(wrap, 64f);
                 ImGui.TextUnformatted(label);
                 ImGui.EndDragDropSource();
             }
@@ -1346,12 +1421,29 @@ public class PluginUi : Window, IDisposable
             return;
         }
 
-        _browserImages = Directory.GetFiles(folder)
-            .Where(f => ImageExtensions.Contains(Path.GetExtension(f)))
-            .OrderBy(f => Path.GetFileName(f))
-            .ToArray();
+        var files = Directory.GetFiles(folder)
+            .Where(f => ImageExtensions.Contains(Path.GetExtension(f)));
+
+        // Sorting happens here rather than at draw time: the date modes need a filesystem stat per
+        // file, which must not run every frame.
+        var sorted = _config.ImageSortMode switch
+        {
+            ImageSortMode.NameDesc    => files.OrderByDescending(Path.GetFileName, StringComparer.OrdinalIgnoreCase),
+            ImageSortMode.NewestFirst => files.OrderByDescending(SafeWriteTime).ThenBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase),
+            ImageSortMode.OldestFirst => files.OrderBy(SafeWriteTime).ThenBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase),
+            _                         => files.OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase),
+        };
+
+        _browserImages = sorted.ToArray();
 
         _lastBrowserFolder = folder;
+    }
+
+    /// <summary>Last write time, or the epoch if the file vanished between listing and sorting.</summary>
+    private static DateTime SafeWriteTime(string path)
+    {
+        try { return File.GetLastWriteTimeUtc(path); }
+        catch { return DateTime.MinValue; }
     }
 
     // ── Screenshot session HUD ────────────────────────────────────────────────
@@ -1387,7 +1479,7 @@ public class PluginUi : Window, IDisposable
             return;
         }
 
-        ImGui.TextUnformatted(_session.CurrentItem?.Name ?? string.Empty);
+        ImGui.TextUnformatted(_session.CurrentName);
         ImGui.Spacing();
 
         switch (_session.State)
@@ -1456,9 +1548,10 @@ public class PluginUi : Window, IDisposable
         }
         else
         {
-            var item = _session.CurrentItem;
-            ImGui.TextDisabled($"Item {_session.CompletedCount + 1} of {_session.TotalCount}");
-            ImGui.TextUnformatted(item?.Name ?? string.Empty);
+            var item  = _session.CurrentItem;
+            var label = item != null ? "Item" : "Outfit";
+            ImGui.TextDisabled($"{label} {_session.CompletedCount + 1} of {_session.TotalCount}");
+            ImGui.TextUnformatted(_session.CurrentName);
 
             ImGui.Spacing();
             switch (_session.State)
@@ -1565,6 +1658,555 @@ public class PluginUi : Window, IDisposable
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip($"Save the current GPose camera position as the preset\nfor all {item.Slot.DisplayName()} items.");
         }
+    }
+
+    // ── Outfits grid ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The item grid replaced by saved outfits: named sets of items worn and removed together.
+    /// </summary>
+    /// <remarks>
+    /// Built on wardrobe items rather than Glamourer designs, so wearing an outfit also enables
+    /// each item's Penumbra mods and applies their options.
+    /// </remarks>
+    private void DrawOutfitsGrid()
+    {
+        var wornCount = _config.WornItems.Count;
+
+        ImGui.Spacing();
+        ImGui.SetNextItemWidth(240);
+        ImGui.InputTextWithHint("##outfitname", "Name this outfit…", ref _newOutfitName, 128);
+        ImGui.SameLine();
+
+        var canSave = wornCount > 0 && !string.IsNullOrWhiteSpace(_newOutfitName);
+        if (!canSave) ImGui.BeginDisabled();
+        if (ImGui.Button($"Save current look ({wornCount} item(s))"))
+        {
+            _wardrobe.SaveCurrentAsOutfit(_newOutfitName);
+            _newOutfitName = string.Empty;
+        }
+        if (!canSave) ImGui.EndDisabled();
+
+        if (wornCount == 0)
+        {
+            ImGui.SameLine();
+            ImGui.TextDisabled("Wear some items first.");
+        }
+
+        if (_session.CanStartOutfits)
+        {
+            ImGui.SameLine();
+            if (ImGui.Button(" Screenshot Outfits "))
+                _session.StartOutfits();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Wears each outfit that has no preview yet and waits for a\n" +
+                                 "screenshot, exactly like an item session.");
+        }
+
+        ImGui.SameLine();
+        var largeCards = _config.LargeOutfitCards;
+        if (ImGui.Checkbox("Large cards", ref largeCards))
+        {
+            _config.LargeOutfitCards = largeCards;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Outfit previews are usually full-body shots.\n" +
+                             "Turn this off to match the item grid's card size.");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        if (_config.Outfits.Count == 0)
+        {
+            ImGui.TextDisabled("No outfits saved yet. Wear a look, name it above, then save.");
+            return;
+        }
+
+        var outfits = _config.Outfits
+            .OrderBy(o => o.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var cardW = _config.LargeOutfitCards ? OutfitCardWidth  : CardWidth;
+        var cardH = _config.LargeOutfitCards ? OutfitCardHeight : CardHeight;
+
+        var avail   = ImGui.GetContentRegionAvail().X;
+        var columns = Math.Max(1, (int)((avail + CardPad) / (cardW + CardPad)));
+        var col     = 0;
+        Outfit? toDelete = null;
+
+        foreach (var outfit in outfits)
+        {
+            DrawOutfitCard(outfit, cardW, cardH, ref toDelete);
+            col++;
+            if (col < columns) ImGui.SameLine();
+            else col = 0;
+        }
+
+        if (toDelete != null)
+        {
+            // Do not leave the editor pointing at an outfit that no longer exists
+            if (_editingOutfit == toDelete) CloseOutfitEdit();
+            _outfitImageCache.Remove(toDelete.Id);
+            _wardrobe.DeleteOutfit(toDelete);
+        }
+    }
+
+    private void DrawOutfitCard(Outfit outfit, float cardW, float cardH, ref Outfit? pendingDelete)
+    {
+        var items = _wardrobe.ResolveOutfit(outfit);
+        var worn  = _wardrobe.IsOutfitWorn(outfit);
+
+        ImGui.PushID(outfit.Id.ToString());
+        ImGui.PushStyleColor(ImGuiCol.ChildBg,
+            worn ? new Vector4(0.22f, 0.18f, 0.04f, 1f)
+                 : new Vector4(0.11f, 0.11f, 0.13f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.Border,
+            worn ? new Vector4(1f, 0.85f, 0.25f, 1f)
+                 : new Vector4(0.28f, 0.28f, 0.33f, 1f));
+
+        ImGui.BeginChild($"##outfit_{outfit.Id}", new Vector2(cardW, cardH),
+            true, ImGuiWindowFlags.NoScrollbar);
+
+        DrawOutfitImage(outfit, cardW - CardPad * 2);
+
+        var dispName = outfit.Name.Length > 20 ? outfit.Name[..18] + "…" : outfit.Name;
+        ImGui.TextUnformatted(dispName);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(items.Count > 0
+                ? $"{outfit.Name}\n\n" + string.Join("\n", items.Select(i => $"{i.Slot.DisplayName()} — {i.Name}"))
+                : outfit.Name);
+
+        if (worn)
+        {
+            ImGui.SameLine();
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.85f, 0.3f, 1f));
+            ImGui.TextUnformatted("★");
+            ImGui.PopStyleColor();
+        }
+
+        // A deleted item leaves a gap in the outfit; say so rather than quietly wearing fewer
+        var missing = outfit.ItemIds.Count - items.Count;
+        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.55f, 0.75f, 0.95f, 1f));
+        ImGui.TextUnformatted(missing > 0
+            ? $"{items.Count} items · {missing} missing"
+            : $"{items.Count} items");
+        ImGui.PopStyleColor();
+
+        var btnW = (cardW - CardPad * 2 - 6) / 2;
+
+        if (worn)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.55f, 0.08f, 0.08f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.75f, 0.15f, 0.15f, 1f));
+            if (ImGui.Button("Remove", new Vector2(btnW, 0)))
+                _wardrobe.UnwearOutfit(outfit);
+            ImGui.PopStyleColor(2);
+        }
+        else
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.13f, 0.38f, 0.13f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.18f, 0.55f, 0.18f, 1f));
+            if (ImGui.Button("Wear", new Vector2(btnW, 0)))
+                _wardrobe.WearOutfit(outfit, removeOthers: false);
+            ImGui.PopStyleColor(2);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Wear these items, leaving anything else you have on in place.");
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Only this", new Vector2(btnW, 0)))
+            _wardrobe.WearOutfit(outfit, removeOthers: true);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Wear these items and remove everything else the wardrobe has on.");
+
+        if (ImGui.SmallButton("Edit"))
+            OpenOutfitEdit(outfit);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Rename it, set a preview, take a photo, and add or remove items.");
+        ImGui.SameLine();
+
+        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
+        if (ImGui.SmallButton("X"))
+            pendingDelete = outfit;
+        ImGui.PopStyleColor(2);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Deletes the outfit only. The items themselves are kept.");
+
+        ImGui.EndChild();
+        ImGui.PopStyleColor(2);
+        ImGui.PopID();
+    }
+
+    /// <summary>
+    /// Editing panel for one outfit: rename, set a preview, and manage its members as a list of
+    /// rows with a thumbnail, an equip toggle and a remove control.
+    /// </summary>
+    private void DrawOutfitEditPanel()
+    {
+        var outfit = _editingOutfit;
+        if (outfit == null) return;
+
+        if (DrawPanelHeader("Edit Outfit"))
+        {
+            CloseOutfitEdit();
+            return;
+        }
+
+        // Large preview, as the item edit panel does
+        var previewW = ImGui.GetContentRegionAvail().X;
+        if (!string.IsNullOrEmpty(_editOutfitImage) && File.Exists(_editOutfitImage))
+        {
+            try
+            {
+                if (_textures.GetFromFile(_editOutfitImage).GetWrapOrDefault() is { } wrap)
+                {
+                    ImageDraw.Square(wrap, previewW);
+                    ImGui.Spacing();
+                }
+            }
+            catch { /* falls through to no preview */ }
+        }
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Name");
+        ImGui.SetNextItemWidth(-1);
+        ImGui.InputText("##outfitEditName", ref _editOutfitName, 128);
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Image path (optional)");
+        ImGui.SetNextItemWidth(-1);
+        ImGui.InputText("##outfitEditImage", ref _editOutfitImage, 512);
+
+        var items = _wardrobe.ResolveOutfit(outfit);
+
+        ImGui.Spacing();
+        if (_session.FoldersReady && items.Count > 0)
+        {
+            if (ImGui.Button("Take Screenshot", new Vector2(-1, 0)))
+            {
+                // Save first, so the shot is filed under the name shown here
+                outfit.Name      = string.IsNullOrWhiteSpace(_editOutfitName) ? outfit.Name : _editOutfitName.Trim();
+                outfit.ImagePath = string.IsNullOrWhiteSpace(_editOutfitImage) ? null : _editOutfitImage.Trim();
+                _config.Save();
+                _session.StartSingleOutfit(outfit);
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Wears this outfit on its own and waits for a screenshot,\n" +
+                                 "then crops it to 1:1 and assigns it as the outfit's image.");
+        }
+        else if (items.Count == 0)
+        {
+            ImGui.TextDisabled("Add items before taking a screenshot.");
+        }
+        else
+        {
+            ImGui.TextDisabled("Set the images and screenshots folders to enable screenshots.");
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+
+        var missing = outfit.ItemIds.Count - items.Count;
+
+        ImGui.TextUnformatted($"Items  ({items.Count})");
+        if (missing > 0)
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f),
+                $"{missing} item(s) in this outfit no longer exist.");
+
+        ImGui.Spacing();
+
+        Guid? removeId = null;
+        const float rowThumb = 56f;
+
+        foreach (var item in items)
+        {
+            ImGui.PushID(item.Id.ToString());
+
+            var top  = ImGui.GetCursorPos();
+            var worn = _wardrobe.IsItemWorn(item);
+
+            DrawOutfitRowThumb(item, rowThumb);
+
+            // Text and controls sit to the right of the thumbnail
+            ImGui.SetCursorPos(new Vector2(top.X + rowThumb + 8, top.Y));
+            ImGui.TextUnformatted(item.Name.Length > 24 ? item.Name[..22] + "…" : item.Name);
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip(item.Name);
+
+            ImGui.SetCursorPos(new Vector2(top.X + rowThumb + 8, top.Y + ImGui.GetTextLineHeightWithSpacing()));
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.55f, 0.75f, 0.95f, 1f));
+            ImGui.TextUnformatted(item.Slot.DisplayName());
+            ImGui.PopStyleColor();
+
+            ImGui.SetCursorPos(new Vector2(top.X + rowThumb + 8, top.Y + ImGui.GetTextLineHeightWithSpacing() * 2 + 2));
+
+            var customization = item.Slot.IsCustomization();
+            if (worn)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.55f, 0.08f, 0.08f, 1f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.75f, 0.15f, 0.15f, 1f));
+                if (ImGui.SmallButton(customization ? "Revert" : "Unequip"))
+                    _wardrobe.UnwearItem(item);
+                ImGui.PopStyleColor(2);
+            }
+            else
+            {
+                ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.13f, 0.38f, 0.13f, 1f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.18f, 0.55f, 0.18f, 1f));
+                if (ImGui.SmallButton(customization ? "Apply" : "Equip"))
+                    _wardrobe.WearItem(item);
+                ImGui.PopStyleColor(2);
+            }
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Remove from outfit"))
+                removeId = item.Id;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Takes this item out of the outfit.\nThe item itself is kept.");
+
+            // Dyes sit below the row, full width, since two pickers do not fit beside the thumbnail
+            ImGui.SetCursorPos(new Vector2(top.X, top.Y + rowThumb + 6));
+
+            if (item.Slot.IsCustomization())
+            {
+                ImGui.TextDisabled("    Customisation mods cannot be dyed.");
+            }
+            else
+            {
+                var dye = WardrobeService.GetDye(outfit, item.Id);
+                var s1  = dye?.Stain1 ?? 0;
+                var s2  = dye?.Stain2 ?? 0;
+
+                var half   = (ImGui.GetContentRegionAvail().X - 8) / 2;
+                var dyeTop = ImGui.GetCursorPos();
+
+                if (DrawDyePicker($"dye1_{item.Id}", "Dye 1", s1, half, out var newS1))
+                    _wardrobe.SetDye(outfit, item.Id, newS1, s2);
+
+                // Positioned explicitly rather than with SameLine: the first picker is a group,
+                // and SameLine aligns to the group's baseline, which leaves the second one lower.
+                var afterDye = ImGui.GetCursorPos();
+                ImGui.SetCursorPos(new Vector2(dyeTop.X + half + 8, dyeTop.Y));
+
+                if (DrawDyePicker($"dye2_{item.Id}", "Dye 2", s2, half, out var newS2))
+                    _wardrobe.SetDye(outfit, item.Id, s1, newS2);
+
+                ImGui.SetCursorPos(new Vector2(dyeTop.X, afterDye.Y));
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+            ImGui.PopID();
+        }
+
+        if (removeId.HasValue)
+        {
+            outfit.ItemIds.Remove(removeId.Value);
+            _config.Save();
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        DrawAddToOutfit(outfit);
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var footerW = (ImGui.GetContentRegionAvail().X - 8) / 2;
+        if (ImGui.Button("Save", new Vector2(footerW, 0)))
+        {
+            outfit.Name      = string.IsNullOrWhiteSpace(_editOutfitName) ? outfit.Name : _editOutfitName.Trim();
+            outfit.ImagePath = string.IsNullOrWhiteSpace(_editOutfitImage) ? null : _editOutfitImage.Trim();
+            _config.Save();
+            CloseOutfitEdit();
+            return;
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Cancel", new Vector2(footerW, 0)))
+        {
+            CloseOutfitEdit();
+        }
+    }
+
+    /// <summary>
+    /// Dye picker for one channel, showing a colour swatch beside the dye name.
+    /// </summary>
+    /// <remarks>
+    /// Colours come from the game's Stain sheet, so the swatch matches what the dye actually looks
+    /// like rather than a guess. Returns true when a different dye was chosen.
+    /// </remarks>
+    private bool DrawDyePicker(string id, string label, byte current, float width, out byte picked)
+    {
+        picked = current;
+
+        var stains = Plugin.ItemLookup.GetStains();
+        var match  = stains.FirstOrDefault(s => s.Id == current);
+        var name   = string.IsNullOrEmpty(match.Name) ? "Undyed" : match.Name;
+
+        ImGui.BeginGroup();
+        ImGui.TextDisabled(label);
+
+        ImGui.SetNextItemWidth(width);
+        var changed = false;
+
+        // The combo popup scrolls on its own — a child window inside it would add a second scrollbar
+        if (ImGui.BeginCombo($"##{id}", name, ImGuiComboFlags.HeightLarge))
+        {
+            ImGui.SetNextItemWidth(-1);
+            ImGui.InputTextWithHint($"##search_{id}", "Search dyes…", ref _dyeSearch, 64);
+            ImGui.Separator();
+
+            foreach (var (stainId, stainName, colour) in stains)
+            {
+                if (!string.IsNullOrWhiteSpace(_dyeSearch) &&
+                    stainName.IndexOf(_dyeSearch.Trim(), StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+
+                ImGui.PushID(stainId);
+
+                // Swatch, then the name as the clickable row
+                var pos  = ImGui.GetCursorScreenPos();
+                var size = ImGui.GetTextLineHeight();
+                ImGui.GetWindowDrawList().AddRectFilled(
+                    pos, new Vector2(pos.X + size, pos.Y + size), colour);
+                ImGui.Dummy(new Vector2(size, size));
+                ImGui.SameLine();
+
+                if (ImGui.Selectable(stainName, stainId == current))
+                {
+                    picked     = stainId;
+                    changed    = stainId != current;
+                    _dyeSearch = string.Empty;
+                }
+
+                ImGui.PopID();
+            }
+
+            ImGui.EndCombo();
+        }
+
+        ImGui.EndGroup();
+        return changed;
+    }
+
+    /// <summary>Adds an existing wardrobe item to the outfit, searchable by name.</summary>
+    private void DrawAddToOutfit(Outfit outfit)
+    {
+        ImGui.TextUnformatted("Add to outfit");
+        ImGui.Spacing();
+
+        var candidates = _config.WardrobeItems
+            .Where(i => !outfit.ItemIds.Contains(i.Id))
+            .Where(i => string.IsNullOrWhiteSpace(_addToOutfitSearch) ||
+                        i.Name.Contains(_addToOutfitSearch.Trim(), StringComparison.OrdinalIgnoreCase))
+            .OrderBy(i => (int)i.Slot)
+            .ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        ImGui.SetNextItemWidth(-1);
+        if (ImGui.BeginCombo("##addtooutfit", $"Pick an item…  ({candidates.Count})"))
+        {
+            ImGui.SetNextItemWidth(-1);
+            ImGui.InputTextWithHint("##addsearch", "Search…", ref _addToOutfitSearch, 128);
+            ImGui.Separator();
+
+            foreach (var item in candidates)
+            {
+                if (!ImGui.Selectable($"{item.Slot.DisplayName()} — {item.Name}##add_{item.Id}")) continue;
+
+                outfit.ItemIds.Add(item.Id);
+                _config.Save();
+                _addToOutfitSearch = string.Empty;
+            }
+            ImGui.EndCombo();
+        }
+
+        if (candidates.Count == 0 && string.IsNullOrWhiteSpace(_addToOutfitSearch))
+            ImGui.TextDisabled("Every wardrobe item is already in this outfit.");
+    }
+
+    private void CloseOutfitEdit()
+    {
+        _editingOutfit     = null;
+        _editOutfitName    = string.Empty;
+        _editOutfitImage   = string.Empty;
+        _addToOutfitSearch = string.Empty;
+    }
+
+    private void OpenOutfitEdit(Outfit outfit)
+    {
+        _editingOutfit     = outfit;
+        _editOutfitName    = outfit.Name;
+        _editOutfitImage   = outfit.ImagePath ?? string.Empty;
+        _addToOutfitSearch = string.Empty;
+    }
+
+    /// <summary>Small square thumbnail for one item inside the outfit edit list.</summary>
+    private void DrawOutfitRowThumb(WardrobeItem item, float size)
+    {
+        var box = new Vector2(size, size);
+        var path = item.ImagePath ?? string.Empty;
+
+        if (!_imageCache.TryGetValue(item.Id, out var entry) || entry.Path != path)
+        {
+            ISharedImmediateTexture? texture = null;
+            if (!string.IsNullOrEmpty(path) && File.Exists(path))
+            {
+                try { texture = _textures.GetFromFile(path); }
+                catch { /* falls through to the placeholder */ }
+            }
+            entry = (path, texture);
+            _imageCache[item.Id] = entry;
+        }
+
+        if (entry.Texture?.GetWrapOrDefault() is { } wrap)
+        {
+            ImageDraw.Square(wrap, size);
+            return;
+        }
+
+        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.07f, 0.07f, 0.09f, 1f));
+        ImGui.Button($"##thumb_{item.Id}", box);
+        ImGui.PopStyleColor();
+    }
+
+    private unsafe void DrawOutfitImage(Outfit outfit, float thumbSize)
+    {
+        var size = new Vector2(thumbSize, thumbSize);
+        var path = outfit.ImagePath ?? string.Empty;
+
+        // Resolved once per outfit, as for items — never stat the filesystem per frame
+        if (!_outfitImageCache.TryGetValue(outfit.Id, out var entry) || entry.Path != path)
+        {
+            ISharedImmediateTexture? texture = null;
+            if (!string.IsNullOrEmpty(path) && File.Exists(path))
+            {
+                try { texture = _textures.GetFromFile(path); }
+                catch (Exception ex) { _log.Warning(ex, $"[Wardrobe] Could not load image for outfit '{outfit.Name}'"); }
+            }
+
+            entry = (path, texture);
+            _outfitImageCache[outfit.Id] = entry;
+        }
+
+        if (entry.Texture?.GetWrapOrDefault() is { } wrap)
+        {
+            ImageDraw.Square(wrap, thumbSize);
+            AcceptOutfitImageDrop(outfit);
+            return;
+        }
+
+        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.07f, 0.07f, 0.09f, 1f));
+        ImGui.Button("Outfit", size);
+        ImGui.PopStyleColor();
+        AcceptOutfitImageDrop(outfit);
     }
 
     // ── Settings panel ────────────────────────────────────────────────────────

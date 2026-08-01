@@ -27,6 +27,7 @@ public sealed class Plugin : IDalamudPlugin
     public static CameraService        Camera    { get; private set; } = null!;
     public static WardrobeShareService Share     { get; private set; } = null!;
     public static SlotIconService      SlotIcons { get; private set; } = null!;
+    public static ItemLookupService    ItemLookup { get; private set; } = null!;
 
     private readonly Configuration            _config;
     private readonly WardrobeService          _wardrobeService;
@@ -63,6 +64,7 @@ public sealed class Plugin : IDalamudPlugin
 
         _analysisService   = new ModAnalysisService(Log);
         _itemLookup        = new ItemLookupService(DataManager);
+        ItemLookup         = _itemLookup;
         _wardrobeService   = new WardrobeService(Penumbra, Glamourer, _config, Log, Framework);
         _screenshotSession = new ScreenshotSessionService(_wardrobeService, _config, Framework, Log, Camera);
         _backupService     = new BackupService(_config, Framework, Log);

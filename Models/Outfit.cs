@@ -3,34 +3,44 @@ using System.Collections.Generic;
 
 namespace WardrobePlugin.Models;
 
+/// <summary>
+/// A named set of wardrobe items that can be worn or removed together.
+/// </summary>
+/// <remarks>
+/// Stores wardrobe item IDs rather than a Glamourer state blob. Wearing an outfit therefore goes
+/// through the normal per-item path, which enables each item's Penumbra mods and applies their
+/// options — the part a Glamourer design cannot do on its own.
+/// </remarks>
+/// <summary>The two dye channels an equipment piece can carry.</summary>
+[Serializable]
+public class OutfitDye
+{
+    public byte Stain1 { get; set; }
+    public byte Stain2 { get; set; }
+
+    public bool IsUndyed => Stain1 == 0 && Stain2 == 0;
+}
+
 [Serializable]
 public class Outfit
 {
-    public Guid Id { get; set; } = Guid.NewGuid();
-    public string Name { get; set; } = "New Outfit";
-    public string Description { get; set; } = string.Empty;
-
-    /// <summary>Local filesystem path to the preview image (PNG/JPG).</summary>
+    public Guid    Id        { get; set; } = Guid.NewGuid();
+    public string  Name      { get; set; } = "New Outfit";
     public string? ImagePath { get; set; }
 
-    // ── Glamourer ────────────────────────────────────────────────────────────
-    /// <summary>Raw Glamourer state blob captured via GetStateBase64.</summary>
-    public string? GlamourerStateBase64 { get; set; }
+    /// <summary>Wardrobe item IDs in this outfit. Items deleted since are skipped when worn.</summary>
+    public List<Guid> ItemIds { get; set; } = new();
 
-    // ── Penumbra ─────────────────────────────────────────────────────────────
-    /// <summary>Name of the Penumbra collection the mod lives in.</summary>
-    public string PenumbraCollection { get; set; } = string.Empty;
+    /// <summary>
+    /// Dye channels to apply per item, keyed by item ID. Absent means undyed.
+    /// </summary>
+    /// <remarks>
+    /// Held on the outfit rather than the item so the same piece can be dyed differently in
+    /// different outfits, which is the point of saving a look.
+    /// </remarks>
+    public Dictionary<string, OutfitDye> Dyes { get; set; } = new();
 
-    /// <summary>Penumbra mod directory name (unique identifier for the mod).</summary>
-    public string PenumbraModDirectory { get; set; } = string.Empty;
+    public List<string> Tags { get; set; } = new();
 
-    /// <summary>Whether the mod should be enabled when wearing this outfit.</summary>
-    public bool ModEnabled { get; set; } = true;
-
-    /// <summary>Captured mod option settings: group name → selected option.</summary>
-    public Dictionary<string, string> ModSettings { get; set; } = new();
-
-    // ── Runtime state (not serialised) ────────────────────────────────────────
-    [NonSerialized]
-    public bool IsCurrentlyWorn;
+    public DateTime DateAdded { get; set; } = DateTime.UtcNow;
 }

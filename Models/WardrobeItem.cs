@@ -4,6 +4,15 @@ using System.Collections.Generic;
 namespace WardrobePlugin.Models;
 
 /// <summary>Ordering applied to the item grid. Values are persisted, so do not renumber.</summary>
+/// <summary>Ordering applied to the image browser. Values are persisted, so do not renumber.</summary>
+public enum ImageSortMode
+{
+    NameAsc     = 0,
+    NameDesc    = 1,
+    NewestFirst = 2,
+    OldestFirst = 3,
+}
+
 public enum ItemSortMode
 {
     NameAsc       = 0,

@@ -354,7 +354,9 @@ public class GlamourerIpc : IDisposable
     /// <summary>
     /// Equip a specific FFXIV game item in the given slot on the local player via Glamourer.
     /// </summary>
-    public bool SetItem(EquipSlot slot, ulong itemId)
+    /// <param name="stain1">Primary dye channel, 0 for undyed.</param>
+    /// <param name="stain2">Secondary dye channel, 0 for undyed.</param>
+    public bool SetItem(EquipSlot slot, ulong itemId, byte stain1 = 0, byte stain2 = 0)
     {
         if (_objects.LocalPlayer == null)
         {
@@ -369,8 +371,12 @@ public class GlamourerIpc : IDisposable
         }
         try
         {
-            var ec = _setItem.InvokeFunc(PlayerIndex, apiSlot, itemId, NoStains, 0u, 0uL);
-            _log.Debug($"[Wardrobe] Glamourer SetItem slot={slot}(api={apiSlot}) itemId={itemId} → ec={ec}");
+            // Must be List<byte>: a byte[] serialises as base64, which Glamourer cannot read back
+            var stains = stain1 == 0 && stain2 == 0 ? NoStains : new List<byte> { stain1, stain2 };
+
+            var ec = _setItem.InvokeFunc(PlayerIndex, apiSlot, itemId, stains, 0u, 0uL);
+            _log.Debug($"[Wardrobe] Glamourer SetItem slot={slot}(api={apiSlot}) itemId={itemId} " +
+                       $"stains={stain1},{stain2} → ec={ec}");
             return ec == 0;
         }
         catch (Exception ex)

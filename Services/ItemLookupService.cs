@@ -119,6 +119,45 @@ public class ItemLookupService
     public static ulong? FindEmperorsNewItem(EquipSlot slot) =>
         EmperorsNewIds.TryGetValue(slot, out var id) ? id : null;
 
+    private IList<(byte Id, string Name, uint Colour)>? _stains;
+
+    /// <summary>
+    /// All dyes, as ID, display name and packed RGB colour, with an "undyed" entry at ID 0.
+    /// </summary>
+    /// <remarks>
+    /// The Stain sheet's Color is 0xRRGGBB. It is converted to ImGui's 0xAABBGGRR here so callers
+    /// can pass it straight to a colour swatch.
+    /// </remarks>
+    public IList<(byte Id, string Name, uint Colour)> GetStains()
+    {
+        if (_stains != null) return _stains;
+
+        var list = new List<(byte, string, uint)> { (0, "Undyed", 0xFF404040) };
+
+        var sheet = _data.GetExcelSheet<Stain>();
+        if (sheet != null)
+        {
+            foreach (var stain in sheet)
+            {
+                if (stain.RowId == 0 || stain.RowId > byte.MaxValue) continue;
+
+                var name = stain.Name.ExtractText();
+                if (string.IsNullOrWhiteSpace(name)) continue;
+
+                var rgb = stain.Color;
+                var abgr = 0xFF000000u
+                           | ((rgb & 0x0000FFu) << 16)   // B
+                           | (rgb & 0x00FF00u)           // G
+                           | ((rgb & 0xFF0000u) >> 16);  // R
+
+                list.Add(((byte)stain.RowId, name, abgr));
+            }
+        }
+
+        _stains = list;
+        return _stains;
+    }
+
     private readonly Dictionary<EquipSlot, uint> _slotIcons = new();
     private bool _slotIconsBuilt;
 

@@ -18,7 +18,16 @@ public enum SessionState { Idle, WaitingForShot, Processing, Done }
 public class ScreenshotSessionService : IDisposable
 {
     public SessionState   State         { get; private set; } = SessionState.Idle;
+
+    /// <summary>Item being shot, or null when the current target is an outfit.</summary>
     public WardrobeItem?  CurrentItem   { get; private set; }
+
+    /// <summary>Outfit being shot, or null when the current target is a single item.</summary>
+    public Outfit?        CurrentOutfit { get; private set; }
+
+    /// <summary>Display name of whatever is being shot.</summary>
+    public string CurrentName => CurrentItem?.Name ?? CurrentOutfit?.Name ?? string.Empty;
+
     public int            TotalCount    { get; private set; }
     public int            CompletedCount { get; private set; }
 
@@ -46,7 +55,10 @@ public class ScreenshotSessionService : IDisposable
     private readonly IPluginLog      _log;
     private readonly CameraService   _camera;
 
-    private readonly Queue<WardrobeItem> _queue = new();
+    /// <summary>One thing to photograph: either a wardrobe item or a whole outfit.</summary>
+    private sealed record SessionTarget(WardrobeItem? Item, Outfit? Outfit);
+
+    private readonly Queue<SessionTarget> _queue = new();
     private FileSystemWatcher? _watcher;
     private DateTime           _watchFrom;
 
@@ -67,11 +79,26 @@ public class ScreenshotSessionService : IDisposable
     public bool CanStart =>
         FoldersReady && _config.WardrobeItems.Any(i => string.IsNullOrEmpty(i.ImagePath));
 
+    /// <summary>True when there are outfits without a preview image to photograph.</summary>
+    public bool CanStartOutfits =>
+        FoldersReady && _config.Outfits.Any(o => string.IsNullOrEmpty(o.ImagePath));
+
     public void Start()
     {
         _queue.Clear();
         foreach (var item in _config.WardrobeItems.Where(i => string.IsNullOrEmpty(i.ImagePath)))
-            _queue.Enqueue(item);
+            _queue.Enqueue(new SessionTarget(item, null));
+
+        if (_queue.Count == 0) return;
+        BeginSession();
+    }
+
+    /// <summary>Photographs every outfit that has no preview image yet.</summary>
+    public void StartOutfits()
+    {
+        _queue.Clear();
+        foreach (var outfit in _config.Outfits.Where(o => string.IsNullOrEmpty(o.ImagePath)))
+            _queue.Enqueue(new SessionTarget(null, outfit));
 
         if (_queue.Count == 0) return;
         BeginSession();
@@ -80,7 +107,14 @@ public class ScreenshotSessionService : IDisposable
     public void StartSingle(WardrobeItem item)
     {
         _queue.Clear();
-        _queue.Enqueue(item);
+        _queue.Enqueue(new SessionTarget(item, null));
+        BeginSession();
+    }
+
+    public void StartSingleOutfit(Outfit outfit)
+    {
+        _queue.Clear();
+        _queue.Enqueue(new SessionTarget(null, outfit));
         BeginSession();
     }
 
@@ -102,8 +136,9 @@ public class ScreenshotSessionService : IDisposable
     public void Stop()
     {
         DisposeWatcher();
-        State       = SessionState.Idle;
-        CurrentItem = null;
+        State         = SessionState.Idle;
+        CurrentItem   = null;
+        CurrentOutfit = null;
         _queue.Clear();
         Plugin.Glamourer.SetWeaponVisible(true);
         StateChanged?.Invoke();
@@ -127,14 +162,27 @@ public class ScreenshotSessionService : IDisposable
             return;
         }
 
-        CurrentItem = _queue.Dequeue();
-        if (StripOthers) _wardrobe.StripAll();
-        _wardrobe.WearItem(CurrentItem);
+        var target = _queue.Dequeue();
+        CurrentItem   = target.Item;
+        CurrentOutfit = target.Outfit;
+
+        if (target.Item != null)
+        {
+            if (StripOthers) _wardrobe.StripAll();
+            _wardrobe.WearItem(target.Item);
+        }
+        else if (target.Outfit != null)
+        {
+            // Always exclusive: an outfit shot should show the outfit and nothing else
+            _wardrobe.WearOutfit(target.Outfit, removeOthers: true);
+        }
+
         HideWeaponIfNeeded();
         Plugin.Penumbra.RedrawPlayer();
 
-        var slotKey = CurrentItem.Slot.ToString();
-        if (_config.SlotCameraPresets.TryGetValue(slotKey, out var preset))
+        // Camera presets are per slot, so they only apply to single items
+        if (target.Item != null &&
+            _config.SlotCameraPresets.TryGetValue(target.Item.Slot.ToString(), out var preset))
             _camera.Apply(preset);
 
         _watchFrom = DateTime.UtcNow;
@@ -152,19 +200,24 @@ public class ScreenshotSessionService : IDisposable
         State = SessionState.Processing;
         StateChanged?.Invoke();
 
-        var item = CurrentItem!;
+        var item   = CurrentItem;
+        var outfit = CurrentOutfit;
+        var name   = CurrentName;
+
         Task.Run(() =>
         {
             try
             {
                 WaitForFile(e.FullPath);
 
-                var dest = UniquePath(_config.ImagesFolder, Sanitize(item.Name) + ".jpg");
+                var dest = UniquePath(_config.ImagesFolder, Sanitize(name) + ".jpg");
                 CropAndConvert(e.FullPath, dest);
 
                 _framework.RunOnFrameworkThread(() =>
                 {
-                    item.ImagePath = dest;
+                    if (item != null)        item.ImagePath   = dest;
+                    else if (outfit != null) outfit.ImagePath = dest;
+
                     _config.Save();
                     CompletedCount++;
                     WearNext();
