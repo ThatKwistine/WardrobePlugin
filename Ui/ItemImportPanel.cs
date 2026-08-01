@@ -319,9 +319,7 @@ public class ItemImportPanel : IDisposable
             ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f), "No game item detected — Glamourer won't apply on Wear.");
         }
 
-        if (_editTarget != null && !_editTarget.Slot.IsCustomization())
-            DrawManualItemPicker(_editTarget);
-
+        // Must stay directly after the game item text — SameLine attaches to whatever was drawn last
         ImGui.SameLine();
         if (ImGui.SmallButton("Re-detect"))
             TryRedetectItem(_editTarget!);
@@ -342,6 +340,9 @@ public class ItemImportPanel : IDisposable
         {
             ImGui.TextDisabled("Click Re-detect to list other items sharing this model.");
         }
+
+        if (!_editTarget.Slot.IsCustomization())
+            DrawManualItemPicker(_editTarget);
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -425,6 +426,20 @@ public class ItemImportPanel : IDisposable
                 LoadEditModOptions();
         }
 
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.TextUnformatted("Variants");
+        ImGui.TextDisabled("A copy of this item with the same mods, for a different set of");
+        ImGui.TextDisabled("mod options — another colour or style. It becomes its own item.");
+        ImGui.Spacing();
+
+        if (ImGui.Button("Create variant of this item", new Vector2(-1, 0)))
+            CreateVariant(_editTarget!);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Saves this item, then opens a copy with the same mods, collections\n" +
+                             "and options already filled in. Change its options and image from there.\n\n" +
+                             "The original is left exactly as it is.");
+
         // Save / Cancel at bottom
         ImGui.Spacing();
         ImGui.Separator();
@@ -476,11 +491,17 @@ public class ItemImportPanel : IDisposable
                 _editTarget.Mods[i].Options      = newSingle;
                 _editTarget.Mods[i].MultiOptions = newMulti;
 
+                // Propagate to items in *other* slots only. Items sharing a mod across slots are
+                // worn together, and Penumbra can only hold one option state per mod, so their
+                // options must agree. Items in the same slot are variants — different option sets
+                // for the same mod, never worn at once — and must be allowed to differ.
                 var modDir = _editTarget.Mods[i].ModDirectory;
                 var coll   = _editTarget.Mods[i].Collection;
                 foreach (var other in _config.WardrobeItems)
                 {
                     if (other == _editTarget) continue;
+                    if (other.Slot == _editTarget.Slot) continue;
+
                     foreach (var otherMod in other.Mods)
                     {
                         if (otherMod.ModDirectory.Equals(modDir, StringComparison.OrdinalIgnoreCase) &&
@@ -510,6 +531,56 @@ public class ItemImportPanel : IDisposable
             Close();
             return;
         }
+    }
+
+    /// <summary>
+    /// Clones an item as a new wardrobe entry, so it can be given a different set of mod options.
+    /// </summary>
+    /// <remarks>
+    /// The copy inherits everything — mods, collections, current option selections, detected game
+    /// item and image — so only what differs has to be changed. Mod references are deep-copied;
+    /// sharing them would make editing one variant silently rewrite the other.
+    /// The copy is opened for editing immediately, since it always needs at least a rename.
+    /// </remarks>
+    private void CreateVariant(WardrobeItem source)
+    {
+        // Persist any in-progress edits first, so the copy reflects what is on screen
+        source.Name      = _editName.Trim();
+        source.ImagePath = string.IsNullOrEmpty(_editImage) ? null : _editImage.Trim();
+        source.Slot      = EquipSlotEx.All[_editSlotIdx];
+        source.Tags      = new List<string>(_editTags);
+
+        var copy = new WardrobeItem
+        {
+            Name              = $"{source.Name} (variant)",
+            Slot              = source.Slot,
+            ImagePath         = source.ImagePath,
+            GlamourerItemId   = source.GlamourerItemId,
+            GlamourerItemName = source.GlamourerItemName,
+            ModelSetId        = source.ModelSetId,
+            HairIdByRace      = new Dictionary<string, ushort>(source.HairIdByRace),
+            Tags              = new List<string>(source.Tags),
+            IsFavorite        = false,
+        };
+
+        foreach (var mod in source.Mods)
+        {
+            copy.Mods.Add(new ModReference
+            {
+                Label        = mod.Label,
+                Collection   = mod.Collection,
+                ModDirectory = mod.ModDirectory,
+                ModName      = mod.ModName,
+                Options      = new Dictionary<string, string>(mod.Options),
+                MultiOptions = mod.MultiOptions.ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value)),
+            });
+        }
+
+        _config.WardrobeItems.Add(copy);
+        _config.Save();
+        _log.Information($"[Wardrobe] Created variant '{copy.Name}' from '{source.Name}'");
+
+        OpenEdit(copy);
     }
 
     /// <summary>
