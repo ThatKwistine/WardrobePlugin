@@ -11,7 +11,7 @@
     <!-- Must match AssemblyVersion in WardrobePlugin.json AND both version fields in
          pluginmaster.json, and must increase for Dalamud to offer an update. All three files
          are bumped together when releasing — see RELEASING.md. -->
-    <Version>1.2.1.1</Version>
+    <Version>1.2.1.2</Version>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
     <NoWarn>MSB3277;MSB3270</NoWarn>

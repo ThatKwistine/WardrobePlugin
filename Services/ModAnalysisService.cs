@@ -30,16 +30,26 @@ public class ModAnalysisService
 {
     private readonly IPluginLog? _log;
 
+    /// <summary>Game paths seen during the current Analyze call, used to spot a layout we cannot read.</summary>
+    private int _pathsSeen;
+
     public ModAnalysisService(IPluginLog? log = null) => _log = log;
 
-    // chara/equipment/e{SetId}/model/c{race}e{SetId}_{slot}.mdl  — group 1 = SetId, group 2 = slot suffix
+    // chara/equipment/e{SetId}/{model|material|texture}/…c{race}e{SetId}_{slot}…
+    // Group 1 = SetId, group 2 = slot suffix.
+    //
+    // Materials and textures count, not just models: plenty of mods retexture an existing gear set
+    // and ship no .mdl at all, and requiring one made them look like they touched nothing.
+    //   chara/equipment/e6106/model/c0201e6106_top.mdl
+    //   chara/equipment/e6106/material/v0001/mt_c0201e6106_top_a.mtrl
+    //   chara/equipment/e6106/texture/v01_c0201e6106_top_base_346649790.tex
     private static readonly Regex EquipPattern =
-        new(@"chara/equipment/e(\d+)/model/c\d+e\d+_(met|top|glv|dwn|sho)\.mdl",
+        new(@"chara/equipment/e(\d+)/(?:model|material|texture)/[^""]*?c\d+e\d+_(met|top|glv|dwn|sho)[_.]",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    // chara/accessory/a{SetId}/model/c{race}a{SetId}_{slot}.mdl  — group 1 = SetId, group 2 = slot suffix
+    // chara/accessory/a{SetId}/{model|material|texture}/…c{race}a{SetId}_{slot}…
     private static readonly Regex AccessoryPattern =
-        new(@"chara/accessory/a(\d+)/model/c\d+a\d+_(ear|nek|wrs|rir|ril)\.mdl",
+        new(@"chara/accessory/a(\d+)/(?:model|material|texture)/[^""]*?c\d+a\d+_(ear|nek|wrs|rir|ril)[_.]",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static readonly Regex WeaponPattern =
@@ -71,6 +81,7 @@ public class ModAnalysisService
     /// </summary>
     public ModAnalysisResult Analyze(string modFolderPath)
     {
+        _pathsSeen  = 0;
         var slots   = new HashSet<EquipSlot>();
         var setIds  = new Dictionary<EquipSlot, ushort>();
         var hairIds = new Dictionary<int, ushort>();
@@ -85,24 +96,34 @@ public class ModAnalysisService
             foreach (var key in ReadFileKeys(defaultFile))
                 ClassifyPath(key, slots, setIds, hairIds);
 
-        // group_NNN_*.json
+        // group_NNN_*.json — the older layout, one file per group
         foreach (var groupFile in Directory.GetFiles(modFolderPath, "group_*.json").OrderBy(x => x))
         {
             var g = TryReadGroup(groupFile);
             if (g is null) continue;
-
-            var optNames = new List<string>();
-            foreach (var opt in g.Options)
-            {
-                optNames.Add(opt.Name);
-                if (opt.Files != null)
-                    foreach (var key in opt.Files.Keys)
-                        ClassifyPath(key, slots, setIds, hairIds);
-            }
-
-            if (optNames.Count > 0)
-                groups.Add(new ModOptionGroup(g.Name, ClassifyGroupType(g.Type, g.Name), optNames));
+            AddGroup(g, slots, setIds, hairIds, groups);
         }
+
+        // meta.json — FileVersion 4 and later put every group inside meta.json instead, with no
+        // default_mod.json and no group files at all. Reading only the old layout found nothing
+        // for such mods, so they appeared to touch no slots whatsoever.
+        var meta = ReadMeta(Path.Combine(modFolderPath, "meta.json"));
+        foreach (var g in meta?.Groups ?? new List<GroupJson>())
+            AddGroup(g, slots, setIds, hairIds, groups);
+
+        // Penumbra's on-disk format is barely documented and has changed once already. A mod that
+        // yields no game paths at all is nearly always a layout this parser does not understand
+        // rather than a genuinely empty mod, and without this it fails silently — the import panel
+        // just says no slots were detected, which looks like a normal outcome.
+        if (_pathsSeen == 0)
+            _log?.Warning($"[Wardrobe] Analysed '{Path.GetFileName(modFolderPath)}' " +
+                          $"(meta FileVersion {meta?.FileVersion.ToString() ?? "none"}) and found no game " +
+                          $"paths at all. If Penumbra shows changed items for it, this parser does not " +
+                          $"understand its layout — please report it.");
+        else
+            _log?.Debug($"[Wardrobe] Analysed '{Path.GetFileName(modFolderPath)}' " +
+                        $"(meta FileVersion {meta?.FileVersion.ToString() ?? "none"}): " +
+                        $"{_pathsSeen} path(s), {groups.Count} group(s), {slots.Count} slot(s)");
 
         slots.Remove(EquipSlot.Unknown);
 
@@ -170,8 +191,50 @@ public class ModAnalysisService
         catch { return null; }
     }
 
-    private static void ClassifyPath(string gamePath, HashSet<EquipSlot> slots, Dictionary<EquipSlot, ushort> setIds, Dictionary<int, ushort> hairIds)
+    /// <summary>
+    /// meta.json, which from FileVersion 4 also carries the option groups.
+    /// </summary>
+    /// <remarks>
+    /// Unknown fields are ignored rather than treated as an error, so a future format revision
+    /// degrades to reading whatever it still recognises instead of failing outright.
+    /// </remarks>
+    private MetaJson? ReadMeta(string metaPath)
     {
+        if (!File.Exists(metaPath)) return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<MetaJson>(File.ReadAllText(metaPath), JsonOpts);
+        }
+        catch (Exception ex)
+        {
+            _log?.Warning($"[Wardrobe] Could not read {metaPath}: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>Records a group's option names and classifies every game path it references.</summary>
+    private void AddGroup(GroupJson g, HashSet<EquipSlot> slots, Dictionary<EquipSlot, ushort> setIds,
+        Dictionary<int, ushort> hairIds, List<ModOptionGroup> groups)
+    {
+        var optNames = new List<string>();
+        foreach (var opt in g.Options)
+        {
+            optNames.Add(opt.Name);
+            if (opt.Files == null) continue;
+
+            foreach (var key in opt.Files.Keys)
+                ClassifyPath(key, slots, setIds, hairIds);
+        }
+
+        if (optNames.Count > 0)
+            groups.Add(new ModOptionGroup(g.Name, ClassifyGroupType(g.Type, g.Name), optNames));
+    }
+
+    private void ClassifyPath(string gamePath, HashSet<EquipSlot> slots, Dictionary<EquipSlot, ushort> setIds, Dictionary<int, ushort> hairIds)
+    {
+        _pathsSeen++;
+
         var m = EquipPattern.Match(gamePath);
         if (m.Success)
         {
@@ -250,6 +313,16 @@ public class ModAnalysisService
     }
 
     // ── JSON POCOs ────────────────────────────────────────────────────────────
+
+    /// <summary>meta.json for FileVersion 4+, which carries the groups inline.</summary>
+    private class MetaJson
+    {
+        [JsonPropertyName("FileVersion")]
+        public int FileVersion { get; set; }
+
+        [JsonPropertyName("Groups")]
+        public List<GroupJson>? Groups { get; set; }
+    }
 
     private class GroupJson
     {
