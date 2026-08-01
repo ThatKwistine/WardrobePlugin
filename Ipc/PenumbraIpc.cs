@@ -33,6 +33,9 @@ public class PenumbraIpc : IDisposable
     // GetModDirectory() → the Penumbra mods root directory on disk (no args)
     private readonly ICallGateSubscriber<string> _getModDirectory;
 
+    // ApiVersion.V5() → (major, minor). Throws if Penumbra is not loaded.
+    private readonly ICallGateSubscriber<(int Major, int Minor)> _apiVersion;
+
     // RedrawObject.V5(int gameObjectIndex, int redrawType) → void  (index 0 = local player)
     private readonly ICallGateSubscriber<int, int, object?> _redrawObject;
 
@@ -72,9 +75,31 @@ public class PenumbraIpc : IDisposable
 
         _getModDirectory = pi.GetIpcSubscriber<string>(
             "Penumbra.GetModDirectory");
+
+        _apiVersion = pi.GetIpcSubscriber<(int, int)>("Penumbra.ApiVersion.V5");
     }
 
     // ── Public API ────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Whether Penumbra is loaded and responding, with its version for display.
+    /// </summary>
+    /// <remarks>
+    /// Asking for the API version is the cheapest reliable probe: the call throws when the plugin
+    /// is absent, rather than returning something that could be mistaken for real data.
+    /// </remarks>
+    public (bool Available, string Version) CheckAvailable()
+    {
+        try
+        {
+            var (major, minor) = _apiVersion.InvokeFunc();
+            return (true, $"{major}.{minor}");
+        }
+        catch
+        {
+            return (false, string.Empty);
+        }
+    }
 
     public IList<string> GetCollections()
     {

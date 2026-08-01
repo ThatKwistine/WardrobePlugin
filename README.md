@@ -43,6 +43,18 @@ A Dalamud plugin for managing individual clothing items across **Penumbra** mods
 
 ---
 
+## First run
+
+On a fresh install the window opens into a short setup covering the settings that cause the most
+trouble when left unset: your **Penumbra collection**, the **images** and **screenshots** folders,
+and **backups**. Every step is skippable and everything is editable afterwards in Settings, where
+**Run first-time setup again** reopens it.
+
+Existing configurations skip this automatically — anything already imported or configured is taken
+as evidence the plugin is already set up.
+
+---
+
 ## Adding an item
 
 1. Open the wardrobe: `/wardrobe` or click the plugin icon
@@ -151,6 +163,7 @@ authoritative reference for these labels and signatures — check it before assu
 
 ## Notes
 
+- **Reverting customisation mods.** Set **Settings → Revert customisation mods to** to a Glamourer design holding your character's normal look. Reverting a hair, face or skin item then re-applies that design's *customisations only* — its equipment is ignored, so whatever the wardrobe currently has equipped is untouched. Without a design set, the plugin falls back to restoring just the hairstyle number it noted when the item was applied.
 - **Customisation mods work differently to gear.** Hair, Face, Tail, Ears (Viera) and Skin replace part of the character model (`chara/human/…`) rather than an equipped item, so they have no game item, no shared-model picker, and no "Emperor's New" to strip to. Wearing one just enables its Penumbra mod and applies its options; unwearing disables it. **Strip** deliberately leaves them alone — it cannot remove a character's hair. Note this toggles how a hairstyle *looks*; it cannot switch which hairstyle your character has, as Glamourer's IPC exposes no customisation setter (only `SetItem`, `SetBonusItem` and `SetMetaState`). Pick the matching hairstyle in the character screen or Glamourer yourself.
 - **Slots contributed by supplementary mods.** Slot detection covers the primary mod *and* every supplementary mod, so an upscale that adds legs to a body-and-hands mod still offers Legs at import. Such slots are marked `· from supplement`. The slot list rebuilds whenever supplementary mods are added, removed or swapped, preserving anything already typed or chosen. Where both mods provide a model for the same slot, the primary mod's wins.
 - **Shared models.** Many FFXIV items share one model — the Hakama legs model backs Asuran, Yasha, Yanxian, Nameless and more. Detection picks the lowest row ID among them, which is arbitrary. When more than one item shares the detected model, a **Game item** dropdown appears (per slot when importing, and in the edit panel) listing every candidate so the intended one can be chosen. This matters beyond cosmetics: the stored item ID is what Glamourer equips and what worn-detection compares against.

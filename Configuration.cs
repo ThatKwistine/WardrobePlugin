@@ -78,6 +78,27 @@ public class Configuration : IPluginConfiguration
     public ItemSortMode SortMode { get; set; } = ItemSortMode.NameAsc;
 
     /// <summary>
+    /// Switch the character to the hairstyle a hair mod replaces when applying it. Without this a
+    /// hair mod only shows if that hairstyle already happens to be selected.
+    /// </summary>
+    public bool ApplyHairstyleWithHairMods { get; set; } = true;
+
+    /// <summary>
+    /// Hairstyle the character had before a wardrobe hair item changed it, restored on revert.
+    /// Only used when no <see cref="RevertDesignId"/> is configured.
+    /// </summary>
+    public int? HairstyleBeforeWardrobe { get; set; }
+
+    /// <summary>
+    /// Glamourer design holding your character's normal look. Reverting a customisation mod
+    /// re-applies only its customisation half, so equipment is left alone.
+    /// </summary>
+    public Guid? RevertDesignId { get; set; }
+
+    /// <summary>Display name of <see cref="RevertDesignId"/>, so settings can show it without a lookup.</summary>
+    public string RevertDesignName { get; set; } = string.Empty;
+
+    /// <summary>
     /// Hide mods that are already imported from the import panel's mod list entirely, rather
     /// than showing them greyed out.
     /// </summary>
@@ -109,7 +130,29 @@ public class Configuration : IPluginConfiguration
     /// </summary>
     public string LastBackupHash { get; set; } = string.Empty;
 
+    /// <summary>First-run setup has been completed or skipped.</summary>
+    public bool OnboardingCompleted { get; set; }
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
+
+    /// <summary>
+    /// Marks setup as done for configs that predate it, so existing users are not shown a first-run
+    /// wizard. Anything already imported or configured is treated as evidence of a set-up plugin.
+    /// Returns true if anything changed.
+    /// </summary>
+    public bool MigrateOnboarding()
+    {
+        if (OnboardingCompleted) return false;
+
+        var alreadyInUse = WardrobeItems.Count > 0
+                           || !string.IsNullOrEmpty(ImagesFolder)
+                           || !string.IsNullOrEmpty(ScreenshotsFolder)
+                           || !string.IsNullOrEmpty(DefaultCollection);
+        if (!alreadyInUse) return false;
+
+        OnboardingCompleted = true;
+        return true;
+    }
 
     /// <summary>
     /// Backfills <see cref="WardrobeItem.DateAdded"/> for items saved before that field existed.

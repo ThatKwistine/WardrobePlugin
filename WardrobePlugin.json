@@ -3,7 +3,7 @@
   "Name":              "Wardrobe",
   "Description":       "A visual wardrobe for Penumbra mods. Each entry targets a single equipment slot, so you can wear or unwear exactly what you want without disturbing the rest of your look. Handles items spanning several mods, mod option groups, hair and other customisation mods, image previews, tags, favourites, search and sort, and automated screenshot sessions.",
   "InternalName":      "WardrobePlugin",
-  "AssemblyVersion":   "1.0.0.1",
+  "AssemblyVersion":   "1.0.0.2",
   "RepoUrl":           "https://github.com/ThatKwistine/WardrobePlugin",
   "ApplicableVersion": "any",
   "DalamudApiLevel":   15,

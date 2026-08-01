@@ -48,6 +48,7 @@ public sealed class Plugin : IDalamudPlugin
         _config = pi.GetPluginConfig() as Configuration ?? new Configuration();
         _config.LoadPresets();
         if (_config.MigrateDateAdded()) _config.Save();
+        if (_config.MigrateOnboarding()) _config.Save();
 
         // Glamourer state is not persisted across sessions, so nothing is worn on load
         if (_config.WornItems.Count > 0)

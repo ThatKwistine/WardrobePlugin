@@ -1349,6 +1349,9 @@ public class ItemImportPanel : IDisposable
                 GlamourerItemId   = glamId,
                 GlamourerItemName = glamName,
                 ModelSetId        = setId,
+                HairIdByRace      = slot == EquipSlot.Hair && _analysisResult != null
+                    ? _analysisResult.HairIdsByRace.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value)
+                    : new Dictionary<string, ushort>(),
             };
             item.Mods.Add(new ModReference
             {
@@ -1514,8 +1517,24 @@ public class ItemImportPanel : IDisposable
         var result = _analysis.Analyze(path);
         if (result.SlotSetIds.TryGetValue(item.Slot, out var setId))
         {
-            // Remember the model even if the lookup fails, so the override list can still be offered
+            // Persist this regardless of the item lookup. For customisation slots it is the
+            // hairstyle (or equivalent) number and there is no game item to find, so saving only
+            // on a successful lookup would silently discard it.
             item.ModelSetId = setId;
+
+            if (item.Slot == EquipSlot.Hair)
+                item.HairIdByRace = result.HairIdsByRace
+                    .ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
+
+            _config.Save();
+
+            if (item.Slot.IsCustomization())
+            {
+                var perRace = item.HairIdByRace.Count > 0
+                    ? $" ({item.HairIdByRace.Count} race variants)" : string.Empty;
+                _log.Information($"[Wardrobe] Re-detected '{item.Name}': {item.Slot.DisplayName()} id {setId}{perRace}");
+                return;
+            }
 
             var found = _itemLookup.FindBestItem(setId, item.Slot);
             if (found.HasValue)
@@ -1527,7 +1546,7 @@ public class ItemImportPanel : IDisposable
                 return;
             }
         }
-        _log.Warning($"[Wardrobe] Re-detect: no FFXIV item found for slot {item.Slot} in mod '{primaryMod.ModDirectory}'");
+        _log.Warning($"[Wardrobe] Re-detect: nothing detected for slot {item.Slot} in mod '{primaryMod.ModDirectory}'");
     }
 
     private void ResetImport()

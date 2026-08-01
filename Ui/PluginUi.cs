@@ -71,6 +71,17 @@ public class PluginUi : Window, IDisposable
     // Collections for the default-collection picker; loaded lazily so we don't hit IPC every frame
     private IList<string>? _settingsCollections;
 
+    // Glamourer designs for the revert-design picker, loaded lazily for the same reason
+    private IList<(Guid Id, string Name)>? _settingsDesigns;
+
+    // First-run setup
+    private int _onboardStep;
+    private const int OnboardLastStep = 4;
+
+    // Dependency probes, cached so the welcome step is not an IPC call every frame
+    private (bool Available, string Version)? _penumbraCheck;
+    private (bool Available, string Version)? _glamourerCheck;
+
     // Image browser state
     private string[] _browserImages      = Array.Empty<string>();
     private string   _lastBrowserFolder  = string.Empty;
@@ -142,6 +153,13 @@ public class PluginUi : Window, IDisposable
 
     public override void Draw()
     {
+        if (!_config.OnboardingCompleted)
+        {
+            DrawOnboarding();
+            _fileDialog.Draw();
+            return;
+        }
+
         if (CompactActive)
         {
             DrawCompactSession();
@@ -193,6 +211,320 @@ public class PluginUi : Window, IDisposable
         _fileDialog.Draw();
 
         DrawSessionHud();
+    }
+
+    // ── First-run setup ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Walks a new user through the settings that cause the most trouble when left unset:
+    /// the collection, the two folders, and backups.
+    /// </summary>
+    /// <remarks>
+    /// Replaces the whole window rather than opening a second one, so it cannot be lost behind
+    /// the main UI. Every step is skippable and everything here is editable later in Settings.
+    /// </remarks>
+    private void DrawOnboarding()
+    {
+        ImGui.TextUnformatted("Welcome to Wardrobe");
+        ImGui.SameLine();
+        ImGui.TextDisabled($"·  step {_onboardStep + 1} of {OnboardLastStep + 1}");
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var bodyH = ImGui.GetContentRegionAvail().Y - ImGui.GetFrameHeightWithSpacing() - 8f;
+        if (ImGui.BeginChild("##onboardBody", new Vector2(-1, bodyH)))
+        {
+            switch (_onboardStep)
+            {
+                case 0: DrawOnboardIntro();       break;
+                case 1: DrawOnboardCollection();  break;
+                case 2: DrawOnboardImages();      break;
+                case 3: DrawOnboardScreenshots(); break;
+                case 4: DrawOnboardBackups();     break;
+            }
+        }
+        ImGui.EndChild();
+
+        ImGui.Separator();
+
+        if (_onboardStep > 0)
+        {
+            if (ImGui.Button("Back", new Vector2(90, 0))) _onboardStep--;
+            ImGui.SameLine();
+        }
+
+        if (_onboardStep < OnboardLastStep)
+        {
+            if (ImGui.Button("Next", new Vector2(90, 0))) _onboardStep++;
+        }
+        else
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.13f, 0.38f, 0.13f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.18f, 0.55f, 0.18f, 1f));
+            if (ImGui.Button("Finish", new Vector2(90, 0)))
+            {
+                _config.OnboardingCompleted = true;
+                _config.Save();
+            }
+            ImGui.PopStyleColor(2);
+        }
+
+        // Right-aligned, so it is available but never the obvious button to press
+        var skip = "Skip setup";
+        var skipW = ImGui.CalcTextSize(skip).X + ImGui.GetStyle().FramePadding.X * 2;
+        ImGui.SameLine();
+        var rightX = ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - skipW;
+        if (rightX > ImGui.GetCursorPosX()) ImGui.SetCursorPosX(rightX);
+        if (ImGui.Button(skip))
+        {
+            _config.OnboardingCompleted = true;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("All of this can be set later in Settings.");
+    }
+
+    private void DrawOnboardIntro()
+    {
+        ImGui.TextWrapped("Wardrobe turns your Penumbra mods into a visual, per-slot wardrobe. " +
+                          "Each item covers one equipment slot, so you can change one piece " +
+                          "without disturbing the rest of your look.");
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ImGui.TextUnformatted("Required plugins");
+        ImGui.Spacing();
+
+        // Probed once rather than per frame; Re-check re-runs it after installing something
+        var penumbra  = _penumbraCheck  ??= Plugin.Penumbra.CheckAvailable();
+        var glamourer = _glamourerCheck ??= Plugin.Glamourer.CheckAvailable();
+
+        DrawDependencyRow("Penumbra",  penumbra,  "Supplies and toggles the mods themselves.");
+        DrawDependencyRow("Glamourer", glamourer, "Equips the matching game item for each mod.");
+
+        ImGui.Spacing();
+        if (ImGui.SmallButton("Re-check"))
+        {
+            _penumbraCheck  = null;
+            _glamourerCheck = null;
+        }
+
+        if (!penumbra.Available || !glamourer.Available)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f),
+                "Install the missing plugin, then press Re-check.");
+            ImGui.TextDisabled("Setup can continue, but Wardrobe will not work without both.");
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        ImGui.TextWrapped("This short setup covers the four settings that cause the most confusion " +
+                          "when they are left unset. It takes about a minute, and nothing here is " +
+                          "permanent — it can all be changed later in Settings.");
+
+        // Re-running this is a normal thing to do, so say plainly that it cannot cost anything.
+        // The wizard only ever writes those settings; it never touches items.
+        if (_config.WardrobeItems.Count > 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.4f, 1f),
+                $"Your {_config.WardrobeItems.Count} wardrobe item(s) are not affected.");
+            ImGui.TextDisabled("Each step below already shows your current setting. Setup only");
+            ImGui.TextDisabled("changes what you change, and never touches items or images.");
+        }
+    }
+
+    private static void DrawDependencyRow(string name, (bool Available, string Version) status, string why)
+    {
+        if (status.Available)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.4f, 0.9f, 0.4f, 1f));
+            ImGui.TextUnformatted("✔");
+            ImGui.PopStyleColor();
+        }
+        else
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.4f, 0.4f, 1f));
+            ImGui.TextUnformatted("✕");
+            ImGui.PopStyleColor();
+        }
+
+        ImGui.SameLine();
+        ImGui.TextUnformatted(name);
+        ImGui.SameLine();
+        ImGui.TextDisabled(status.Available ? $"— found (API {status.Version})" : "— not found");
+        ImGui.TextDisabled($"    {why}");
+    }
+
+    private void DrawOnboardCollection()
+    {
+        ImGui.TextUnformatted("Which Penumbra collection does your character use?");
+        ImGui.Spacing();
+        ImGui.TextWrapped("This is the most important setting. A mod only affects your character " +
+                          "if it is enabled in the collection that character actually uses. Enable " +
+                          "it anywhere else and Penumbra reports success, the log looks clean, and " +
+                          "nothing appears.");
+        ImGui.Spacing();
+        ImGui.TextDisabled("In Penumbra, see Collections → Your Character. Note that an");
+        ImGui.TextDisabled("Individual Assignment for that character overrules it.");
+        ImGui.Spacing();
+
+        _settingsCollections ??= Plugin.Penumbra.GetCollections();
+
+        var names  = new[] { "(first available)" }.Concat(_settingsCollections).ToArray();
+        var curIdx = 0;
+        if (!string.IsNullOrEmpty(_config.DefaultCollection))
+        {
+            var found = Array.FindIndex(names,
+                n => n.Equals(_config.DefaultCollection, StringComparison.OrdinalIgnoreCase));
+            if (found >= 0) curIdx = found;
+        }
+
+        ImGui.SetNextItemWidth(300);
+        if (ImGui.BeginCombo("##onboardColl", names[curIdx]))
+        {
+            for (var i = 0; i < names.Length; i++)
+            {
+                if (ImGui.Selectable(names[i], i == curIdx))
+                {
+                    _config.DefaultCollection = i == 0 ? string.Empty : names[i];
+                    _config.Save();
+                }
+            }
+            ImGui.EndCombo();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Refresh##onboardColl"))
+            _settingsCollections = Plugin.Penumbra.GetCollections();
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Imports will start with this collection selected.");
+    }
+
+    private void DrawOnboardImages()
+    {
+        ImGui.TextUnformatted("Where should item images come from?");
+        ImGui.Spacing();
+        ImGui.TextWrapped("Pick a folder of images and they appear in the Image Browser, ready to " +
+                          "drag onto item cards as previews. Optional — items work fine without one.");
+        ImGui.Spacing();
+
+        if (string.IsNullOrEmpty(_config.ImagesFolder))
+            ImGui.TextDisabled("No folder selected.");
+        else
+            ImGui.TextUnformatted(_config.ImagesFolder);
+
+        ImGui.Spacing();
+        if (ImGui.Button(" Browse…##onboardImg "))
+        {
+            var start = Directory.Exists(_config.ImagesFolder)
+                ? _config.ImagesFolder
+                : Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
+
+            _fileDialog.OpenFolderDialog("Select Images Folder", (ok, path) =>
+            {
+                if (!ok) return;
+                _config.ImagesFolder = path;
+                _config.Save();
+                RefreshBrowserImages();
+            }, start);
+        }
+    }
+
+    private void DrawOnboardScreenshots()
+    {
+        ImGui.TextUnformatted("Where does FFXIV save your screenshots?");
+        ImGui.Spacing();
+        ImGui.TextWrapped("Wardrobe watches this folder during a screenshot session: it wears each " +
+                          "item without a preview, waits for you to take a shot, then crops it and " +
+                          "assigns it automatically.");
+        ImGui.Spacing();
+
+        if (string.IsNullOrEmpty(_config.ScreenshotsFolder))
+            ImGui.TextDisabled("No folder configured.");
+        else
+            ImGui.TextUnformatted(_config.ScreenshotsFolder);
+
+        var defaultFolder = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            "My Games", "FINAL FANTASY XIV - A Realm Reborn", "screenshots");
+
+        ImGui.Spacing();
+        if (Directory.Exists(defaultFolder) && _config.ScreenshotsFolder != defaultFolder)
+        {
+            if (ImGui.Button(" Use the usual location "))
+            {
+                _config.ScreenshotsFolder = defaultFolder;
+                _config.Save();
+            }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip(defaultFolder);
+            ImGui.SameLine();
+        }
+
+        if (ImGui.Button(" Browse…##onboardSs "))
+        {
+            var start = Directory.Exists(_config.ScreenshotsFolder) ? _config.ScreenshotsFolder
+                      : Directory.Exists(defaultFolder)             ? defaultFolder
+                      : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
+            _fileDialog.OpenFolderDialog("Select FFXIV Screenshots Folder", (ok, path) =>
+            {
+                if (!ok) return;
+                _config.ScreenshotsFolder = path;
+                _config.Save();
+            }, start);
+        }
+    }
+
+    private void DrawOnboardBackups()
+    {
+        ImGui.TextUnformatted("Keep backups of your wardrobe?");
+        ImGui.Spacing();
+        ImGui.TextWrapped("Your wardrobe is a single config file. Backups copy it to a folder of " +
+                          "your choosing once an hour, and only when something has actually " +
+                          "changed, so an idle session produces nothing.");
+        ImGui.Spacing();
+        ImGui.TextDisabled("Strongly recommended once you have more than a few items.");
+        ImGui.Spacing();
+
+        var enabled = _config.BackupEnabled;
+        if (ImGui.Checkbox("Enable hourly backups##onboard", ref enabled))
+        {
+            _config.BackupEnabled = enabled;
+            _config.Save();
+        }
+
+        ImGui.Spacing();
+        if (string.IsNullOrEmpty(_config.BackupFolder))
+            ImGui.TextDisabled("No backup folder selected.");
+        else
+            ImGui.TextUnformatted(_config.BackupFolder);
+
+        ImGui.Spacing();
+        if (ImGui.Button(" Browse…##onboardBackup "))
+        {
+            var start = Directory.Exists(_config.BackupFolder)
+                ? _config.BackupFolder
+                : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
+            _fileDialog.OpenFolderDialog("Select Backup Folder", (ok, path) =>
+            {
+                if (!ok) return;
+                _config.BackupFolder = path;
+                _config.Save();
+            }, start);
+        }
+
+        if (_config.BackupEnabled && string.IsNullOrEmpty(_config.BackupFolder))
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f),
+                "Backups are on but no folder is set — nothing will be written.");
+        }
     }
 
     // ── Toolbar ───────────────────────────────────────────────────────────────
@@ -821,19 +1153,25 @@ public class PluginUi : Window, IDisposable
         // Buttons
         var btnW = (CardWidth - CardPad * 2 - 6) / 2;
 
+        // Customisation mods are not worn or removed — you always have hair. They are applied,
+        // and "removing" one just turns the mod back off.
+        var customization = item.Slot.IsCustomization();
+
         if (worn)
         {
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.55f, 0.08f, 0.08f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.75f, 0.15f, 0.15f, 1f));
-            if (ImGui.Button("Unequip", new Vector2(btnW, 0)))
+            if (ImGui.Button(customization ? "Revert" : "Unequip", new Vector2(btnW, 0)))
                 _wardrobe.UnwearItem(item);
             ImGui.PopStyleColor(2);
+            if (customization && ImGui.IsItemHovered())
+                ImGui.SetTooltip("Turn this mod back off, restoring the default appearance.");
         }
         else
         {
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.13f, 0.38f, 0.13f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.18f, 0.55f, 0.18f, 1f));
-            if (ImGui.Button("Wear", new Vector2(btnW, 0)))
+            if (ImGui.Button(customization ? "Apply" : "Wear", new Vector2(btnW, 0)))
                 _wardrobe.WearItem(item);
             ImGui.PopStyleColor(2);
         }
@@ -1231,6 +1569,55 @@ public class PluginUi : Window, IDisposable
 
     // ── Settings panel ────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Picks the Glamourer design used as the appearance to return to when reverting a
+    /// customisation mod.
+    /// </summary>
+    private void DrawRevertDesignPicker()
+    {
+        ImGui.TextDisabled("Revert customisation mods to");
+        ImGui.TextDisabled("A Glamourer design holding your character's normal look. Only its");
+        ImGui.TextDisabled("customisations are used, so its equipment is ignored entirely.");
+        ImGui.Spacing();
+
+        _settingsDesigns ??= Plugin.Glamourer.GetDesigns();
+
+        var current = _config.RevertDesignId.HasValue
+            ? (string.IsNullOrEmpty(_config.RevertDesignName) ? "(unnamed design)" : _config.RevertDesignName)
+            : "(none — put back the previous hairstyle)";
+
+        ImGui.SetNextItemWidth(260);
+        if (ImGui.BeginCombo("##revertdesign", current))
+        {
+            if (ImGui.Selectable("(none — put back the previous hairstyle)", !_config.RevertDesignId.HasValue))
+            {
+                _config.RevertDesignId   = null;
+                _config.RevertDesignName = string.Empty;
+                _config.Save();
+            }
+
+            foreach (var (id, name) in _settingsDesigns)
+            {
+                if (ImGui.Selectable($"{name}##design_{id}", _config.RevertDesignId == id))
+                {
+                    _config.RevertDesignId   = id;
+                    _config.RevertDesignName = name;
+                    _config.Save();
+                }
+            }
+            ImGui.EndCombo();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Refresh##designs"))
+            _settingsDesigns = Plugin.Glamourer.GetDesigns();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Re-read the design list from Glamourer.");
+
+        if (_settingsDesigns.Count == 0)
+            ImGui.TextDisabled("No designs found — create one in Glamourer first.");
+    }
+
     private void DrawBackupSettings()
     {
         ImGui.TextUnformatted("Backups");
@@ -1421,6 +1808,25 @@ public class PluginUi : Window, IDisposable
                              "instead of showing them greyed and italic.\n\n" +
                              "With both options on, the lists show only mods the\n" +
                              "wardrobe does not reference at all.");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var applyHair = _config.ApplyHairstyleWithHairMods;
+        if (ImGui.Checkbox("Switch hairstyle when applying hair mods", ref applyHair))
+        {
+            _config.ApplyHairstyleWithHairMods = applyHair;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("A hair mod replaces one specific hairstyle, so it only shows while\n" +
+                             "that hairstyle is selected. With this on, applying a hair item also\n" +
+                             "switches your character to it, and reverting puts back the one you had.\n\n" +
+                             "Turn this off to leave your hairstyle untouched.");
+
+        ImGui.Spacing();
+        DrawRevertDesignPicker();
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -1652,6 +2058,20 @@ public class PluginUi : Window, IDisposable
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Reveals Wardrobe Sharing and slot icons.\n\n" +
                              "The sharing backend does not exist yet, so nothing will connect.");
+
+        ImGui.Spacing();
+        if (ImGui.Button(" Run first-time setup again "))
+        {
+            _onboardStep    = 0;
+            _penumbraCheck  = null;
+            _glamourerCheck = null;
+            _config.OnboardingCompleted = false;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Walks through the collection, folders and backups again.\n\n" +
+                             "Every step starts from your current setting, and only what you\n" +
+                             "change is changed. Wardrobe items and images are never touched.");
 
         if (!_config.ExperimentalFeatures) return;
 

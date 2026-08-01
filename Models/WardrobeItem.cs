@@ -41,6 +41,15 @@ public class WardrobeItem
     /// </summary>
     public ushort? ModelSetId { get; set; }
 
+    /// <summary>
+    /// Hairstyle numbers this mod replaces, keyed by model race code ("0101", "1801", …).
+    /// </summary>
+    /// <remarks>
+    /// Hairstyle numbering is per-race: one mod is commonly hair 151 on most races but 11 on
+    /// Hrothgar and 5 on Viera, so a single number cannot be right for everyone.
+    /// </remarks>
+    public Dictionary<string, ushort> HairIdByRace { get; set; } = new();
+
     public List<string> Tags { get; set; } = new();
 
     /// <summary>Marked as a favourite by the user; can be filtered on in the grid.</summary>

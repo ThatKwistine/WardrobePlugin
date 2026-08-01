@@ -8,9 +8,10 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>WardrobePlugin</AssemblyName>
     <RootNamespace>WardrobePlugin</RootNamespace>
-    <!-- Must match AssemblyVersion in WardrobePlugin.json, and must increase for Dalamud to
-         offer an update. Bump both together when releasing. -->
-    <Version>1.0.0.1</Version>
+    <!-- Must match AssemblyVersion in WardrobePlugin.json AND both version fields in
+         pluginmaster.json, and must increase for Dalamud to offer an update. All three files
+         are bumped together when releasing — see RELEASING.md. -->
+    <Version>1.0.0.2</Version>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
     <NoWarn>MSB3277;MSB3270</NoWarn>

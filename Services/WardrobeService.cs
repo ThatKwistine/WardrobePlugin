@@ -176,6 +176,8 @@ public class WardrobeService : IDisposable
             _log.Debug($"[Wardrobe] '{item.Name}' is a {item.Slot.DisplayName()} mod — no Glamourer item to apply");
         }
 
+        ApplyHairstyleFor(item);
+
         // Penumbra's async resource reload (triggered by SetModEnabled) completes 300ms-4s later
         // and causes Glamourer to re-apply its prior design state, undoing our SetItem call.
         // Schedule repeated re-applies on the framework thread to win that race.
@@ -191,6 +193,110 @@ public class WardrobeService : IDisposable
     /// Force a Penumbra redraw when nothing else will refresh the character. Callers that unwear
     /// several items, or immediately wear another, pass false and redraw once themselves.
     /// </param>
+    /// <summary>
+    /// Switches the character to the hairstyle a hair mod replaces, remembering the previous one.
+    /// </summary>
+    /// <remarks>
+    /// A hair mod only replaces one specific hairstyle's files, so it is invisible unless the
+    /// character is actually wearing that hairstyle. The original is stored so reverting restores
+    /// it, and is only captured on the first hair item applied — otherwise swapping between two
+    /// hair items would overwrite it with the other mod's number.
+    /// </remarks>
+    private void ApplyHairstyleFor(WardrobeItem item)
+    {
+        if (item.Slot != EquipSlot.Hair) return;
+
+        if (!_config.ApplyHairstyleWithHairMods)
+        {
+            _log.Debug($"[Wardrobe] '{item.Name}': hairstyle switching is disabled in settings");
+            return;
+        }
+
+        // Prefer the number for this character's race — a hair mod is commonly 151 on most races
+        // but a different number on Hrothgar and Viera, so the first one found is often wrong.
+        ushort? hairstyle = null;
+        var raceCode = _glamourer.GetPlayerRaceCode();
+        if (raceCode.HasValue && item.HairIdByRace.TryGetValue(raceCode.Value.ToString("D4"), out var perRace))
+        {
+            hairstyle = perRace;
+            _log.Debug($"[Wardrobe] '{item.Name}': hairstyle {perRace} for race code {raceCode:D4}");
+        }
+        else if (item.HairIdByRace.Count > 0 && raceCode.HasValue)
+        {
+            _log.Warning($"[Wardrobe] '{item.Name}' does not cover race code {raceCode:D4} — " +
+                         $"it supports {string.Join(", ", item.HairIdByRace.Keys)}. Not switching hairstyle.");
+            return;
+        }
+        else
+        {
+            hairstyle = item.ModelSetId; // older items, or a mod covering a single race
+        }
+
+        if (hairstyle is not { } target || target == 0)
+        {
+            _log.Warning($"[Wardrobe] '{item.Name}' has no hairstyle number stored — click Re-detect " +
+                         $"in its edit panel, or re-import it. Items added before hairstyle " +
+                         $"switching existed do not have one.");
+            return;
+        }
+
+        // Only worth capturing when there is no revert design to fall back on
+        if (_config.RevertDesignId == null && _config.HairstyleBeforeWardrobe == null)
+        {
+            var current = _glamourer.GetHairstyle();
+            if (current.HasValue && current.Value != target)
+            {
+                _config.HairstyleBeforeWardrobe = current.Value;
+                _log.Debug($"[Wardrobe] Remembering hairstyle {current.Value} before applying '{item.Name}'");
+            }
+        }
+
+        if (_glamourer.SetHairstyle(target))
+            _log.Debug($"[Wardrobe] '{item.Name}' set hairstyle to {target}");
+        else
+            _log.Warning($"[Wardrobe] '{item.Name}' could not set hairstyle {target} — " +
+                         $"the mod will only show if that hairstyle is already selected.");
+    }
+
+    /// <summary>
+    /// Returns the character's appearance to normal after a customisation mod is reverted.
+    /// </summary>
+    /// <remarks>
+    /// Prefers a Glamourer design nominated in settings, applied with customisations only so the
+    /// design's equipment is ignored and whatever the wardrobe has equipped is left alone. That
+    /// restores every customisation the mod may have touched, not just the hairstyle.
+    /// Falls back to putting back the single hairstyle number captured on apply.
+    /// </remarks>
+    private void RestoreCustomizationFor(WardrobeItem item)
+    {
+        if (!item.Slot.IsCustomization()) return;
+
+        // Only restore once the last item in this slot is gone, so swapping between two
+        // customisation mods does not bounce the character back in between
+        var slotKey = item.Slot.ToString();
+        if (_config.WornItems.TryGetValue(slotKey, out var stillWorn) && stillWorn != item.Id)
+            return;
+
+        if (_config.RevertDesignId is { } designId)
+        {
+            _log.Debug($"[Wardrobe] Reverting '{item.Name}' — applying design " +
+                       $"'{_config.RevertDesignName}' (customisations only)");
+            if (_glamourer.ApplyDesignCustomization(designId))
+            {
+                _config.HairstyleBeforeWardrobe = null;
+                return;
+            }
+            _log.Warning($"[Wardrobe] Could not apply revert design '{_config.RevertDesignName}' — " +
+                         $"it may have been deleted in Glamourer.");
+        }
+
+        if (_config.HairstyleBeforeWardrobe is not { } previous) return;
+
+        _log.Debug($"[Wardrobe] Restoring hairstyle {previous} after reverting '{item.Name}'");
+        _glamourer.SetHairstyle(previous);
+        _config.HairstyleBeforeWardrobe = null;
+    }
+
     public void UnwearItem(WardrobeItem item, bool save = true, bool redraw = true)
     {
         var disabledAny = false;
@@ -243,6 +349,8 @@ public class WardrobeService : IDisposable
         // Glamourer item normally forces that reload as a side effect, but a mod with no item to
         // swap — hair, skin, or a shared texture like a piercing — would otherwise stay visible
         // until something else redrew the character.
+        RestoreCustomizationFor(item);
+
         if (redraw && disabledAny && !swappedItem)
         {
             _log.Debug($"[Wardrobe] UnwearItem: redrawing for '{item.Name}' — no Glamourer item swap to force a reload");

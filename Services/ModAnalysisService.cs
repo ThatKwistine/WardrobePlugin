@@ -18,7 +18,12 @@ public record ModAnalysisResult(
     IReadOnlySet<EquipSlot> DetectedSlots,
     IReadOnlyList<ModOptionGroup> OptionGroups,
     /// <summary>Equipment set IDs extracted from the mod file paths, keyed by slot.</summary>
-    IReadOnlyDictionary<EquipSlot, ushort> SlotSetIds
+    IReadOnlyDictionary<EquipSlot, ushort> SlotSetIds,
+    /// <summary>
+    /// Hairstyle numbers keyed by model race code (0101, 1801, …). Hairstyle numbering differs
+    /// per race, so the right one depends on who is wearing it.
+    /// </summary>
+    IReadOnlyDictionary<int, ushort> HairIdsByRace
 );
 
 public class ModAnalysisService
@@ -42,8 +47,11 @@ public class ModAnalysisService
 
     // chara/human/c{race}/obj/{hair|face|tail|zear|body}/...  — character customisation, not equipment.
     // Group 1 = the body-part folder, which is what identifies the kind of mod.
+    // Group 1 = model race code (0101 Midlander M, 1801 Viera F, …), group 2 = body part,
+    // group 3 = the numeric id. Hairstyle numbers are per-race — one mod is commonly hair 151 on
+    // most races but 11 on Hrothgar and 5 on Viera — so the race code has to be kept alongside.
     private static readonly Regex CustomizationPattern =
-        new(@"chara/human/c\d+/obj/(hair|face|tail|zear|body)/",
+        new(@"chara/human/c(\d+)/obj/(hair|face|tail|zear|body)/[hftzb](\d+)/",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // chara/common/...  — textures shared across every character: piercings, tattoos, face paints,
@@ -65,16 +73,17 @@ public class ModAnalysisService
     {
         var slots   = new HashSet<EquipSlot>();
         var setIds  = new Dictionary<EquipSlot, ushort>();
+        var hairIds = new Dictionary<int, ushort>();
         var groups  = new List<ModOptionGroup>();
 
         if (!Directory.Exists(modFolderPath))
-            return new ModAnalysisResult(slots, groups, setIds);
+            return new ModAnalysisResult(slots, groups, setIds, hairIds);
 
         // default_mod.json
         var defaultFile = Path.Combine(modFolderPath, "default_mod.json");
         if (File.Exists(defaultFile))
             foreach (var key in ReadFileKeys(defaultFile))
-                ClassifyPath(key, slots, setIds);
+                ClassifyPath(key, slots, setIds, hairIds);
 
         // group_NNN_*.json
         foreach (var groupFile in Directory.GetFiles(modFolderPath, "group_*.json").OrderBy(x => x))
@@ -88,7 +97,7 @@ public class ModAnalysisService
                 optNames.Add(opt.Name);
                 if (opt.Files != null)
                     foreach (var key in opt.Files.Keys)
-                        ClassifyPath(key, slots, setIds);
+                        ClassifyPath(key, slots, setIds, hairIds);
             }
 
             if (optNames.Count > 0)
@@ -102,7 +111,7 @@ public class ModAnalysisService
         // their own right when nothing else was found, or every such mod gains a phantom Other slot.
         if (slots.Count > 1) slots.Remove(EquipSlot.Other);
 
-        return new ModAnalysisResult(slots, groups, setIds);
+        return new ModAnalysisResult(slots, groups, setIds, hairIds);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -161,7 +170,7 @@ public class ModAnalysisService
         catch { return null; }
     }
 
-    private static void ClassifyPath(string gamePath, HashSet<EquipSlot> slots, Dictionary<EquipSlot, ushort> setIds)
+    private static void ClassifyPath(string gamePath, HashSet<EquipSlot> slots, Dictionary<EquipSlot, ushort> setIds, Dictionary<int, ushort> hairIds)
     {
         var m = EquipPattern.Match(gamePath);
         if (m.Success)
@@ -213,7 +222,7 @@ public class ModAnalysisService
         m = CustomizationPattern.Match(gamePath);
         if (m.Success)
         {
-            var slot = m.Groups[1].Value.ToLowerInvariant() switch
+            var slot = m.Groups[2].Value.ToLowerInvariant() switch
             {
                 "hair" => EquipSlot.Hair,
                 "face" => EquipSlot.Face,
@@ -223,6 +232,16 @@ public class ModAnalysisService
                 _      => EquipSlot.Unknown,
             };
             slots.Add(slot);
+
+            if (slot == EquipSlot.Unknown) return;
+            if (!ushort.TryParse(m.Groups[3].Value, out var customizeId)) return;
+
+            // Kept as a fallback for when the player's race is unknown or the mod covers only one
+            setIds.TryAdd(slot, customizeId);
+
+            // Hairstyle numbers differ per race, so record which race each one belongs to
+            if (slot == EquipSlot.Hair && int.TryParse(m.Groups[1].Value, out var raceCode))
+                hairIds.TryAdd(raceCode, customizeId);
             return;
         }
 
