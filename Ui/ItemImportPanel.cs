@@ -917,7 +917,7 @@ public class ItemImportPanel : IDisposable
 
         var rowLabel = usage switch
         {
-            ModUsage.Primary     => $"{name}   ✓ {string.Join(", ", imported.Select(s => s.DisplayName()))}",
+            ModUsage.Primary     => $"{name}   · {string.Join(", ", imported.Select(s => s.DisplayName()))}",
             ModUsage.SupportOnly => $"{name}   (support mod)",
             _                    => name,
         };

@@ -363,18 +363,14 @@ public class PluginUi : Window, IDisposable
 
     private static void DrawDependencyRow(string name, (bool Available, string Version) status, string why)
     {
-        if (status.Available)
-        {
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.4f, 0.9f, 0.4f, 1f));
-            ImGui.TextUnformatted("✔");
-            ImGui.PopStyleColor();
-        }
-        else
-        {
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.4f, 0.4f, 1f));
-            ImGui.TextUnformatted("✕");
-            ImGui.PopStyleColor();
-        }
+        // Dot rather than a tick: U+2714 is in the same Dingbats block as U+2715, which the
+        // default font does not carry — it renders as an empty box. The colour and the
+        // "found"/"not found" text carry the meaning regardless.
+        ImGui.PushStyleColor(ImGuiCol.Text, status.Available
+            ? new Vector4(0.4f, 0.9f, 0.4f, 1f)
+            : new Vector4(1f, 0.4f, 0.4f, 1f));
+        ImGui.TextUnformatted("●");
+        ImGui.PopStyleColor();
 
         ImGui.SameLine();
         ImGui.TextUnformatted(name);
@@ -780,7 +776,7 @@ public class PluginUi : Window, IDisposable
 
         var clearW = string.IsNullOrEmpty(_search)
             ? 0f
-            : ImGui.CalcTextSize("✕").X + style.FramePadding.X * 2 + style.ItemSpacing.X;
+            : ImGui.CalcTextSize("×").X + style.FramePadding.X * 2 + style.ItemSpacing.X;
 
         var contentRight = ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X;
         var blockW       = searchW + clearW + style.ItemSpacing.X + sortW;
@@ -796,7 +792,7 @@ public class PluginUi : Window, IDisposable
         if (!string.IsNullOrEmpty(_search))
         {
             ImGui.SameLine();
-            if (ImGui.Button("✕##clearsearch")) _search = string.Empty;
+            if (ImGui.Button("×##clearsearch")) _search = string.Empty;
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Clear search.");
         }
 
@@ -973,7 +969,7 @@ public class PluginUi : Window, IDisposable
             if (_tagFilter.Count > 0)
             {
                 ImGui.Spacing();
-                if (ImGui.SmallButton("✕ Clear")) _tagFilter.Clear();
+                if (ImGui.SmallButton("× Clear")) _tagFilter.Clear();
                 ImGui.Separator();
             }
             DrawTagTree(BuildTagTree());
@@ -1337,7 +1333,8 @@ public class PluginUi : Window, IDisposable
 
         ImGui.TextDisabled(_config.ImagesFolder);
         ImGui.SameLine();
-        if (ImGui.SmallButton("↺")) RefreshBrowserImages();
+        // Plain text, not a refresh arrow: U+21BA is not in the default font either
+        if (ImGui.SmallButton("Refresh")) RefreshBrowserImages();
 
         if (_browserImages.Length == 0)
         {
@@ -1602,7 +1599,7 @@ public class PluginUi : Window, IDisposable
         if (hasPreset)
         {
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.4f, 1f, 0.4f, 1f));
-            ImGui.TextUnformatted("✔ Saved");
+            ImGui.TextUnformatted("Saved");
             ImGui.PopStyleColor();
 
             ImGui.SameLine();
@@ -2365,13 +2362,13 @@ public class PluginUi : Window, IDisposable
         ImGui.TextUnformatted(title);
 
         var style  = ImGui.GetStyle();
-        var width  = ImGui.CalcTextSize("✕").X + style.FramePadding.X * 2;
+        var width  = ImGui.CalcTextSize("×").X + style.FramePadding.X * 2;
 
         ImGui.SameLine();
         var rightX = ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - width;
         if (rightX > ImGui.GetCursorPosX()) ImGui.SetCursorPosX(rightX);
 
-        var closed = ImGui.SmallButton($"✕##close_{title}");
+        var closed = ImGui.SmallButton($"×##close_{title}");
         if (ImGui.IsItemHovered()) ImGui.SetTooltip("Close this panel");
 
         ImGui.Separator();

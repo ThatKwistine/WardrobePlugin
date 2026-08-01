@@ -62,6 +62,16 @@ public class ScreenshotSessionService : IDisposable
     private FileSystemWatcher? _watcher;
     private DateTime           _watchFrom;
 
+    /// <summary>
+    /// Weapon visibility as the user had it before the session, restored when it ends.
+    /// </summary>
+    /// <remarks>
+    /// Sessions hide the weapon so it stays out of the shot. Turning it back on unconditionally
+    /// would force it visible for anyone who keeps weapons hidden permanently, so the original
+    /// value is captured instead. Null means it could not be read, in which case it is left alone.
+    /// </remarks>
+    private bool? _weaponVisibleBefore;
+
     public ScreenshotSessionService(WardrobeService wardrobe, Configuration config,
         IFramework framework, IPluginLog log, CameraService camera)
     {
@@ -123,6 +133,11 @@ public class ScreenshotSessionService : IDisposable
         TotalCount     = _queue.Count;
         CompletedCount = 0;
 
+        // Captured before anything is hidden, so it can be put back exactly as it was
+        _weaponVisibleBefore = Plugin.Glamourer.GetWeaponVisible();
+        _log.Debug($"[Wardrobe] Session start: weapon visible was " +
+                   $"{_weaponVisibleBefore?.ToString() ?? "unknown"}");
+
         _watcher = new FileSystemWatcher(_config.ScreenshotsFolder, "*.png")
         {
             NotifyFilter        = NotifyFilters.FileName,
@@ -140,7 +155,7 @@ public class ScreenshotSessionService : IDisposable
         CurrentItem   = null;
         CurrentOutfit = null;
         _queue.Clear();
-        Plugin.Glamourer.SetWeaponVisible(true);
+        RestoreWeaponVisibility();
         StateChanged?.Invoke();
     }
 
@@ -157,7 +172,7 @@ public class ScreenshotSessionService : IDisposable
         {
             DisposeWatcher();
             State = SessionState.Done;
-            Plugin.Glamourer.SetWeaponVisible(true);
+            RestoreWeaponVisibility();
             StateChanged?.Invoke();
             return;
         }
@@ -236,11 +251,32 @@ public class ScreenshotSessionService : IDisposable
         var slot = CurrentItem?.Slot ?? EquipSlot.Unknown;
         if (slot == EquipSlot.MainHand || slot == EquipSlot.OffHand)
         {
-            // The item being shot is a weapon — make sure it's visible
+            // The item being shot is the weapon itself, so it has to be visible for the shot
             Plugin.Glamourer.SetWeaponVisible(true);
             return;
         }
         Plugin.Glamourer.SetWeaponVisible(false);
+    }
+
+    /// <summary>
+    /// Puts weapon visibility back exactly as it was before the session.
+    /// </summary>
+    /// <remarks>
+    /// Never forces the weapon on: someone who keeps weapons hidden should not have them switched
+    /// back by taking screenshots. If the original value could not be read, nothing is changed.
+    /// </remarks>
+    private void RestoreWeaponVisibility()
+    {
+        if (_weaponVisibleBefore is not { } wasVisible)
+        {
+            _log.Debug("[Wardrobe] Session end: weapon visibility unknown, leaving it alone");
+            _weaponVisibleBefore = null;
+            return;
+        }
+
+        Plugin.Glamourer.SetWeaponVisible(wasVisible);
+        _log.Debug($"[Wardrobe] Session end: weapon visibility restored to {wasVisible}");
+        _weaponVisibleBefore = null;
     }
 
     private static void CropAndConvert(string sourcePath, string destPath)

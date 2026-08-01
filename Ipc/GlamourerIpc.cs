@@ -390,6 +390,75 @@ public class GlamourerIpc : IDisposable
     /// Show or hide the weapon model on the local player via Glamourer's WeaponState meta flag.
     /// Pass false to hide, true to restore.
     /// </summary>
+    private bool _loggedWeaponShape;
+
+    /// <summary>
+    /// Whether the weapon is currently shown, or null if it cannot be read.
+    /// </summary>
+    /// <remarks>
+    /// Needed so the plugin can put weapon visibility back the way the user had it, rather than
+    /// assuming it was visible — plenty of people keep weapons hidden permanently.
+    /// The state layout is undocumented and turned out not to be top-level, so rather than guess a
+    /// path this searches for a property named after the weapon anywhere in the object, accepting
+    /// either a bare bool or Glamourer's nested { "Show": bool } shape.
+    /// </remarks>
+    public bool? GetWeaponVisible()
+    {
+        if (_objects.LocalPlayer == null) return null;
+        try
+        {
+            var (ec, state) = _getState.InvokeFunc(PlayerIndex, 0u);
+            if (ec != 0 || state == null) return null;
+
+            var found = FindWeaponVisibility(state);
+            if (found.HasValue) return found;
+
+            if (!_loggedWeaponShape)
+            {
+                _loggedWeaponShape = true;
+                _log.Debug($"[Wardrobe] Weapon visibility not found. State layout: {DescribeShape(state)}");
+            }
+            return null;
+        }
+        catch (Exception ex)
+        {
+            _log.Debug(ex, "[Wardrobe] Glamourer GetWeaponVisible failed");
+            return null;
+        }
+    }
+
+    private static bool? FindWeaponVisibility(JToken node)
+    {
+        if (node is not JObject obj) return null;
+
+        foreach (var prop in obj.Properties())
+        {
+            if (prop.Name.Contains("weapon", StringComparison.OrdinalIgnoreCase))
+            {
+                if (prop.Value.Type == JTokenType.Boolean)
+                    return prop.Value.Value<bool>();
+
+                if (prop.Value is JObject inner)
+                {
+                    if (inner["Show"]  is { Type: JTokenType.Boolean } show)  return show.Value<bool>();
+                    if (inner["Value"] is { Type: JTokenType.Boolean } value) return value.Value<bool>();
+                }
+            }
+
+            var nested = FindWeaponVisibility(prop.Value);
+            if (nested.HasValue) return nested;
+        }
+
+        return null;
+    }
+
+    /// <summary>Two levels of property names, enough to identify the real layout from one log line.</summary>
+    private static string DescribeShape(JObject state) =>
+        string.Join(" | ", state.Properties().Select(p =>
+            p.Value is JObject child
+                ? $"{p.Name}{{{string.Join(",", child.Properties().Select(c => c.Name))}}}"
+                : p.Name));
+
     public bool SetWeaponVisible(bool visible)
     {
         if (_objects.LocalPlayer == null) return false;
