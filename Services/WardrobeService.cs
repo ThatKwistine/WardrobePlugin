@@ -62,7 +62,8 @@ public class WardrobeService : IDisposable
     /// async resource reload completing after the initial SetItem call.
     /// Stops early if the item is unequipped between retries.
     /// </summary>
-    private void ScheduleGlamourerReapply(EquipSlot slot, ulong glamId, Guid itemId, byte stain1, byte stain2)
+    private void ScheduleGlamourerReapply(EquipSlot slot, string wornKey, ulong glamId, Guid itemId,
+        byte stain1, byte stain2)
     {
         _ = Task.Run(async () =>
         {
@@ -71,7 +72,7 @@ public class WardrobeService : IDisposable
             foreach (var delayMs in new[] { 350, 750, 1800, 4500 })
             {
                 await Task.Delay(delayMs);
-                if (!_config.WornItems.TryGetValue(slot.ToString(), out var curId) || curId != itemId)
+                if (!_config.WornItems.TryGetValue(wornKey, out var curId) || curId != itemId)
                     return; // item was unequipped in the meantime
                 await _framework.RunOnFrameworkThread(() => _glamourer.SetItem(slot, glamId, stain1, stain2));
             }
@@ -82,7 +83,7 @@ public class WardrobeService : IDisposable
 
     public bool WearItem(WardrobeItem item, OutfitDye? dye = null)
     {
-        var slotKey = item.Slot.ToString();
+        var slotKey = item.WornKey();
         _log.Debug($"[Wardrobe] WearItem '{item.Name}' slot={slotKey} glamItemId={item.GlamourerItemId?.ToString() ?? "null"} ({item.GlamourerItemName ?? "no name"})");
 
         // Mods split across collections is nearly always a misconfiguration. Each mod is enabled
@@ -175,14 +176,15 @@ public class WardrobeService : IDisposable
             else
                 _log.Debug($"[Wardrobe]   Glamourer.SetItem succeeded");
         }
-        else if (!item.Slot.IsCustomization())
+        else if (!item.Slot.IsModOnly())
         {
             _log.Warning($"[Wardrobe] Item '{item.Name}' has no GlamourerItemId — re-import it to enable auto Glamourer apply");
         }
         else
         {
-            // Hair, face, tail and similar replace the character model itself. There is no item to
-            // equip — enabling the Penumbra mod above is the entire effect.
+            // Hair, face and similar replace the character model itself; emotes, VFX and mounts
+            // are not worn at all. Either way there is no item to equip — enabling the Penumbra
+            // mod above is the entire effect.
             _log.Debug($"[Wardrobe] '{item.Name}' is a {item.Slot.DisplayName()} mod — no Glamourer item to apply");
         }
 
@@ -192,7 +194,7 @@ public class WardrobeService : IDisposable
         // and causes Glamourer to re-apply its prior design state, undoing our SetItem call.
         // Schedule repeated re-applies on the framework thread to win that race.
         if (anyNewlyEnabled && item.GlamourerItemId.HasValue)
-            ScheduleGlamourerReapply(item.Slot, item.GlamourerItemId.Value, item.Id, stain1, stain2);
+            ScheduleGlamourerReapply(item.Slot, slotKey, item.GlamourerItemId.Value, item.Id, stain1, stain2);
 
         _config.Save();
         WardrobeChanged?.Invoke();
@@ -283,7 +285,7 @@ public class WardrobeService : IDisposable
 
         // Only restore once the last item in this slot is gone, so swapping between two
         // customisation mods does not bounce the character back in between
-        var slotKey = item.Slot.ToString();
+        var slotKey = item.WornKey();
         if (_config.WornItems.TryGetValue(slotKey, out var stillWorn) && stillWorn != item.Id)
             return;
 
@@ -327,7 +329,7 @@ public class WardrobeService : IDisposable
                 disabledAny = true;
         }
 
-        var slotKey = item.Slot.ToString();
+        var slotKey = item.WornKey();
         if (_config.WornItems.TryGetValue(slotKey, out var curId) && curId == item.Id)
             _config.WornItems.Remove(slotKey);
 
@@ -340,7 +342,7 @@ public class WardrobeService : IDisposable
         // Worse, many such mods attach themselves to an Emperor's New item precisely because it is
         // invisible, so "emptying" the slot equips the very item the mod replaces.
         var swappedItem = false;
-        if (item.Slot != EquipSlot.Unknown && !item.Slot.IsCustomization() && item.GlamourerItemId.HasValue)
+        if (item.Slot != EquipSlot.Unknown && !item.Slot.IsModOnly() && item.GlamourerItemId.HasValue)
         {
             var emperorsId = ItemLookupService.FindEmperorsNewItem(item.Slot);
             if (emperorsId.HasValue)
@@ -375,20 +377,37 @@ public class WardrobeService : IDisposable
     }
 
     public bool IsItemWorn(WardrobeItem item) =>
-        _config.WornItems.TryGetValue(item.Slot.ToString(), out var id) && id == item.Id;
+        _config.WornItems.TryGetValue(item.WornKey(), out var id) && id == item.Id;
 
     /// <summary>
-    /// Disables all tracked mods, clears WornItems, then forces every equipment slot in Glamourer
-    /// to its Emperor's New item so the character appears fully unequipped.
+    /// Disables the mods behind everything the character has on, then forces every equipment slot
+    /// in Glamourer to its Emperor's New item so the character appears fully unequipped.
     /// </summary>
+    /// <remarks>
+    /// Emotes, VFX, mounts and minions are left running. Stripping is about what the character is
+    /// wearing and none of those are on it, so turning off a dance mod because someone wanted a
+    /// bare screenshot would be a surprise — and a quiet one, since nothing about the character
+    /// would show it had happened.
+    /// </remarks>
     public void StripAll()
     {
-        foreach (var id in _config.WornItems.Values.ToList())
+        foreach (var (key, id) in _config.WornItems.ToList())
         {
             var item = _config.WardrobeItems.Find(x => x.Id == id);
-            if (item != null) UnwearItem(item, save: false);
+
+            // A key whose item has since been deleted can never be cleared by UnwearItem, and the
+            // wholesale Clear() that used to follow this loop is gone
+            if (item == null)
+            {
+                _config.WornItems.Remove(key);
+                continue;
+            }
+
+            if (item.Slot.IsModCategory()) continue;
+
+            // Removes its own WornItems entry
+            UnwearItem(item, save: false);
         }
-        _config.WornItems.Clear();
 
         // Force every equipment slot to Emperor's New regardless of what Glamourer currently has.
         // Customisation slots are skipped — stripping cannot remove a character's hair.
@@ -404,17 +423,105 @@ public class WardrobeService : IDisposable
         WardrobeChanged?.Invoke();
     }
 
+    /// <summary>How an item's stored state compares with what Penumbra and Glamourer actually have.</summary>
+    private enum ItemState
+    {
+        /// <summary>Mods disabled or their options do not match — the item is simply not on.</summary>
+        Off,
+
+        /// <summary>Mods enabled with matching options, and Glamourer agrees (or has no say).</summary>
+        On,
+
+        /// <summary>
+        /// Mods enabled with matching options, but Glamourer has a different item in the slot.
+        /// </summary>
+        Desynced,
+    }
+
+    /// <summary>Result of a scan: what was adopted as worn, and what looks half-applied.</summary>
+    /// <param name="Adopted">Item IDs newly recorded in WornItems.</param>
+    /// <param name="Desynced">
+    /// Items whose Penumbra mods are enabled and correctly configured but which Glamourer is not
+    /// showing. Nothing is changed for these — the caller decides what to do about them.
+    /// </param>
+    public record ScanResult(IReadOnlySet<Guid> Adopted, IReadOnlyList<WardrobeItem> Desynced);
+
     /// <summary>
-    /// Checks which wardrobe items are currently worn by cross-referencing:
+    /// Compares one item against Penumbra and Glamourer:
     ///   1. All required mods are enabled in Penumbra
     ///   2. Active mod options match the stored options (if any)
     ///   3. Glamourer has the expected item equipped in the correct slot (if available)
-    /// Updates WornItems for any newly detected items (first match wins per slot).
-    /// Returns the IDs that were newly added to WornItems.
     /// </summary>
-    public HashSet<Guid> ScanAndSyncWorn()
+    private ItemState Evaluate(WardrobeItem item, Dictionary<string, ulong>? glamEquipment)
     {
-        var added = new HashSet<Guid>();
+        // Check 1: all mods are enabled in Penumbra
+        var disabledMods = item.Mods
+            .Where(m => string.IsNullOrEmpty(m.ModDirectory) ||
+                        !_penumbra.IsModEnabled(m.Collection, m.ModDirectory, m.ModName))
+            .Select(m => string.IsNullOrEmpty(m.ModDirectory) ? $"{m.ModName} (no dir)" : m.ModName)
+            .ToList();
+        if (disabledMods.Count > 0)
+        {
+            _log.Debug($"[Wardrobe] Scan: '{item.Name}' skipped — mods not enabled in Penumbra: {string.Join(", ", disabledMods)}");
+            return ItemState.Off;
+        }
+
+        // Check 2: mod options must match, single- and multi-select alike.
+        // Multi-select was previously excluded because it never matched — that was the
+        // TrySetModSetting/TrySetModSettings bug (see PenumbraIpc.ApplyMultiModSettings),
+        // not an inherent limitation. Now that the apply path is correct, matching on
+        // multi-select again rules out items that share a mod but want different checkboxes.
+        var failedMods = item.Mods
+            .Where(m => !_penumbra.ActiveOptionsMatch(m.Collection, m.ModDirectory, m.ModName, m.Options, m.MultiOptions))
+            .Select(m => m.ModName)
+            .ToList();
+        if (failedMods.Count > 0)
+        {
+            _log.Debug($"[Wardrobe] Scan: '{item.Name}' skipped — options mismatch for: {string.Join(", ", failedMods)}");
+            return ItemState.Off;
+        }
+
+        // Check 3: if Glamourer state is available and the item has a known item ID,
+        // require the Glamourer slot to contain exactly that item.
+        // A mismatch is not "not worn": the mod files are live on the character either way. It
+        // means the two halves have come apart — most often because Glamourer was reset to game
+        // state by a crash or a /glamour disable while Penumbra kept the mod enabled.
+        if (item.GlamourerItemId.HasValue && glamEquipment != null)
+        {
+            var slotName = GlamourerIpc.ToSlotName(item.Slot);
+            if (!string.IsNullOrEmpty(slotName) &&
+                glamEquipment.TryGetValue(slotName, out var equippedId) &&
+                equippedId != item.GlamourerItemId.Value)
+            {
+                _log.Debug($"[Wardrobe] Scan: '{item.Name}' desynced — Glamourer {slotName} " +
+                           $"has {equippedId}, expected {item.GlamourerItemId.Value}");
+                return ItemState.Desynced;
+            }
+        }
+
+        return ItemState.On;
+    }
+
+    /// <summary>
+    /// Checks which wardrobe items are currently worn and records them in WornItems (first match
+    /// wins per key), and reports the ones whose mods are on but whose Glamourer half is missing.
+    /// </summary>
+    public ScanResult ScanAndSyncWorn() => Scan(adopt: true);
+
+    /// <summary>
+    /// Reports items whose mods are enabled but which Glamourer is not showing, changing nothing.
+    /// </summary>
+    /// <remarks>
+    /// Used for the check on opening the window, where silently marking things as worn would be a
+    /// state change the user never asked for.
+    /// </remarks>
+    public IReadOnlyList<WardrobeItem> FindDesynced() => Scan(adopt: false).Desynced;
+
+    private ScanResult Scan(bool adopt)
+    {
+        var added    = new HashSet<Guid>();
+        var on       = new List<WardrobeItem>();
+        var desynced = new List<WardrobeItem>();
 
         // Fetch Glamourer's current equipment state once for the whole scan.
         // Keys are Glamourer slot names (Head, Body, RFinger, …); values are item row IDs.
@@ -425,61 +532,81 @@ public class WardrobeService : IDisposable
         {
             if (item.Mods.Count == 0 || item.Slot == EquipSlot.Unknown) continue;
 
-            // Check 1: all mods are enabled in Penumbra
-            var disabledMods = item.Mods
-                .Where(m => string.IsNullOrEmpty(m.ModDirectory) ||
-                            !_penumbra.IsModEnabled(m.Collection, m.ModDirectory, m.ModName))
-                .Select(m => string.IsNullOrEmpty(m.ModDirectory) ? $"{m.ModName} (no dir)" : m.ModName)
-                .ToList();
-            if (disabledMods.Count > 0)
+            switch (Evaluate(item, glamEquipment))
             {
-                _log.Debug($"[Wardrobe] Scan: '{item.Name}' skipped — mods not enabled in Penumbra: {string.Join(", ", disabledMods)}");
-                continue;
-            }
+                case ItemState.On:
+                    on.Add(item);
+                    var slotKey = item.WornKey();
+                    if (adopt && !_config.WornItems.ContainsKey(slotKey))
+                    {
+                        _config.WornItems[slotKey] = item.Id;
+                        added.Add(item.Id);
+                        _log.Debug($"[Wardrobe] Scan: detected '{item.Name}' as worn");
+                    }
+                    break;
 
-            // Check 2: mod options must match, single- and multi-select alike.
-            // Multi-select was previously excluded because it never matched — that was the
-            // TrySetModSetting/TrySetModSettings bug (see PenumbraIpc.ApplyMultiModSettings),
-            // not an inherent limitation. Now that the apply path is correct, matching on
-            // multi-select again rules out items that share a mod but want different checkboxes.
-            var failedMods = item.Mods
-                .Where(m => !_penumbra.ActiveOptionsMatch(m.Collection, m.ModDirectory, m.ModName, m.Options, m.MultiOptions))
-                .Select(m => m.ModName)
-                .ToList();
-            if (failedMods.Count > 0)
-            {
-                _log.Debug($"[Wardrobe] Scan: '{item.Name}' skipped — options mismatch for: {string.Join(", ", failedMods)}");
-                continue;
-            }
-
-            // Check 3: if Glamourer state is available and the item has a known item ID,
-            // require the Glamourer slot to contain exactly that item.
-            // This rules out false positives when multiple wardrobe items share the same mod
-            // but only one is actually equipped in Glamourer.
-            if (item.GlamourerItemId.HasValue && glamEquipment != null)
-            {
-                var slotName = GlamourerIpc.ToSlotName(item.Slot);
-                if (!string.IsNullOrEmpty(slotName) &&
-                    glamEquipment.TryGetValue(slotName, out var equippedId) &&
-                    equippedId != item.GlamourerItemId.Value)
-                {
-                    _log.Debug($"[Wardrobe] Scan: '{item.Name}' skipped — Glamourer {slotName} " +
-                               $"has {equippedId}, expected {item.GlamourerItemId.Value}");
-                    continue;
-                }
-            }
-
-            var slotKey = item.Slot.ToString();
-            if (!_config.WornItems.ContainsKey(slotKey))
-            {
-                _config.WornItems[slotKey] = item.Id;
-                added.Add(item.Id);
-                _log.Debug($"[Wardrobe] Scan: detected '{item.Name}' as worn");
+                case ItemState.Desynced:
+                    desynced.Add(item);
+                    break;
             }
         }
 
+        // An item sharing every one of its mods with something that *is* correctly worn explains
+        // itself: those mods are enabled for the other item's sake, not left over from this one.
+        // Two items in one slot backed by the same mod — a body and its matching legs, or an item
+        // and its variant — would otherwise be reported every single time.
+        var explained = on
+            .SelectMany(i => i.Mods)
+            .Select(m => $"{m.Collection} {m.ModDirectory}")
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var unexplained = desynced
+            .Where(i => i.Mods.Any(m => !string.IsNullOrEmpty(m.ModDirectory) &&
+                                        !explained.Contains($"{m.Collection} {m.ModDirectory}")))
+            .ToList();
+
+        if (unexplained.Count > 0)
+            _log.Information($"[Wardrobe] Scan: {unexplained.Count} item(s) have mods enabled that " +
+                             $"Glamourer is not showing: {string.Join(", ", unexplained.Select(i => i.Name))}");
+
         if (added.Count > 0) _config.Save();
-        return added;
+        return new ScanResult(added, unexplained);
+    }
+
+    /// <summary>
+    /// Turns off an item's Penumbra mods without touching Glamourer, leaving WornItems alone.
+    /// </summary>
+    /// <remarks>
+    /// For clearing up a desync, where the mods are enabled but Glamourer has whatever the game
+    /// gave the character. <see cref="UnwearItem"/> empties the slot to Emperor's New on its way
+    /// out, which here would strip real gear the character is legitimately wearing.
+    /// Mods another worn item still needs are left enabled, exactly as when unwearing.
+    /// </remarks>
+    public void DisableItemMods(WardrobeItem item)
+    {
+        var disabledAny = false;
+
+        foreach (var mod in item.Mods)
+        {
+            if (string.IsNullOrEmpty(mod.ModDirectory)) continue;
+
+            var stillNeeded = _config.WardrobeItems.Any(other =>
+                other.Id != item.Id &&
+                _config.WornItems.ContainsValue(other.Id) &&
+                other.Mods.Any(m =>
+                    m.ModDirectory == mod.ModDirectory &&
+                    string.Equals(m.Collection, mod.Collection, StringComparison.OrdinalIgnoreCase)));
+
+            if (!stillNeeded && _penumbra.SetModEnabled(mod.Collection, mod.ModDirectory, mod.ModName, false))
+                disabledAny = true;
+        }
+
+        _log.Information($"[Wardrobe] Disabled mods for desynced item '{item.Name}'");
+
+        // Nothing swaps a Glamourer item here, so only a redraw makes the change visible
+        if (disabledAny) _penumbra.RedrawPlayer();
+
+        WardrobeChanged?.Invoke();
     }
 
     // ── Outfits ───────────────────────────────────────────────────────────────
@@ -502,6 +629,56 @@ public class WardrobeService : IDisposable
             outfit.Dyes[key] = new OutfitDye { Stain1 = stain1, Stain2 = stain2 };
 
         _config.Save();
+    }
+
+    /// <summary>
+    /// Sets one dye channel on every dyeable item in an outfit, leaving the other channel alone.
+    /// </summary>
+    /// <remarks>
+    /// A shortcut for the common case of one dye across a whole set. Per-item pickers still win
+    /// afterwards, so this is a starting point rather than a lock.
+    /// </remarks>
+    public void SetDyeAll(Outfit outfit, int channel, byte stain)
+    {
+        foreach (var item in ResolveOutfit(outfit))
+        {
+            // Hair, emotes and mounts have no equipment piece to dye
+            if (item.Slot.IsModOnly()) continue;
+
+            var dye = GetDye(outfit, item.Id);
+            var s1  = channel == 1 ? stain : dye?.Stain1 ?? 0;
+            var s2  = channel == 2 ? stain : dye?.Stain2 ?? 0;
+            var key = item.Id.ToString();
+
+            // Written here rather than through SetDye so the whole outfit is one save, not one per item
+            if (s1 == 0 && s2 == 0)
+                outfit.Dyes.Remove(key);
+            else
+                outfit.Dyes[key] = new OutfitDye { Stain1 = s1, Stain2 = s2 };
+        }
+
+        _config.Save();
+    }
+
+    /// <summary>
+    /// The dye shared by every dyeable item in an outfit on one channel, or null when they differ.
+    /// </summary>
+    public byte? CommonDye(Outfit outfit, int channel)
+    {
+        byte? common = null;
+
+        foreach (var item in ResolveOutfit(outfit))
+        {
+            if (item.Slot.IsModOnly()) continue;
+
+            var dye  = GetDye(outfit, item.Id);
+            var here = channel == 1 ? dye?.Stain1 ?? 0 : dye?.Stain2 ?? 0;
+
+            if (common == null) common = here;
+            else if (common != here) return null;
+        }
+
+        return common;
     }
 
     /// <summary>Saves everything currently worn as a named outfit.</summary>
@@ -596,6 +773,19 @@ public class WardrobeService : IDisposable
     {
         var items = ResolveOutfit(outfit);
         return items.Count > 0 && items.All(IsItemWorn);
+    }
+
+    /// <summary>True when some but not all of the outfit is currently worn.</summary>
+    /// <remarks>
+    /// Reached by stripping — which deliberately leaves emotes, VFX and mounts running — and by
+    /// unequipping a single piece by hand. The outfit is still partly on the character, so it has
+    /// to stay removable: judging that on <see cref="IsOutfitWorn"/> alone would hide the control
+    /// that turns off the very mods stripping left enabled.
+    /// </remarks>
+    public bool IsOutfitPartlyWorn(Outfit outfit)
+    {
+        var items = ResolveOutfit(outfit);
+        return items.Any(IsItemWorn) && !items.All(IsItemWorn);
     }
 
     public void DeleteOutfit(Outfit outfit)

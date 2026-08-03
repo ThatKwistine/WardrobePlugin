@@ -60,7 +60,7 @@ public sealed class Plugin : IDalamudPlugin
 
         Penumbra  = new PenumbraIpc(pi, Log);
         Glamourer = new GlamourerIpc(pi, Log, Objects);
-        Camera    = new CameraService(Framework);
+        Camera    = new CameraService(Framework, Log);
 
         _analysisService   = new ModAnalysisService(Log);
         _itemLookup        = new ItemLookupService(DataManager);

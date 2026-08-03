@@ -87,7 +87,16 @@ public class ScreenshotSessionService : IDisposable
         !string.IsNullOrEmpty(_config.ScreenshotsFolder) && Directory.Exists(_config.ScreenshotsFolder);
 
     public bool CanStart =>
-        FoldersReady && _config.WardrobeItems.Any(i => string.IsNullOrEmpty(i.ImagePath));
+        FoldersReady && _config.WardrobeItems.Any(Photographable);
+
+    /// <summary>
+    /// Items worth queueing for a bulk session. Emotes, VFX, mounts and minions are excluded:
+    /// wearing one changes nothing about how the character stands there, so the session would
+    /// take an identical shot of it for each. They can still be photographed one at a time from
+    /// the edit panel, where the user is posing deliberately.
+    /// </summary>
+    private static bool Photographable(WardrobeItem item) =>
+        string.IsNullOrEmpty(item.ImagePath) && !item.Slot.IsModCategory();
 
     /// <summary>True when there are outfits without a preview image to photograph.</summary>
     public bool CanStartOutfits =>
@@ -96,7 +105,7 @@ public class ScreenshotSessionService : IDisposable
     public void Start()
     {
         _queue.Clear();
-        foreach (var item in _config.WardrobeItems.Where(i => string.IsNullOrEmpty(i.ImagePath)))
+        foreach (var item in _config.WardrobeItems.Where(Photographable))
             _queue.Enqueue(new SessionTarget(item, null));
 
         if (_queue.Count == 0) return;

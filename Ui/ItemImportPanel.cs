@@ -32,6 +32,18 @@ public class ItemImportPanel : IDisposable
     private int           _editSlotIdx  = 0;
     private List<string>  _editTags     = new();
     private string        _editTagInput = string.Empty;
+    private string        _editReplaces = string.Empty;
+
+    /// <summary>
+    /// Slots offered by the slot combos, captured when the panel opens. Snapshotted rather than
+    /// rebuilt per frame so the combo index stays pointing at the same slot for the whole edit,
+    /// even if the mod-categories setting is toggled in another panel meanwhile.
+    /// </summary>
+    private EquipSlot[] _slotChoices = EquipSlotEx.All;
+
+    /// <summary>The slot the combo currently has selected, guarded against a stale index.</summary>
+    private EquipSlot SelectedSlot(int idx) =>
+        _slotChoices.Length == 0 ? EquipSlot.Unknown : _slotChoices[Math.Clamp(idx, 0, _slotChoices.Length - 1)];
 
     // ── Import mode: pickers ─────────────────────────────────────────────────
     private IList<string>                    _collections   = Array.Empty<string>();
@@ -98,6 +110,8 @@ public class ItemImportPanel : IDisposable
         public ushort?   SetId;
         /// <summary>Supplementary mod that contributed this slot, or null when the primary mod covers it.</summary>
         public string?   SourceMod;
+        /// <summary>What the mod replaces within its category, for mod-category slots only.</summary>
+        public string?   Replaces;
         public string    Name             = string.Empty;
         public string    Image            = string.Empty;
         public ulong?    GlamourerItemId;
@@ -142,6 +156,7 @@ public class ItemImportPanel : IDisposable
     {
         ResetImport();
         _editTarget  = null;
+        _slotChoices = EquipSlotEx.Choices(_config.ModCategoriesEnabled);
         _collections = _penumbra.GetCollections();
         _mods        = _penumbra.GetMods();
 
@@ -163,10 +178,16 @@ public class ItemImportPanel : IDisposable
         _editTarget   = item;
         _editName     = item.Name;
         _editImage    = item.ImagePath ?? string.Empty;
-        _editSlotIdx  = Array.IndexOf(EquipSlotEx.All, item.Slot);
+
+        // Ensure the item's own slot is in the list even when its category is switched off, so the
+        // combo has something valid selected and saving cannot write a different slot back
+        _slotChoices  = EquipSlotEx.Choices(_config.ModCategoriesEnabled, item.Slot);
+        _editSlotIdx  = Array.IndexOf(_slotChoices, item.Slot);
         if (_editSlotIdx < 0) _editSlotIdx = 0;
+
         _editTags     = new List<string>(item.Tags);
         _editTagInput = string.Empty;
+        _editReplaces = item.Replaces ?? string.Empty;
 
         // Needed for the per-mod collection pickers; edit mode may be opened without import mode
         // ever having run, so the list is not guaranteed to be loaded yet.
@@ -297,8 +318,12 @@ public class ItemImportPanel : IDisposable
         ImGui.Spacing();
         ImGui.TextDisabled("Slot");
         ImGui.SetNextItemWidth(-1);
-        var slotNames = EquipSlotEx.All.Select(s => s.DisplayName()).ToArray();
+        var slotNames = _slotChoices.Select(s => s.DisplayName()).ToArray();
         ImGui.Combo("##eslot", ref _editSlotIdx, slotNames, slotNames.Length);
+
+        // Mod categories are not exclusive per slot, so what the item displaces is its own field
+        if (SelectedSlot(_editSlotIdx).IsModCategory())
+            DrawReplacesEditor(SelectedSlot(_editSlotIdx));
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -308,6 +333,11 @@ public class ItemImportPanel : IDisposable
             ImGui.TextDisabled("Game item:");
             ImGui.SameLine();
             ImGui.TextUnformatted(_editTarget.GlamourerItemName);
+        }
+        else if (_editTarget != null && _editTarget.Slot.IsModCategory())
+        {
+            ImGui.TextDisabled($"{_editTarget.Slot.DisplayName()} mod — not worn on the character,");
+            ImGui.TextDisabled("so enabling the Penumbra mod is the whole effect.");
         }
         else if (_editTarget != null && _editTarget.Slot.IsCustomization())
         {
@@ -336,12 +366,12 @@ public class ItemImportPanel : IDisposable
                 _config.Save();
             }
         }
-        else if (_editTarget.Mods.Count > 0)
+        else if (_editTarget.Mods.Count > 0 && !_editTarget.Slot.IsModCategory())
         {
             ImGui.TextDisabled("Click Re-detect to list other items sharing this model.");
         }
 
-        if (!_editTarget.Slot.IsCustomization())
+        if (!_editTarget.Slot.IsModOnly())
             DrawManualItemPicker(_editTarget);
 
         ImGui.Spacing();
@@ -366,7 +396,8 @@ public class ItemImportPanel : IDisposable
             {
                 // Save current edits first so the item is up to date
                 _editTarget!.Name     = _editName.Trim();
-                _editTarget.Slot      = EquipSlotEx.All[_editSlotIdx];
+                _editTarget.Slot      = SelectedSlot(_editSlotIdx);
+                _editTarget.Replaces  = EditedReplaces();
                 _editTarget.Tags      = new List<string>(_editTags);
                 _config.Save();
                 _session.StartSingle(_editTarget);
@@ -446,10 +477,23 @@ public class ItemImportPanel : IDisposable
         var footerBtnW = (ImGui.GetContentRegionAvail().X - 8) / 2;
         if (ImGui.Button("Save", new Vector2(footerBtnW, 0)))
         {
-            _editTarget!.Name      = _editName.Trim();
+            // Captured before the edits land: changing the slot, or what an emote replaces, changes
+            // the key the item is tracked under. Without moving the entry across, the old key would
+            // keep pointing at this item and it would read as both worn and not worn at once.
+            var wasWorn    = _wardrobe.IsItemWorn(_editTarget!);
+            var oldWornKey = _editTarget!.WornKey();
+
+            _editTarget.Name       = _editName.Trim();
             _editTarget.ImagePath  = string.IsNullOrEmpty(_editImage) ? null : _editImage.Trim();
-            _editTarget.Slot       = EquipSlotEx.All[_editSlotIdx];
+            _editTarget.Slot       = SelectedSlot(_editSlotIdx);
+            _editTarget.Replaces   = EditedReplaces();
             _editTarget.Tags       = new List<string>(_editTags);
+
+            if (wasWorn && _editTarget.WornKey() != oldWornKey)
+            {
+                _config.WornItems.Remove(oldWornKey);
+                _config.WornItems[_editTarget.WornKey()] = _editTarget.Id;
+            }
 
             // Write collections back first — the option propagation below matches on collection.
             for (var i = 0; i < _editTarget.Mods.Count && i < _editModCollections.Count; i++)
@@ -547,13 +591,15 @@ public class ItemImportPanel : IDisposable
         // Persist any in-progress edits first, so the copy reflects what is on screen
         source.Name      = _editName.Trim();
         source.ImagePath = string.IsNullOrEmpty(_editImage) ? null : _editImage.Trim();
-        source.Slot      = EquipSlotEx.All[_editSlotIdx];
+        source.Slot      = SelectedSlot(_editSlotIdx);
+        source.Replaces  = EditedReplaces();
         source.Tags      = new List<string>(_editTags);
 
         var copy = new WardrobeItem
         {
             Name              = $"{source.Name} (variant)",
             Slot              = source.Slot,
+            Replaces          = source.Replaces,
             ImagePath         = source.ImagePath,
             GlamourerItemId   = source.GlamourerItemId,
             GlamourerItemName = source.GlamourerItemName,
@@ -755,7 +801,7 @@ public class ItemImportPanel : IDisposable
             ImGui.TextDisabled("No equipment slots detected — choose manually:");
             ImGui.Spacing();
 
-            var slotNames = EquipSlotEx.All.Select(s => s.DisplayName()).ToArray();
+            var slotNames = _slotChoices.Select(s => s.DisplayName()).ToArray();
             ImGui.TextDisabled("Slot");
             ImGui.SetNextItemWidth(-1);
             ImGui.Combo("##manSlot", ref _manualSlotIdx, slotNames, slotNames.Length);
@@ -1063,6 +1109,44 @@ public class ItemImportPanel : IDisposable
         return changed;
     }
 
+    /// <summary>
+    /// The staged Replaces field, or null when the selected slot has no use for one — a stale key
+    /// left on an item moved out of a mod category would silently change the key it is worn under.
+    /// </summary>
+    private string? EditedReplaces() =>
+        SelectedSlot(_editSlotIdx).IsModCategory() && !string.IsNullOrWhiteSpace(_editReplaces)
+            ? _editReplaces.Trim()
+            : null;
+
+    /// <summary>
+    /// Editor for what a mod-category item replaces, which is what decides whether wearing it
+    /// displaces something already worn. Free text rather than a picker: it is matched between
+    /// items by string, so two mods whose file names differ can be lined up by typing the same
+    /// thing into both.
+    /// </summary>
+    private void DrawReplacesEditor(EquipSlot slot)
+    {
+        var hint = slot switch
+        {
+            EquipSlot.Emote => "e.g. j_pose — the animation file name",
+            EquipSlot.Mount => "e.g. m0361 — the monster id",
+            _               => "blank to wear independently",
+        };
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Replaces");
+        ImGui.SetNextItemWidth(-1);
+        ImGui.InputTextWithHint("##ereplaces", hint, ref _editReplaces, 128);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip($"{slot.DisplayName()} mods are not exclusive the way gear slots are,\n" +
+                             "so this is what decides which of them replace each other.\n\n" +
+                             "Two items with the same value swap each other out when worn,\n" +
+                             "exactly as two body mods do. Detected from the mod's files on\n" +
+                             "import; type the same value into two items to pair them up by hand.");
+        ImGui.TextDisabled("Blank leaves this item independent of the others");
+        ImGui.TextDisabled($"in {slot.DisplayName()} — wearing it displaces nothing.");
+    }
+
     private void DrawSlotRow(SlotConfig cfg)
     {
         ImGui.PushID(cfg.Slot.ToString());
@@ -1080,10 +1164,19 @@ public class ItemImportPanel : IDisposable
             ImGui.SameLine();
             ImGui.TextDisabled($"→ {cfg.GlamourerItemName}");
         }
-        else if (cfg.Slot.IsCustomization())
+        else if (cfg.Slot.IsModOnly())
         {
             ImGui.SameLine();
             ImGui.TextDisabled("(no item — enabling the mod is the whole effect)");
+
+            if (cfg.Replaces != null)
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f), $"· replaces {cfg.Replaces}");
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"Another {cfg.Slot.DisplayName()} item replacing '{cfg.Replaces}'\n" +
+                                     "will swap this one out when worn. Editable after import.");
+            }
         }
         else
         {
@@ -1258,9 +1351,12 @@ public class ItemImportPanel : IDisposable
         var setIds  = new Dictionary<EquipSlot, ushort>();
         var slots   = new HashSet<EquipSlot>(_analysisResult.DetectedSlots);
         var sources = new Dictionary<EquipSlot, string>();
+        var replace = new Dictionary<EquipSlot, string>();
 
         foreach (var (slot, id) in _analysisResult.SlotSetIds)
             setIds.TryAdd(slot, id);
+        foreach (var (slot, key) in _analysisResult.ReplaceKeys)
+            replace.TryAdd(slot, key);
 
         foreach (var extra in _extraMods)
         {
@@ -1276,7 +1372,14 @@ public class ItemImportPanel : IDisposable
             }
             foreach (var (slot, id) in analysis.SlotSetIds)
                 setIds.TryAdd(slot, id);
+            foreach (var (slot, key) in analysis.ReplaceKeys)
+                replace.TryAdd(slot, key);
         }
+
+        // Mod categories the user has not opted into would import as items that are then hidden
+        // from the grid, which reads as the import having silently failed
+        if (!_config.ModCategoriesEnabled)
+            slots.RemoveWhere(s => s.IsModCategory());
 
         // Keep whatever the user has already typed or chosen for slots that still exist
         var previous = _slotConfigs.ToDictionary(c => c.Slot);
@@ -1314,6 +1417,7 @@ public class ItemImportPanel : IDisposable
                 AlreadyImported   = alreadyImported.Contains(slot),
                 SetId             = slotSetId,
                 SourceMod         = sources.GetValueOrDefault(slot),
+                Replaces          = replace.GetValueOrDefault(slot),
                 Name              = $"{mod.Name} ({slot.DisplayName()})",
                 Image             = string.Empty,
                 GlamourerItemId   = detectedId,
@@ -1389,7 +1493,8 @@ public class ItemImportPanel : IDisposable
         var primaryMultiOptions = BuildMultiOptions(_analysisResult?.OptionGroups, _multiGroupSelections);
         var extraRefs           = BuildExtraRefs();
 
-        IEnumerable<(EquipSlot slot, string name, string? image, ulong? glamId, string? glamName, ushort? setId)> targets;
+        IEnumerable<(EquipSlot slot, string name, string? image, ulong? glamId, string? glamName,
+            ushort? setId, string? replaces)> targets;
 
         if (_slotConfigs.Count > 0)
         {
@@ -1397,25 +1502,28 @@ public class ItemImportPanel : IDisposable
                 .Where(c => c.Include && !string.IsNullOrWhiteSpace(c.Name))
                 .Select(c => (c.Slot, c.Name.Trim(),
                     string.IsNullOrEmpty(c.Image) ? (string?)null : c.Image.Trim(),
-                    c.GlamourerItemId, c.GlamourerItemName, c.SetId));
+                    c.GlamourerItemId, c.GlamourerItemName, c.SetId, c.Replaces));
         }
         else
         {
+            // Manually chosen slot, so there is no analysis to take a replace key from — an emote
+            // imported this way is independent until one is typed in when editing it
             targets = new[]
             {
-                (EquipSlotEx.All[Math.Min(_manualSlotIdx, EquipSlotEx.All.Length - 1)],
+                (SelectedSlot(_manualSlotIdx),
                  _manualName.Trim(),
                  string.IsNullOrEmpty(_manualImage) ? (string?)null : _manualImage.Trim(),
-                 (ulong?)null, (string?)null, (ushort?)null),
+                 (ulong?)null, (string?)null, (ushort?)null, (string?)null),
             };
         }
 
-        foreach (var (slot, name, image, glamId, glamName, setId) in targets)
+        foreach (var (slot, name, image, glamId, glamName, setId, replaces) in targets)
         {
             var item = new WardrobeItem
             {
                 Name              = name,
                 Slot              = slot,
+                Replaces          = slot.IsModCategory() ? replaces : null,
                 ImagePath         = image,
                 GlamourerItemId   = glamId,
                 GlamourerItemName = glamName,
@@ -1586,6 +1694,26 @@ public class ItemImportPanel : IDisposable
         }
 
         var result = _analysis.Analyze(path);
+
+        // Mod categories identify themselves by name rather than by set ID, so they are re-read
+        // from ReplaceKeys and there is no game item to look up afterwards
+        if (item.Slot.IsModCategory())
+        {
+            if (result.ReplaceKeys.TryGetValue(item.Slot, out var key))
+            {
+                item.Replaces = key;
+                _editReplaces = key;
+                _config.Save();
+                _log.Information($"[Wardrobe] Re-detected '{item.Name}': {item.Slot.DisplayName()} replaces '{key}'");
+            }
+            else
+            {
+                _log.Warning($"[Wardrobe] Re-detect: nothing detected for {item.Slot.DisplayName()} " +
+                             $"in mod '{primaryMod.ModDirectory}'");
+            }
+            return;
+        }
+
         if (result.SlotSetIds.TryGetValue(item.Slot, out var setId))
         {
             // Persist this regardless of the item lookup. For customisation slots it is the
@@ -1641,6 +1769,8 @@ public class ItemImportPanel : IDisposable
         _editName     = string.Empty;
         _editImage    = string.Empty;
         _editSlotIdx  = 0;
+        _editReplaces = string.Empty;
+        _slotChoices  = EquipSlotEx.Choices(_config.ModCategoriesEnabled);
         _editTags.Clear();
         _editTagInput = string.Empty;
     }

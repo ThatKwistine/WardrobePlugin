@@ -138,6 +138,10 @@ differently in different outfits. They are applied through Glamourer when the ou
 re-applied after a redraw — otherwise a Penumbra reload would strip the colour back to undyed.
 Customisation items cannot be dyed and say so.
 
+Above the list, a **Dye all items** pair of pickers sets either channel across every dyeable item in
+the outfit at once, for the common case of one dye through a whole set. Individual rows can then be
+changed afterwards; once they disagree, the picker at the top reads **Mixed**.
+
 Outfits store item IDs, not a Glamourer state blob, so wearing one goes through the normal per-item
 path — enabling each item's Penumbra mods and applying their options. That is the part a Glamourer
 design cannot do on its own. If an item is deleted later, the card shows how many are missing and

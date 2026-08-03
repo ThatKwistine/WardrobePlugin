@@ -50,6 +50,9 @@ public class PluginUi : Window, IDisposable
     // Favourites-only filter
     private bool _favoritesOnly;
 
+    // Worn-only filter: items the wardrobe has on, plus anything the last scan found enabled
+    private bool _wornOnly;
+
     // Items the grid drew last frame, for the toolbar count. The toolbar draws before the grid,
     // so this trails by one frame — imperceptible, and avoids running the filters twice.
     private int _visibleCount;
@@ -79,6 +82,15 @@ public class PluginUi : Window, IDisposable
     // Mod-scan results: item IDs whose mods are detected enabled in Penumbra
     private readonly HashSet<Guid> _detectedWorn = new();
     private string _scanStatus = string.Empty;
+
+    // Items whose Penumbra mods are enabled but which Glamourer is not showing. Populated by Scan
+    // and by the automatic check below; cleared as each one is dealt with.
+    private List<WardrobeItem> _desynced = new();
+
+    // The desync check runs once per session on first open, so a crash that left mods enabled is
+    // noticed without the user having to know to press Scan. Not persisted — WornItems is cleared
+    // on load anyway, so every session starts needing the check.
+    private bool _desyncChecked;
 
     // Settings panel feedback
     private string _cameraLoadStatus  = string.Empty;
@@ -187,6 +199,15 @@ public class PluginUi : Window, IDisposable
             return;
         }
 
+        // Once per session, on the first proper draw: a crash leaves Penumbra mods enabled while
+        // WornItems is cleared on load, and nothing else would ever surface that. Read-only —
+        // it reports, and the user decides.
+        if (!_desyncChecked)
+        {
+            _desyncChecked = true;
+            _desynced      = new List<WardrobeItem>(_wardrobe.FindDesynced());
+        }
+
         var totalW  = ImGui.GetContentRegionAvail().X;
         var totalH  = ImGui.GetContentRegionAvail().Y;
         var rightOpen = _panel.IsOpen || _showImageBrowser || _showSettings || _showTags
@@ -199,6 +220,7 @@ public class PluginUi : Window, IDisposable
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
 
         DrawToolbar();
+        DrawDesyncNotice();
         ImGui.Separator();
         DrawSlotFilter();
         ImGui.Separator();
@@ -621,12 +643,19 @@ public class PluginUi : Window, IDisposable
         if (ImGui.Button(" Strip "))
         {
             _wardrobe.StripAll();
-            _detectedWorn.Clear();
+
+            // Anything left running keeps its marker, so the grid does not claim the emote mods
+            // that are still enabled were turned off
+            _detectedWorn.RemoveWhere(id =>
+                _config.WardrobeItems.Find(x => x.Id == id) is not { } item || !item.Slot.IsModCategory());
             _scanStatus = string.Empty;
         }
         ImGui.PopStyleColor(2);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Force every equipment slot to Emperor's New in Glamourer\nand disable all worn mods.");
+            ImGui.SetTooltip("Force every equipment slot to Emperor's New in Glamourer\n" +
+                             "and disable all worn mods.\n\n" +
+                             "Emotes, VFX and mounts are left running — they are not\n" +
+                             "on the character, so there is nothing to strip.");
 
         ImGui.SameLine();
 
@@ -642,27 +671,135 @@ public class PluginUi : Window, IDisposable
         if (ImGui.Button(" Scan "))
         {
             _detectedWorn.Clear();
-            var added = _wardrobe.ScanAndSyncWorn();
-            foreach (var id in added) _detectedWorn.Add(id);
+            var scan = _wardrobe.ScanAndSyncWorn();
+            foreach (var id in scan.Adopted) _detectedWorn.Add(id);
 
             // Also mark items already in WornItems as detected
             foreach (var id in _config.WornItems.Values)
                 _detectedWorn.Add(id);
 
-            _scanStatus = added.Count > 0
-                ? $"Detected {added.Count} new item(s) as worn."
+            _desynced = new List<WardrobeItem>(scan.Desynced);
+
+            _scanStatus = scan.Adopted.Count > 0
+                ? $"Detected {scan.Adopted.Count} new item(s) as worn."
                 : _detectedWorn.Count > 0
                     ? "Wardrobe already in sync."
                     : "No wardrobe items detected as worn.";
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Scan Penumbra for enabled mods and mark matching\nwardrobe items as worn.");
+            ImGui.SetTooltip("Scan Penumbra for enabled mods and mark matching\n" +
+                             "wardrobe items as worn, and report any whose mods are\n" +
+                             "enabled without Glamourer showing them.");
 
         if (!string.IsNullOrEmpty(_scanStatus))
         {
             ImGui.SameLine();
             ImGui.TextDisabled(_scanStatus);
         }
+    }
+
+    /// <summary>
+    /// Warns about items whose Penumbra mods are enabled while Glamourer is showing something
+    /// else, and offers the two ways out: finish applying them, or turn the leftover mods off.
+    /// </summary>
+    /// <remarks>
+    /// This state is otherwise invisible and inescapable from inside the plugin. WornItems is
+    /// cleared on load, so after a crash the wardrobe believes nothing is worn while the mods are
+    /// still enabled in Penumbra — Unequip All then has nothing to unequip, and Strip walks the
+    /// same empty list, so the only way to turn the mods off is to go and find them in Penumbra.
+    /// </remarks>
+    private void DrawDesyncNotice()
+    {
+        // Deleting an item while the notice is up would otherwise leave a dangling reference here,
+        // and acting on it would record a deleted item as worn
+        if (_desynced.Count > 0)
+            _desynced.RemoveAll(i => !_config.WardrobeItems.Contains(i));
+
+        if (_desynced.Count == 0) return;
+
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
+            $"● {_desynced.Count} item(s) have mods enabled that Glamourer is not showing.");
+        ImGui.TextDisabled("Their Penumbra mods are on but the character is not wearing them,");
+        ImGui.TextDisabled("which usually means Glamourer was reset — by a crash, or by");
+        ImGui.TextDisabled("/glamour disable. Wear them to finish applying, or turn the");
+        ImGui.TextDisabled("leftover mods off.");
+        ImGui.Spacing();
+
+        if (ImGui.Button(" Wear Them "))
+        {
+            foreach (var item in _desynced)
+            {
+                _wardrobe.WearItem(item);
+                _detectedWorn.Add(item.Id);
+            }
+            _scanStatus = $"Re-applied {_desynced.Count} item(s).";
+            _desynced.Clear();
+            return; // the list the loop below draws is gone
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Equips each one in Glamourer and records it as worn,\n" +
+                             "putting the wardrobe back in step with Penumbra.");
+
+        ImGui.SameLine();
+        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.45f, 0.08f, 0.08f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.65f, 0.12f, 0.12f, 1f));
+        var disableAll = ImGui.Button(" Disable Their Mods ");
+        ImGui.PopStyleColor(2);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Turns the leftover mods off in Penumbra and leaves\n" +
+                             "Glamourer alone, so gear you are actually wearing stays put.\n\n" +
+                             "Mods another worn item still needs are kept enabled.");
+        if (disableAll)
+        {
+            foreach (var item in _desynced)
+                _wardrobe.DisableItemMods(item);
+            _scanStatus = $"Disabled mods for {_desynced.Count} item(s).";
+            _desynced.Clear();
+            return;
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button(" Ignore "))
+        {
+            _desynced.Clear();
+            return;
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Hides this until the next Scan. Nothing is changed.");
+
+        // Per-item rows, so a single stray mod can be dealt with without touching the rest
+        WardrobeItem? handled = null;
+        foreach (var item in _desynced)
+        {
+            ImGui.PushID(item.Id.ToString());
+
+            ImGui.Bullet();
+            ImGui.SameLine();
+            ImGui.TextUnformatted(item.Name);
+            ImGui.SameLine();
+            ImGui.TextDisabled($"({item.Slot.DisplayName()})");
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Wear"))
+            {
+                _wardrobe.WearItem(item);
+                _detectedWorn.Add(item.Id);
+                handled = item;
+            }
+
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Disable"))
+            {
+                _wardrobe.DisableItemMods(item);
+                handled = item;
+            }
+
+            ImGui.PopID();
+        }
+
+        // Removed after the loop rather than inside it, so the list is not mutated while enumerated
+        if (handled != null) _desynced.Remove(handled);
     }
 
     /// <summary>
@@ -686,7 +823,7 @@ public class PluginUi : Window, IDisposable
         ImGui.TextDisabled(text);
 
         if (_visibleCount != total && ImGui.IsItemHovered())
-            ImGui.SetTooltip("Filtered by the current search, slot, tag or favourites selection.");
+            ImGui.SetTooltip("Filtered by the current search, slot, tag, worn or favourites selection.");
     }
 
     private void ToggleButton(string label, ref bool state, Action? onActivate = null)
@@ -750,11 +887,38 @@ public class PluginUi : Window, IDisposable
         if (favHovered)
             ImGui.SetTooltip(favActive ? "Showing favourites only." : "Show favourites only.");
 
+        ImGui.SameLine();
+
+        // Same up-front capture as the favourites button above, for the same reason
+        var wornActive = _wornOnly;
+        if (wornActive)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.13f, 0.45f, 0.35f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.18f, 0.60f, 0.46f, 1f));
+        }
+        if (ImGui.Button("Worn")) _wornOnly = !_wornOnly;
+        var wornHovered = ImGui.IsItemHovered();
+        if (wornActive) ImGui.PopStyleColor(2);
+
+        if (wornHovered)
+            ImGui.SetTooltip(wornActive
+                ? "Showing worn items only. Click to show everything again."
+                : "Show only what is currently on — items the wardrobe is\n" +
+                  "tracking as worn, plus anything the last Scan found\n" +
+                  "enabled in Penumbra.");
+
         foreach (var slot in EquipSlotEx.All)
         {
             ImGui.SameLine();
             DrawFilterButton(slot.DisplayName(), slot);
         }
+
+        if (_config.ModCategoriesEnabled)
+            foreach (var slot in EquipSlotEx.ModCategories)
+            {
+                ImGui.SameLine();
+                DrawFilterButton(slot.DisplayName(), slot);
+            }
 
         DrawSearchAndSort();
         ImGui.Spacing();
@@ -980,11 +1144,30 @@ public class PluginUi : Window, IDisposable
 
     // ── Item grid ─────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// True when the item is tracked as worn, or the last scan found its mods enabled in Penumbra.
+    /// </summary>
+    /// <remarks>
+    /// The two states the cards mark with a star and a dot respectively. Both count as "on": the
+    /// scan-detected ones are exactly the items whose mods are live but which the wardrobe was not
+    /// tracking, which is the case worth being able to pick out of the grid.
+    /// </remarks>
+    private bool IsWornOrDetected(WardrobeItem item) =>
+        _wardrobe.IsItemWorn(item) || _detectedWorn.Contains(item.Id);
+
     private void DrawGrid()
     {
         IEnumerable<WardrobeItem> query = _config.WardrobeItems;
+
+        // Emotes, VFX and mounts are hidden entirely rather than merely unfilterable while the mode
+        // is off — with no filter button for them they would otherwise be stuck in every view.
+        if (!_config.ModCategoriesEnabled)
+            query = query.Where(x => !x.Slot.IsModCategory());
+
         if (_favoritesOnly)
             query = query.Where(x => x.IsFavorite);
+        if (_wornOnly)
+            query = query.Where(IsWornOrDetected);
         if (_slotFilter != null)
             query = query.Where(x => x.Slot == _slotFilter);
         if (_tagFilter.Count > 0)
@@ -1191,25 +1374,27 @@ public class PluginUi : Window, IDisposable
         // Buttons
         var btnW = (CardWidth - CardPad * 2 - 6) / 2;
 
-        // Customisation mods are not worn or removed — you always have hair. They are applied,
-        // and "removing" one just turns the mod back off.
-        var customization = item.Slot.IsCustomization();
+        // Customisation mods are not worn or removed — you always have hair. They are applied, and
+        // "removing" one just turns the mod back off. The same goes for emotes, VFX and mounts,
+        // which are not on the character at all.
+        var (wearLabel, removeLabel) = item.Slot.ActionLabels();
+        var modOnly = item.Slot.IsModOnly();
 
         if (worn)
         {
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.55f, 0.08f, 0.08f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.75f, 0.15f, 0.15f, 1f));
-            if (ImGui.Button(customization ? "Revert" : "Unequip", new Vector2(btnW, 0)))
+            if (ImGui.Button(removeLabel, new Vector2(btnW, 0)))
                 _wardrobe.UnwearItem(item);
             ImGui.PopStyleColor(2);
-            if (customization && ImGui.IsItemHovered())
+            if (modOnly && ImGui.IsItemHovered())
                 ImGui.SetTooltip("Turn this mod back off, restoring the default appearance.");
         }
         else
         {
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.13f, 0.38f, 0.13f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.18f, 0.55f, 0.18f, 1f));
-            if (ImGui.Button(customization ? "Apply" : "Wear", new Vector2(btnW, 0)))
+            if (ImGui.Button(wearLabel, new Vector2(btnW, 0)))
                 _wardrobe.WearItem(item);
             ImGui.PopStyleColor(2);
         }
@@ -1752,8 +1937,9 @@ public class PluginUi : Window, IDisposable
 
     private void DrawOutfitCard(Outfit outfit, float cardW, float cardH, ref Outfit? pendingDelete)
     {
-        var items = _wardrobe.ResolveOutfit(outfit);
-        var worn  = _wardrobe.IsOutfitWorn(outfit);
+        var items  = _wardrobe.ResolveOutfit(outfit);
+        var worn   = _wardrobe.IsOutfitWorn(outfit);
+        var partly = _wardrobe.IsOutfitPartlyWorn(outfit);
 
         ImGui.PushID(outfit.Id.ToString());
         ImGui.PushStyleColor(ImGuiCol.ChildBg,
@@ -1791,6 +1977,18 @@ public class PluginUi : Window, IDisposable
             : $"{items.Count} items");
         ImGui.PopStyleColor();
 
+        if (partly)
+        {
+            var wornOfOutfit = items.Count(_wardrobe.IsItemWorn);
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.75f, 0.3f, 1f));
+            ImGui.TextUnformatted($"{wornOfOutfit} still on");
+            ImGui.PopStyleColor();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Part of this outfit is still applied:\n" +
+                                 string.Join("\n", items.Where(_wardrobe.IsItemWorn)
+                                     .Select(i => $"{i.Slot.DisplayName()} — {i.Name}")));
+        }
+
         var btnW = (cardW - CardPad * 2 - 6) / 2;
 
         if (worn)
@@ -1823,6 +2021,21 @@ public class PluginUi : Window, IDisposable
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Rename it, set a preview, take a photo, and add or remove items.");
         ImGui.SameLine();
+
+        // A partly-worn outfit shows Wear above, so without this there would be nothing to press to
+        // take off what is still applied — most often the emote a Strip deliberately left running
+        if (partly)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.45f, 0.08f, 0.08f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.65f, 0.12f, 0.12f, 1f));
+            if (ImGui.SmallButton("Remove"))
+                _wardrobe.UnwearOutfit(outfit);
+            ImGui.PopStyleColor(2);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Takes off the parts of this outfit that are still applied,\n" +
+                                 "including any emote or VFX mods still enabled.");
+            ImGui.SameLine();
+        }
 
         ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
@@ -1915,6 +2128,8 @@ public class PluginUi : Window, IDisposable
 
         ImGui.Spacing();
 
+        DrawOutfitDyeAll(outfit, items);
+
         Guid? removeId = null;
         const float rowThumb = 56f;
 
@@ -1939,14 +2154,14 @@ public class PluginUi : Window, IDisposable
 
             ImGui.SetCursorPos(new Vector2(top.X + rowThumb + 8, top.Y + ImGui.GetTextLineHeightWithSpacing() * 2 + 2));
 
-            var customization = item.Slot.IsCustomization();
-            var rowDye        = WardrobeService.GetDye(outfit, item.Id);
+            var (wearLabel, removeLabel) = item.Slot.ActionLabels("Equip");
+            var rowDye                   = WardrobeService.GetDye(outfit, item.Id);
 
             if (worn)
             {
                 ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.55f, 0.08f, 0.08f, 1f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.75f, 0.15f, 0.15f, 1f));
-                if (ImGui.SmallButton(customization ? "Revert" : "Unequip"))
+                if (ImGui.SmallButton(removeLabel))
                     _wardrobe.UnwearItem(item);
                 ImGui.PopStyleColor(2);
             }
@@ -1954,7 +2169,7 @@ public class PluginUi : Window, IDisposable
             {
                 ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.13f, 0.38f, 0.13f, 1f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.18f, 0.55f, 0.18f, 1f));
-                if (ImGui.SmallButton(customization ? "Apply" : "Equip"))
+                if (ImGui.SmallButton(wearLabel))
                     _wardrobe.WearItem(item);
                 ImGui.PopStyleColor(2);
             }
@@ -1983,9 +2198,11 @@ public class PluginUi : Window, IDisposable
             // Dyes sit below the row, full width, since two pickers do not fit beside the thumbnail
             ImGui.SetCursorPos(new Vector2(top.X, top.Y + rowThumb + 6));
 
-            if (item.Slot.IsCustomization())
+            // Dyes are a property of an equipped game item, so anything without one — hair, an
+            // emote, a mount — has nothing to dye
+            if (item.Slot.IsModOnly())
             {
-                ImGui.TextDisabled("    Customisation mods cannot be dyed.");
+                ImGui.TextDisabled($"    {item.Slot.DisplayName()} mods cannot be dyed.");
             }
             else
             {
@@ -2049,19 +2266,62 @@ public class PluginUi : Window, IDisposable
     }
 
     /// <summary>
+    /// Dye pickers that set one channel across every dyeable item in the outfit at once.
+    /// </summary>
+    /// <remarks>
+    /// Sits above the item list because it is the usual first move — pick the outfit's dye, then
+    /// change the few pieces that should differ. The per-item pickers below write the same store,
+    /// so an edit there simply shows up here as "Mixed".
+    /// </remarks>
+    private void DrawOutfitDyeAll(Outfit outfit, List<WardrobeItem> items)
+    {
+        // With nothing dyeable in the outfit there is nothing for these to act on
+        if (!items.Any(i => !i.Slot.IsModOnly())) return;
+
+        ImGui.TextDisabled("Dye all items");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Sets this dye on every dyeable item in the outfit.\n" +
+                             "Individual items can still be changed below.");
+
+        var half   = (ImGui.GetContentRegionAvail().X - 8) / 2;
+        var dyeTop = ImGui.GetCursorPos();
+
+        if (DrawDyePicker("dyeall1", "Dye 1", _wardrobe.CommonDye(outfit, 1), half, out var all1))
+            _wardrobe.SetDyeAll(outfit, 1, all1);
+
+        // Positioned explicitly rather than with SameLine, for the same reason as the per-item row
+        var afterDye = ImGui.GetCursorPos();
+        ImGui.SetCursorPos(new Vector2(dyeTop.X + half + 8, dyeTop.Y));
+
+        if (DrawDyePicker("dyeall2", "Dye 2", _wardrobe.CommonDye(outfit, 2), half, out var all2))
+            _wardrobe.SetDyeAll(outfit, 2, all2);
+
+        ImGui.SetCursorPos(new Vector2(dyeTop.X, afterDye.Y));
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+    }
+
+    /// <summary>
     /// Dye picker for one channel, showing a colour swatch beside the dye name.
     /// </summary>
     /// <remarks>
     /// Colours come from the game's Stain sheet, so the swatch matches what the dye actually looks
-    /// like rather than a guess. Returns true when a different dye was chosen.
+    /// like rather than a guess. A null <paramref name="current"/> means the items being covered do
+    /// not agree on a dye, which shows as "Mixed" and makes any pick count as a change — otherwise
+    /// picking Undyed over a mix would read as no change and quietly do nothing.
+    /// Returns true when a different dye was chosen.
     /// </remarks>
-    private bool DrawDyePicker(string id, string label, byte current, float width, out byte picked)
+    private bool DrawDyePicker(string id, string label, byte? current, float width, out byte picked)
     {
-        picked = current;
+        picked = current ?? 0;
 
         var stains = Plugin.ItemLookup.GetStains();
         var match  = stains.FirstOrDefault(s => s.Id == current);
-        var name   = string.IsNullOrEmpty(match.Name) ? "Undyed" : match.Name;
+        var name   = current == null            ? "Mixed"
+                   : string.IsNullOrEmpty(match.Name) ? "Undyed"
+                   : match.Name;
 
         ImGui.BeginGroup();
         ImGui.TextDisabled(label);
@@ -2117,6 +2377,9 @@ public class PluginUi : Window, IDisposable
 
         var candidates = _config.WardrobeItems
             .Where(i => !outfit.ItemIds.Contains(i.Id))
+            // Offering a category the user has switched off would add an item they then cannot
+            // see anywhere in the grid
+            .Where(i => _config.ModCategoriesEnabled || !i.Slot.IsModCategory())
             .Where(i => string.IsNullOrWhiteSpace(_addToOutfitSearch) ||
                         i.Name.Contains(_addToOutfitSearch.Trim(), StringComparison.OrdinalIgnoreCase))
             .OrderBy(i => (int)i.Slot)
@@ -2487,6 +2750,12 @@ public class PluginUi : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
+        DrawModCategorySettings();
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
         DrawBackupSettings();
 
         ImGui.Spacing();
@@ -2741,6 +3010,51 @@ public class PluginUi : Window, IDisposable
         ImGui.Spacing();
 
         DrawShareSettings();
+    }
+
+    /// <summary>
+    /// Opt-in for managing mods that are not equipment. Kept behind a switch because the extra
+    /// filter buttons and slot-picker entries are noise to a wardrobe made only of gear.
+    /// </summary>
+    private void DrawModCategorySettings()
+    {
+        ImGui.TextUnformatted("Other Mod Types");
+        ImGui.TextDisabled("Manage emotes and animations, VFX, and mounts and minions");
+        ImGui.TextDisabled("alongside your gear. These have no game item to equip, so");
+        ImGui.TextDisabled("wearing one only enables its Penumbra mod — Glamourer is");
+        ImGui.TextDisabled("left alone entirely.");
+        ImGui.Spacing();
+
+        var enabled = _config.ModCategoriesEnabled;
+        if (ImGui.Checkbox("Manage other mod types", ref enabled))
+        {
+            _config.ModCategoriesEnabled = enabled;
+
+            // A filter pointing at a category that just disappeared would leave the grid
+            // permanently empty with no visible button to clear it
+            if (!enabled && _slotFilter is { } f && f.IsModCategory())
+                _slotFilter = null;
+
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Adds Emote, VFX and Mount / Minion to the filter bar and to the\n" +
+                             "slot pickers when importing or editing an item.\n\n" +
+                             "Turning it off hides items in those categories from the grid\n" +
+                             "but keeps them saved — turning it back on restores them.");
+
+        var modCategoryCount = _config.WardrobeItems.Count(i => i.Slot.IsModCategory());
+        if (modCategoryCount > 0 && !_config.ModCategoriesEnabled)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f),
+                $"{modCategoryCount} item(s) in these categories are currently hidden.");
+        }
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Emote mods that replace the same animation swap each other");
+        ImGui.TextDisabled("out, like two body mods do. Which animation an item replaces");
+        ImGui.TextDisabled("is detected on import and can be changed when editing it.");
     }
 
     private void DrawSlotIconSettings()

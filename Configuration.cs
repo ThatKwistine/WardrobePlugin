@@ -61,6 +61,16 @@ public class Configuration : IPluginConfiguration
     /// </summary>
     public bool ExperimentalFeatures { get; set; }
 
+    /// <summary>
+    /// Manage mods that are not equipment — emotes and animations, VFX, mounts and minions.
+    /// </summary>
+    /// <remarks>
+    /// Off by default: it adds three filter buttons and three slot-picker entries that mean nothing
+    /// to a wardrobe of gear. Items already imported into those categories are kept but hidden from
+    /// the grid while it is off, so turning it back on restores them intact.
+    /// </remarks>
+    public bool ModCategoriesEnabled { get; set; }
+
     /// <summary>Show an icon instead of the slot name where slots are displayed.</summary>
     public bool SlotIconsEnabled { get; set; }
 

@@ -54,6 +54,12 @@ public class SlotIconService
         { EquipSlot.Tail,      FontAwesomeIcon.Paw },
         { EquipSlot.VieraEars, FontAwesomeIcon.Cat },
         { EquipSlot.Skin,      FontAwesomeIcon.Fingerprint },
+
+        // Mod categories. No game icon exists for any of these — GetSlotIcon reads an item's UI
+        // category and none of them is an item — so the glyph is all there is.
+        { EquipSlot.Emote,     FontAwesomeIcon.Running },
+        { EquipSlot.Vfx,       FontAwesomeIcon.Magic },
+        { EquipSlot.Mount,     FontAwesomeIcon.Horse },
     };
 
     /// <summary>The square edge length icons are drawn at, scaled for the current font size.</summary>

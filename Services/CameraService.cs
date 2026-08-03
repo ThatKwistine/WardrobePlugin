@@ -12,14 +12,25 @@ public unsafe class CameraService : IDisposable
     private const int DefaultSustainFrames = 30;
 
     private readonly IFramework _framework;
+    private readonly IPluginLog _log;
 
     private CameraPreset? _sustaining;
     private int           _framesLeft;
     private bool          _subscribed;
 
-    public CameraService(IFramework framework)
+    public CameraService(IFramework framework, IPluginLog log)
     {
         _framework = framework;
+        _log       = log;
+    }
+
+    /// <summary>Current camera values, for diagnostics.</summary>
+    private string ReadBack()
+    {
+        var mgr = CameraManager.Instance();
+        if (mgr == null || mgr->Camera == null) return "camera unavailable";
+        var cam = mgr->Camera;
+        return $"dist={cam->Distance:F2} fov={cam->FoV:F3} h={cam->DirH:F3} v={cam->DirV:F3} tilt={cam->TiltOffset:F3}";
     }
 
     public CameraPreset? Capture()
@@ -47,7 +58,22 @@ public unsafe class CameraService : IDisposable
     /// </remarks>
     public void Apply(CameraPreset preset, int frames = DefaultSustainFrames)
     {
-        if (!WriteToCamera(preset)) return;
+        // Three data points from one apply, enough to tell the failure modes apart:
+        //   write does not land            → we are writing somewhere that is not the live camera
+        //   lands then reverts next frame  → something is overwriting it (game loop, or Brio)
+        //   sticks but the view is unchanged → the camera being written is not the one rendering
+        _log.Debug($"[Wardrobe] Camera before : {ReadBack()}");
+        _log.Debug($"[Wardrobe] Camera wanted : dist={preset.Distance:F2} fov={preset.FoV:F3} " +
+                   $"h={preset.DirH:F3} v={preset.DirV:F3} tilt={preset.TiltOffset:F3}");
+
+        if (!WriteToCamera(preset))
+        {
+            _log.Warning("[Wardrobe] Camera apply failed — CameraManager or its camera was null.");
+            return;
+        }
+
+        _log.Debug($"[Wardrobe] Camera after write: {ReadBack()}");
+
         if (frames <= 1) return;
 
         _sustaining = preset;
@@ -71,9 +97,16 @@ public unsafe class CameraService : IDisposable
     {
         if (_sustaining == null || _framesLeft <= 0)
         {
+            if (_sustaining != null)
+                _log.Debug($"[Wardrobe] Camera after sustain: {ReadBack()}");
             CancelSustain();
             return;
         }
+
+        // Read before writing on the first sustained frame: this is the value the game left after
+        // its own update ran, which is what reveals an overwrite.
+        if (_framesLeft == DefaultSustainFrames)
+            _log.Debug($"[Wardrobe] Camera next frame (before re-write): {ReadBack()}");
 
         WriteToCamera(_sustaining);
         _framesLeft--;

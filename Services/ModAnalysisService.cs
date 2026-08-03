@@ -23,7 +23,13 @@ public record ModAnalysisResult(
     /// Hairstyle numbers keyed by model race code (0101, 1801, …). Hairstyle numbering differs
     /// per race, so the right one depends on who is wearing it.
     /// </summary>
-    IReadOnlyDictionary<int, ushort> HairIdsByRace
+    IReadOnlyDictionary<int, ushort> HairIdsByRace,
+    /// <summary>
+    /// What the mod replaces within a mod category, keyed by slot — the animation file name for an
+    /// emote, the monster id for a mount. Equipment identifies itself by set ID instead, so only
+    /// mod categories ever appear here. See <see cref="Models.WardrobeItem.Replaces"/>.
+    /// </summary>
+    IReadOnlyDictionary<EquipSlot, string> ReplaceKeys
 );
 
 public class ModAnalysisService
@@ -69,6 +75,28 @@ public class ModAnalysisService
     private static readonly Regex CommonPattern =
         new(@"chara/common/", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // Any .pap file — emotes, poses, idles and battle animations. Animation data lives in no other
+    // file type, so the extension alone identifies the mod, and the file name is what two mods must
+    // share to be replacing the same animation (…/bt_common/emote/j_pose.pap → "j_pose").
+    private static readonly Regex AnimationPattern =
+        new(@"([^/]+)\.pap$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // chara/monster/m{id}/… and chara/demihuman/d{id}/… — mounts, minions and NPC models.
+    // Group 1 = m or d, group 2 = the id; together they name what the mod replaces.
+    private static readonly Regex MonsterPattern =
+        new(@"chara/(?:monster|demihuman)/([md])(\d+)/", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // vfx/… anywhere in the path, plus .avfx effect definitions. Covers standalone spell-effect
+    // mods as well as the glow half of a weapon mod — the latter is discarded below.
+    private static readonly Regex VfxPattern =
+        new(@"(?:^|/)vfx/|\.avfx$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Slots that are nearly always a supporting part of some other mod rather than the point of
+    /// it, and so are only reported when nothing else was detected.
+    /// </summary>
+    private static readonly HashSet<EquipSlot> Auxiliary = new() { EquipSlot.Other, EquipSlot.Vfx };
+
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -85,23 +113,24 @@ public class ModAnalysisService
         var slots   = new HashSet<EquipSlot>();
         var setIds  = new Dictionary<EquipSlot, ushort>();
         var hairIds = new Dictionary<int, ushort>();
+        var replace = new Dictionary<EquipSlot, string>();
         var groups  = new List<ModOptionGroup>();
 
         if (!Directory.Exists(modFolderPath))
-            return new ModAnalysisResult(slots, groups, setIds, hairIds);
+            return new ModAnalysisResult(slots, groups, setIds, hairIds, replace);
 
         // default_mod.json
         var defaultFile = Path.Combine(modFolderPath, "default_mod.json");
         if (File.Exists(defaultFile))
             foreach (var key in ReadFileKeys(defaultFile))
-                ClassifyPath(key, slots, setIds, hairIds);
+                ClassifyPath(key, slots, setIds, hairIds, replace);
 
         // group_NNN_*.json — the older layout, one file per group
         foreach (var groupFile in Directory.GetFiles(modFolderPath, "group_*.json").OrderBy(x => x))
         {
             var g = TryReadGroup(groupFile);
             if (g is null) continue;
-            AddGroup(g, slots, setIds, hairIds, groups);
+            AddGroup(g, slots, setIds, hairIds, replace, groups);
         }
 
         // meta.json — FileVersion 4 and later put every group inside meta.json instead, with no
@@ -109,7 +138,7 @@ public class ModAnalysisService
         // for such mods, so they appeared to touch no slots whatsoever.
         var meta = ReadMeta(Path.Combine(modFolderPath, "meta.json"));
         foreach (var g in meta?.Groups ?? new List<GroupJson>())
-            AddGroup(g, slots, setIds, hairIds, groups);
+            AddGroup(g, slots, setIds, hairIds, replace, groups);
 
         // Penumbra's on-disk format is barely documented and has changed once already. A mod that
         // yields no game paths at all is nearly always a layout this parser does not understand
@@ -127,12 +156,14 @@ public class ModAnalysisService
 
         slots.Remove(EquipSlot.Unknown);
 
-        // chara/common files are usually supporting assets for a real equipment mod — a shared ID
-        // texture shipped alongside an accessory model, for instance. Only treat them as a slot in
-        // their own right when nothing else was found, or every such mod gains a phantom Other slot.
-        if (slots.Count > 1) slots.Remove(EquipSlot.Other);
+        // chara/common files and VFX are usually supporting assets for a real mod — a shared ID
+        // texture shipped alongside an accessory model, a glow shipped with a weapon — rather than
+        // the point of it. Only treat them as a category in their own right when nothing else was
+        // found, or every such mod gains a phantom extra slot.
+        if (slots.Any(s => !Auxiliary.Contains(s)))
+            slots.ExceptWith(Auxiliary);
 
-        return new ModAnalysisResult(slots, groups, setIds, hairIds);
+        return new ModAnalysisResult(slots, groups, setIds, hairIds, replace);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -215,7 +246,7 @@ public class ModAnalysisService
 
     /// <summary>Records a group's option names and classifies every game path it references.</summary>
     private void AddGroup(GroupJson g, HashSet<EquipSlot> slots, Dictionary<EquipSlot, ushort> setIds,
-        Dictionary<int, ushort> hairIds, List<ModOptionGroup> groups)
+        Dictionary<int, ushort> hairIds, Dictionary<EquipSlot, string> replace, List<ModOptionGroup> groups)
     {
         var optNames = new List<string>();
         foreach (var opt in g.Options)
@@ -224,14 +255,15 @@ public class ModAnalysisService
             if (opt.Files == null) continue;
 
             foreach (var key in opt.Files.Keys)
-                ClassifyPath(key, slots, setIds, hairIds);
+                ClassifyPath(key, slots, setIds, hairIds, replace);
         }
 
         if (optNames.Count > 0)
             groups.Add(new ModOptionGroup(g.Name, ClassifyGroupType(g.Type, g.Name), optNames));
     }
 
-    private void ClassifyPath(string gamePath, HashSet<EquipSlot> slots, Dictionary<EquipSlot, ushort> setIds, Dictionary<int, ushort> hairIds)
+    private void ClassifyPath(string gamePath, HashSet<EquipSlot> slots, Dictionary<EquipSlot, ushort> setIds,
+        Dictionary<int, ushort> hairIds, Dictionary<EquipSlot, string> replace)
     {
         _pathsSeen++;
 
@@ -305,6 +337,34 @@ public class ModAnalysisService
             // Hairstyle numbers differ per race, so record which race each one belongs to
             if (slot == EquipSlot.Hair && int.TryParse(m.Groups[1].Value, out var raceCode))
                 hairIds.TryAdd(raceCode, customizeId);
+            return;
+        }
+
+        // The mod categories. These come after equipment and customisation deliberately: a gear mod
+        // that also ships a glow or a custom animation is still a gear mod, and classifying it by
+        // whichever path happened to be read first would be a coin toss.
+        m = AnimationPattern.Match(gamePath);
+        if (m.Success)
+        {
+            slots.Add(EquipSlot.Emote);
+            replace.TryAdd(EquipSlot.Emote, m.Groups[1].Value.ToLowerInvariant());
+            return;
+        }
+
+        m = MonsterPattern.Match(gamePath);
+        if (m.Success)
+        {
+            slots.Add(EquipSlot.Mount);
+            replace.TryAdd(EquipSlot.Mount,
+                $"{m.Groups[1].Value.ToLowerInvariant()}{m.Groups[2].Value}");
+            return;
+        }
+
+        // No replace key: VFX overlap in ways the file paths do not reveal, so each one is left
+        // independent rather than guessing which two mods collide.
+        if (VfxPattern.IsMatch(gamePath))
+        {
+            slots.Add(EquipSlot.Vfx);
             return;
         }
 

@@ -59,6 +59,19 @@ public class WardrobeItem
     /// </remarks>
     public Dictionary<string, ushort> HairIdByRace { get; set; } = new();
 
+    /// <summary>
+    /// What this mod replaces within its category, for the mod categories that have no equipment
+    /// slot to be exclusive on — the animation file name for an emote, the monster id for a mount.
+    /// </summary>
+    /// <remarks>
+    /// Two items sharing a key swap each other out on wear, exactly as two body mods in the same
+    /// slot do. A blank key leaves the item independent of everything else in its category, which
+    /// is the right default for VFX: those overlap in ways the file paths do not reveal.
+    /// Detected on import and editable afterwards, so two mods for the same emote can be lined up
+    /// by hand when their file names differ.
+    /// </remarks>
+    public string? Replaces { get; set; }
+
     public List<string> Tags { get; set; } = new();
 
     /// <summary>Marked as a favourite by the user; can be filtered on in the grid.</summary>
@@ -69,4 +82,19 @@ public class WardrobeItem
     /// on load by <see cref="Configuration.MigrateDateAdded"/>, which preserves their list order.
     /// </summary>
     public DateTime DateAdded { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Key this item occupies in <see cref="Configuration.WornItems"/>, which is what decides
+    /// whether wearing it displaces something already worn.
+    /// </summary>
+    /// <remarks>
+    /// Equipment and customisation are exclusive per slot, so the slot name is key enough. Mod
+    /// categories are not — several emote mods can be active at once — so they key on what they
+    /// replace instead, falling back to the item's own id when that is unknown so the item is
+    /// simply independent rather than colliding with every other item in its category.
+    /// A method rather than a property so it is not written into the saved config.
+    /// </remarks>
+    public string WornKey() => Slot.IsModCategory()
+        ? $"{Slot}:{(string.IsNullOrWhiteSpace(Replaces) ? Id.ToString() : Replaces.Trim())}"
+        : Slot.ToString();
 }
