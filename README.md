@@ -270,3 +270,22 @@ authoritative reference for these labels and signatures — check it before assu
 - **Camera presets** are written directly to the game's camera and re-applied for about half a second, because a single write is overwritten by the game's own per-frame camera update. They only work with the native GPose camera — if BRIO's free camera is active it drives the camera independently and presets will have no visible effect.
 - **Slot icons** (experimental) — **Settings → Experimental → Use icons for slots** replaces slot names with icons on the item cards and slot filter row, choosing between FFXIV's own Character-window slot icons and Font Awesome. Both sets draw into the same fixed square so switching never reflows the layout. Hair, face, tail, ears and skin have no game icon and always use Font Awesome. Every icon carries a tooltip with the slot name, which is the only way to tell the two ring slots apart.
 - **Wardrobe sharing** (`WardrobeShareService`) — WebSocket hosting and the visitor allowlist — sits behind **Settings → Experimental → Enable experimental features**, and is hidden by default. It is scaffolded but has no backend yet, so connecting is currently a no-op.
+
+---
+
+## Licence
+
+Copyright (C) 2026 ThatKwistine
+
+This program is free software: you can redistribute it and/or modify it under the terms of the
+**GNU Affero General Public License** as published by the Free Software Foundation, either version 3
+of the License, or (at your option) any later version. See [LICENSE](LICENSE) for the full text.
+
+It is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the
+implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+
+AGPL-3.0 matches [Dalamud](https://github.com/goatcorp/Dalamud), which this plugin links against.
+In practice it means you are free to use, study, modify and share it — and that anything built on it
+and distributed onward stays open too.
+
+The plugin icon is not covered by this licence.
