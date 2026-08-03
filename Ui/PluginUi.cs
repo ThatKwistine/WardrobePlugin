@@ -2011,10 +2011,32 @@ public class PluginUi : Window, IDisposable
         }
 
         ImGui.SameLine();
-        if (ImGui.Button("Only this", new Vector2(btnW, 0)))
-            _wardrobe.WearOutfit(outfit, removeOthers: true);
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Wear these items and remove everything else the wardrobe has on.");
+
+        // Update takes the place of "Only this" while the outfit is on the character. That button
+        // means "wear these and drop the rest", which is the one control the state does not need —
+        // Wear beside it already puts back whatever a swap took off — and this is exactly when
+        // there is something to save. Handing it the slot keeps the card from growing a row it has
+        // no vertical room for.
+        if (worn || partly)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.18f, 0.32f, 0.5f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.24f, 0.44f, 0.68f, 1f));
+            if (ImGui.Button("Update", new Vector2(btnW, 0)))
+                _wardrobe.UpdateOutfitFromWorn(outfit);
+            ImGui.PopStyleColor(2);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Saves what you are wearing now as this outfit,\n" +
+                                 "so pieces swapped by hand are kept.\n" +
+                                 "Dyes stay with the items that remain, and a piece\n" +
+                                 "swapped into a slot takes over that slot's dye.");
+        }
+        else
+        {
+            if (ImGui.Button("Only this", new Vector2(btnW, 0)))
+                _wardrobe.WearOutfit(outfit, removeOthers: true);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Wear these items and remove everything else the wardrobe has on.");
+        }
 
         if (ImGui.SmallButton("Edit"))
             OpenOutfitEdit(outfit);
@@ -2115,6 +2137,9 @@ public class PluginUi : Window, IDisposable
         {
             ImGui.TextDisabled("Set the images and screenshots folders to enable screenshots.");
         }
+
+        ImGui.Spacing();
+        DrawUpdateFromWorn(outfit);
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -2263,6 +2288,38 @@ public class PluginUi : Window, IDisposable
         {
             CloseOutfitEdit();
         }
+    }
+
+    /// <summary>
+    /// Saves whatever is worn right now as the outfit's contents.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart to editing the list by hand: wear the outfit, swap pieces on the character
+    /// until it looks right, then keep the result. Seeing a swap is the only way to judge it, and
+    /// reproducing it by adding and removing rows here means doing the same work twice.
+    /// </remarks>
+    private void DrawUpdateFromWorn(Outfit outfit)
+    {
+        var wornCount = _config.WornItems.Values.Distinct().Count();
+
+        if (wornCount == 0)
+        {
+            ImGui.TextDisabled("Wear something to update this outfit from what you have on.");
+            return;
+        }
+
+        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.18f, 0.32f, 0.5f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.24f, 0.44f, 0.68f, 1f));
+        if (ImGui.Button($"Update from what I'm wearing  ({wornCount})", new Vector2(-1, 0)))
+            _wardrobe.UpdateOutfitFromWorn(outfit);
+        ImGui.PopStyleColor(2);
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Replaces this outfit's items with everything you have on,\n" +
+                             "so pieces swapped by hand are kept.\n\n" +
+                             "Items still in the outfit keep their dyes, and a piece swapped\n" +
+                             "into a slot takes over the dye the old one had there.\n" +
+                             "The name and preview image are left alone.");
     }
 
     /// <summary>

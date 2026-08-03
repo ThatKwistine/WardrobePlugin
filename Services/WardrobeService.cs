@@ -705,6 +705,64 @@ public class WardrobeService : IDisposable
         return outfit;
     }
 
+    /// <summary>
+    /// Replaces an outfit's contents with whatever is worn right now, keeping its dyes.
+    /// </summary>
+    /// <remarks>
+    /// For editing an outfit by wearing it and changing pieces on the character, which is the only
+    /// way to see what a swap actually looks like. Items still in the outfit keep the dye they had.
+    /// A piece swapped into a slot inherits the dye of the piece it replaced, since the dye is
+    /// usually chosen for the outfit rather than the item — the new row can be re-dyed afterwards
+    /// like any other. Dyes for items no longer worn are dropped: they are no longer part of the
+    /// outfit, and keeping them would resurrect an old colour if the item were ever added back.
+    /// Returns the number of items the outfit now holds, or null when nothing is worn.
+    /// </remarks>
+    public int? UpdateOutfitFromWorn(Outfit outfit)
+    {
+        var wornIds = _config.WornItems.Values.Distinct().ToList();
+        if (wornIds.Count == 0)
+        {
+            _log.Warning($"[Wardrobe] Nothing is worn — outfit '{outfit.Name}' left as it was.");
+            return null;
+        }
+
+        // The outfit's dyes as they stand, by slot, so a replacement can pick up the colour that
+        // was on the slot before the swap. Read before ItemIds is replaced.
+        var dyeBySlot = new Dictionary<EquipSlot, OutfitDye>();
+        foreach (var item in ResolveOutfit(outfit))
+            if (GetDye(outfit, item.Id) is { } dye)
+                dyeBySlot.TryAdd(item.Slot, dye);
+
+        var dyes = new Dictionary<string, OutfitDye>();
+        foreach (var id in wornIds)
+        {
+            var item = _config.WardrobeItems.Find(x => x.Id == id);
+            if (item == null || item.Slot.IsModOnly()) continue;
+
+            // An item that was already in the outfit keeps its own dye; only a newcomer falls back
+            // to the slot's
+            var dye = GetDye(outfit, id)
+                   ?? (dyeBySlot.TryGetValue(item.Slot, out var slotDye) ? slotDye : null);
+            if (dye == null) continue;
+
+            // Copied rather than shared: two items pointing at one OutfitDye would re-dye each
+            // other when either row is edited
+            dyes[id.ToString()] = new OutfitDye { Stain1 = dye.Stain1, Stain2 = dye.Stain2 };
+        }
+
+        outfit.ItemIds = wornIds;
+        outfit.Dyes    = dyes;
+
+        // What is on the character is now exactly this outfit, so redraws should re-apply its dyes
+        _activeOutfitId = outfit.Id;
+
+        _config.Save();
+        WardrobeChanged?.Invoke();
+
+        _log.Information($"[Wardrobe] Updated outfit '{outfit.Name}' from what is worn ({wornIds.Count} item(s))");
+        return wornIds.Count;
+    }
+
     /// <summary>Items in an outfit that still exist, in slot order.</summary>
     public List<WardrobeItem> ResolveOutfit(Outfit outfit) =>
         outfit.ItemIds

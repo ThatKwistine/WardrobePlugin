@@ -119,6 +119,7 @@ Outfit cards then offer:
 
 - **Wear** — wears the outfit's items, leaving anything else you have on in place
 - **Only this** — wears them and removes everything else the wardrobe has on
+- **Update** — replaces **Only this** while the outfit is on, and saves what you are wearing now
 - **Remove** — takes the outfit's items back off
 - **Photo** — wears the outfit alone and waits for a screenshot, assigning it as the outfit's image
 - **Edit** — opens the outfit for renaming, setting a preview, taking its photo, and managing its contents
@@ -141,6 +142,17 @@ Customisation items cannot be dyed and say so.
 Above the list, a **Dye all items** pair of pickers sets either channel across every dyeable item in
 the outfit at once, for the common case of one dye through a whole set. Individual rows can then be
 changed afterwards; once they disagree, the picker at the top reads **Mixed**.
+
+### Editing an outfit by wearing it
+
+Rebuilding a look row by row is guesswork — a swap can only really be judged on the character. So
+wear the outfit, change whatever you like by hand, and press **Update** on its card, or **Update from
+what I'm wearing** in the edit panel. Everything the wardrobe has on becomes the outfit's contents.
+
+Dyes survive the swap: items still in the outfit keep the ones they had, and a piece moved into a
+slot takes over the dye the old occupant had there, on the assumption that the colour belonged to the
+outfit rather than to the piece. Re-dye the row afterwards if it did not. Dyes for items that are no
+longer worn are dropped, and the outfit's name and preview image are left alone.
 
 Outfits store item IDs, not a Glamourer state blob, so wearing one goes through the normal per-item
 path — enabling each item's Penumbra mods and applying their options. That is the part a Glamourer
