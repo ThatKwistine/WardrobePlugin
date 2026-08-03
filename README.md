@@ -14,6 +14,18 @@ A Dalamud plugin for managing individual clothing items across **Penumbra** mods
 
 ---
 
+## Installation
+
+Add this to Dalamud Settings -> Experimental -> Custom Plugin Repositories, then Save and Close:
+
+```
+https://raw.githubusercontent.com/ThatKwistine/WardrobePlugin/main/pluginmaster.json
+```
+
+Wardrobe will then appear in the normal plugin installer.
+
+---
+
 ## Features
 
 - **Per-slot wardrobe items** — each entry targets one equipment slot (head, body, hands, legs, feet, ears, neck, wrists, rings, weapons)
