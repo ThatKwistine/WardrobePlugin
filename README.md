@@ -36,8 +36,9 @@ Wardrobe will then appear in the normal plugin installer.
 - **Variants** — copy an item to make another version of it with different mod options, for a colour swap or style change; each variant is its own entry with its own image
 - **Favourites** — mark items with the ♥ on their card and filter the grid down to just those
 - **Tags** — label items and filter the grid by tag; click a suggested tag to add it, right-click to load it into the box and edit it first
+- **Notes** — free text on an item for where it came from or what it goes with; web links in it are listed underneath as clickable rows that open in your browser
 - **Hourly backups** — copies the config to a folder of your choosing, skipping the write when nothing has changed
-- **Search and sort** — free-text search across item name, tags, mod names, and the detected game item; sort by name (A–Z / Z–A) or date added (newest / oldest)
+- **Search and sort** — free-text search across item name, tags, notes, mod names, and the detected game item; sort by name (A–Z / Z–A) or date added (newest / oldest)
 - **Image browser** — point the plugin at a folder of images and drag a thumbnail onto any item or outfit card to assign it as the preview
 - **Screenshot sessions** — queue every item that has no preview image, equip each in turn, and pick up new screenshots from a watched folder automatically; optional per-slot GPose camera presets, a persisted "strip other items" mode, and a compact window mode that keeps the UI out of the shot
 - **Worn-item detection** — cross-references Penumbra's enabled mods and option selections against Glamourer's equipped items to work out what is already worn
@@ -52,6 +53,7 @@ Wardrobe will then appear in the normal plugin installer.
 - **Mods list** — collection name, mod directory, mod name, and saved option group selections for each mod
 - **Detected game item** — the FFXIV item row ID and display name auto-detected from the mod's game file paths (can be re-detected after a mod update)
 - **Tags** — free-form labels for filtering
+- **Notes** — free text, searched along with the name; a ¶ on the card means an item has some
 - **Date added** — set on import, used for date sorting; hover an item's name to see it
 - **Favourite flag** — toggled from the card, filterable from the ♥ button on the slot filter row
 
@@ -86,6 +88,25 @@ All of this applies identically to the **+ Add Supplementary Mod** picker — bo
 7. Click **Import** — the item appears in the grid
 
 To assign an image: open **Images** in the toolbar, browse to your images folder in Settings, then drag a thumbnail onto the item card.
+
+---
+
+## Notes and links
+
+Every item has a **Notes** box in its edit panel — where the mod came from, what it goes with, which
+variant is which, or a link to a preview video for something a still image cannot show. Notes are
+searched along with the name, so writing a creator's name in there is enough to find the item by it
+later, and a **¶** appears on the card of anything that has notes, with the text on hover.
+
+Any web addresses in the notes are listed as clickable rows below the box and open in your default
+browser. Three rules govern that, and they are there because notes are the sort of thing that gets
+passed around:
+
+- Only `http` and `https` are ever made clickable. A `file://` link, or a custom scheme, can start a
+  program on your machine, and nothing about a wardrobe needs that.
+- The text of a link is always the address itself. There is no way to label a link with something
+  other than where it goes, because that is exactly how a hostile link hides.
+- Nothing opens on its own. Hovering shows the full address first.
 
 ---
 

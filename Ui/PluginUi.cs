@@ -951,7 +951,7 @@ public class PluginUi : Window, IDisposable
             ImGui.SameLine(startX);
 
         ImGui.SetNextItemWidth(searchW);
-        ImGui.InputTextWithHint("##search", "Search name, tag, mod…", ref _search, 128);
+        ImGui.InputTextWithHint("##search", "Search name, tag, mod, note…", ref _search, 128);
 
         if (!string.IsNullOrEmpty(_search))
         {
@@ -1183,7 +1183,9 @@ public class PluginUi : Window, IDisposable
                 x.Name.Contains(q, StringComparison.OrdinalIgnoreCase) ||
                 x.Tags.Any(t => t.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
                 x.Mods.Any(m => m.ModName.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
-                (x.GlamourerItemName?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false));
+                (x.GlamourerItemName?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                // Notes are searched too, so a creator's name written in there finds the item
+                (x.Notes?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false));
         }
 
         // Secondary key keeps ordering stable when several items share a timestamp
@@ -1274,6 +1276,10 @@ public class PluginUi : Window, IDisposable
             ? "Added before dates were tracked"
             : $"Added {item.DateAdded.ToLocalTime():d MMM yyyy}";
 
+    /// <summary>Shortens text for a tooltip, so a long note cannot cover the window.</summary>
+    private static string Truncate(string text, int max) =>
+        text.Length <= max ? text : text[..max] + "…";
+
     /// <summary>
     /// Heart toggle, right-aligned on the card's name row. A single glyph is used for both states
     /// (tinted when set, dimmed when not) so this does not depend on an outline glyph being present
@@ -1345,6 +1351,19 @@ public class PluginUi : Window, IDisposable
             ImGui.PopStyleColor();
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Detected as worn (mods are enabled in Penumbra)");
+        }
+
+        // A pilcrow rather than a pencil or a note glyph: both of those live in the Dingbats block,
+        // which the default font does not carry, and would draw as an empty box.
+        if (!string.IsNullOrWhiteSpace(item.Notes))
+        {
+            ImGui.SameLine();
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.68f, 1f));
+            ImGui.TextUnformatted("¶");
+            ImGui.PopStyleColor();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"{Truncate(item.Notes!, 400)}\n\n" +
+                                 "Open Edit to follow any links in here.");
         }
 
         DrawFavoriteToggle(item);

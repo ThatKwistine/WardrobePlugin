@@ -72,6 +72,17 @@ public class WardrobeItem
     /// </remarks>
     public string? Replaces { get; set; }
 
+    /// <summary>
+    /// Free text about the item — where it came from, what it goes with, anything worth
+    /// remembering. Web links in it are clickable.
+    /// </summary>
+    /// <remarks>
+    /// Kept separate from tags because it is prose rather than a filter: tags say what an item is,
+    /// notes say the things about it that no field could anticipate. Searched along with the name,
+    /// so writing the creator's name in here is enough to find the item by it later.
+    /// </remarks>
+    public string? Notes { get; set; }
+
     public List<string> Tags { get; set; } = new();
 
     /// <summary>Marked as a favourite by the user; can be filtered on in the grid.</summary>

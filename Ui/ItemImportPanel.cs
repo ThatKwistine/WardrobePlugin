@@ -33,6 +33,7 @@ public class ItemImportPanel : IDisposable
     private List<string>  _editTags     = new();
     private string        _editTagInput = string.Empty;
     private string        _editReplaces = string.Empty;
+    private string        _editNotes    = string.Empty;
 
     /// <summary>
     /// Slots offered by the slot combos, captured when the panel opens. Snapshotted rather than
@@ -188,6 +189,7 @@ public class ItemImportPanel : IDisposable
         _editTags     = new List<string>(item.Tags);
         _editTagInput = string.Empty;
         _editReplaces = item.Replaces ?? string.Empty;
+        _editNotes    = item.Notes ?? string.Empty;
 
         // Needed for the per-mod collection pickers; edit mode may be opened without import mode
         // ever having run, so the list is not guaranteed to be loaded yet.
@@ -389,6 +391,10 @@ public class ItemImportPanel : IDisposable
 
         ImGui.Spacing();
         ImGui.Separator();
+        DrawNotesEditor();
+
+        ImGui.Spacing();
+        ImGui.Separator();
 
         if (_session.FoldersReady)
         {
@@ -398,6 +404,7 @@ public class ItemImportPanel : IDisposable
                 _editTarget!.Name     = _editName.Trim();
                 _editTarget.Slot      = SelectedSlot(_editSlotIdx);
                 _editTarget.Replaces  = EditedReplaces();
+                _editTarget.Notes     = EditedNotes();
                 _editTarget.Tags      = new List<string>(_editTags);
                 _config.Save();
                 _session.StartSingle(_editTarget);
@@ -487,6 +494,7 @@ public class ItemImportPanel : IDisposable
             _editTarget.ImagePath  = string.IsNullOrEmpty(_editImage) ? null : _editImage.Trim();
             _editTarget.Slot       = SelectedSlot(_editSlotIdx);
             _editTarget.Replaces   = EditedReplaces();
+            _editTarget.Notes      = EditedNotes();
             _editTarget.Tags       = new List<string>(_editTags);
 
             if (wasWorn && _editTarget.WornKey() != oldWornKey)
@@ -593,6 +601,7 @@ public class ItemImportPanel : IDisposable
         source.ImagePath = string.IsNullOrEmpty(_editImage) ? null : _editImage.Trim();
         source.Slot      = SelectedSlot(_editSlotIdx);
         source.Replaces  = EditedReplaces();
+        source.Notes     = EditedNotes();
         source.Tags      = new List<string>(_editTags);
 
         var copy = new WardrobeItem
@@ -600,6 +609,7 @@ public class ItemImportPanel : IDisposable
             Name              = $"{source.Name} (variant)",
             Slot              = source.Slot,
             Replaces          = source.Replaces,
+            Notes             = source.Notes,
             ImagePath         = source.ImagePath,
             GlamourerItemId   = source.GlamourerItemId,
             GlamourerItemName = source.GlamourerItemName,
@@ -1119,6 +1129,13 @@ public class ItemImportPanel : IDisposable
             : null;
 
     /// <summary>
+    /// The staged notes, or null when they are blank — an empty string would be written into every
+    /// saved config for no reason and read as "has notes" by anything checking the field.
+    /// </summary>
+    private string? EditedNotes() =>
+        string.IsNullOrWhiteSpace(_editNotes) ? null : _editNotes.Trim();
+
+    /// <summary>
     /// Editor for what a mod-category item replaces, which is what decides whether wearing it
     /// displaces something already worn. Free text rather than a picker: it is matched between
     /// items by string, so two mods whose file names differ can be lined up by typing the same
@@ -1599,6 +1616,31 @@ public class ItemImportPanel : IDisposable
         return refs;
     }
 
+    /// <summary>
+    /// Free-text notes about the item, with any web links in them shown clickable underneath.
+    /// </summary>
+    /// <remarks>
+    /// The links are listed below the box rather than made clickable inside it: an input field is
+    /// for typing into, and a click there has to keep meaning "put the caret here". This is also
+    /// the only place they can be clicked at all — the grid shows notes in a tooltip, and a tooltip
+    /// cannot be reached with the mouse.
+    /// </remarks>
+    private void DrawNotesEditor()
+    {
+        ImGui.TextUnformatted("Notes");
+        ImGui.TextDisabled("Where it came from, what it goes with, a link to a preview…");
+        ImGui.Spacing();
+
+        var boxHeight = ImGui.GetTextLineHeight() * 4 + ImGui.GetStyle().FramePadding.Y * 2;
+        ImGui.InputTextMultiline("##enotes", ref _editNotes, 2000,
+            new Vector2(-1, boxHeight));
+
+        if (!NoteText.HasLink(_editNotes)) return;
+
+        ImGui.Spacing();
+        NoteText.DrawLinks(_editNotes);
+    }
+
     private void DrawTagEditor()
     {
         // Existing tags as chips with remove button.
@@ -1770,6 +1812,7 @@ public class ItemImportPanel : IDisposable
         _editImage    = string.Empty;
         _editSlotIdx  = 0;
         _editReplaces = string.Empty;
+        _editNotes    = string.Empty;
         _slotChoices  = EquipSlotEx.Choices(_config.ModCategoriesEnabled);
         _editTags.Clear();
         _editTagInput = string.Empty;
