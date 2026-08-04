@@ -332,30 +332,32 @@ public class ItemImportPanel : IDisposable
 
         if (_editTarget?.GlamourerItemName != null)
         {
-            ImGui.TextDisabled("Game item:");
-            ImGui.SameLine();
+            ImGui.TextDisabled("Game item");
             ImGui.TextUnformatted(_editTarget.GlamourerItemName);
         }
         else if (_editTarget != null && _editTarget.Slot.IsModCategory())
         {
-            ImGui.TextDisabled($"{_editTarget.Slot.DisplayName()} mod — not worn on the character,");
-            ImGui.TextDisabled("so enabling the Penumbra mod is the whole effect.");
+            ImGui.TextDisabled($"{_editTarget.Slot.DisplayName()} mods have no game item — " +
+                               "enabling the Penumbra mod is the whole effect.");
         }
         else if (_editTarget != null && _editTarget.Slot.IsCustomization())
         {
-            ImGui.TextDisabled($"{_editTarget.Slot.DisplayName()} mod — replaces the character model,");
-            ImGui.TextDisabled("so there is no game item to equip.");
+            ImGui.TextDisabled($"{_editTarget.Slot.DisplayName()} mods replace the character " +
+                               "model, so there is no item to equip.");
         }
         else
         {
-            ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f), "No game item detected — Glamourer won't apply on Wear.");
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f),
+                "No game item detected — Glamourer won't apply on Wear.");
         }
 
-        // Must stay directly after the game item text — SameLine attaches to whatever was drawn last
-        ImGui.SameLine();
+        // On its own line rather than beside the text above: that text wraps to the panel width,
+        // so a button after it would sit off the side
+        ImGui.Spacing();
         if (ImGui.SmallButton("Re-detect"))
             TryRedetectItem(_editTarget!);
-        ImGui.TextDisabled("Re-detect re-reads the mod files to find the FFXIV item.");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Re-reads the mod's files to work out which FFXIV item it replaces.");
 
         // Override the auto-detected item when several share the same model
         if (_editTarget!.ModelSetId is { } editSetId)
@@ -379,8 +381,7 @@ public class ItemImportPanel : IDisposable
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.TextUnformatted("Mods & Collections");
-        ImGui.TextDisabled("A mod only shows up if it is enabled in the collection");
-        ImGui.TextDisabled("your character uses. Keep an item's mods together.");
+        ImGui.TextDisabled("A mod only takes effect in the collection your character uses.");
         ImGui.Spacing();
         DrawEditModCollections();
 
@@ -439,7 +440,7 @@ public class ItemImportPanel : IDisposable
                     var mod  = _editTarget.Mods[i];
                     var opts = _editModOptions[i];
                     ImGui.TextUnformatted(mod.Label);
-                    ImGui.SameLine();
+                    UiLayout.SameLineIfRoomForText($"({mod.ModName})");
                     ImGui.TextDisabled($"({mod.ModName})");
                     if (opts.ResolvedPath == null)
                         ImGui.TextDisabled("  Could not resolve mod path (Penumbra IPC failed).");
@@ -467,8 +468,8 @@ public class ItemImportPanel : IDisposable
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.TextUnformatted("Variants");
-        ImGui.TextDisabled("A copy of this item with the same mods, for a different set of");
-        ImGui.TextDisabled("mod options — another colour or style. It becomes its own item.");
+        ImGui.TextDisabled("A copy with the same mods but different options — another colour " +
+                           "or style. It becomes an item of its own.");
         ImGui.Spacing();
 
         if (ImGui.Button("Create variant of this item", new Vector2(-1, 0)))
@@ -651,9 +652,9 @@ public class ItemImportPanel : IDisposable
     {
         if (!ImGui.CollapsingHeader("Set game item manually")) return;
 
-        ImGui.TextDisabled($"Searches equippable {item.Slot.DisplayName()} items.");
-        ImGui.TextDisabled("Use this for mods that skin an existing item, such as a");
-        ImGui.TextDisabled("piercing attached to an Emperor's New piece.");
+        ImGui.TextDisabled($"Searches equippable {item.Slot.DisplayName()} items. Use this for " +
+                           "mods that skin an existing item, such as a piercing attached to an " +
+                           "Emperor's New piece.");
         ImGui.Spacing();
 
         ImGui.SetNextItemWidth(-1);
@@ -716,7 +717,7 @@ public class ItemImportPanel : IDisposable
         {
             var mod = _editTarget.Mods[i];
             ImGui.TextUnformatted(mod.Label);
-            ImGui.SameLine();
+            UiLayout.SameLineIfRoomForText($"({mod.ModName})");
             ImGui.TextDisabled($"({mod.ModName})");
 
             var cur = Array.FindIndex(collNames,
@@ -744,8 +745,8 @@ public class ItemImportPanel : IDisposable
 
         if (_editModCollections.Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
             ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f),
-                "These mods are in different collections — only those in the\n" +
-                "collection your character uses will show up.");
+                "These mods are in different collections — only the ones in your character's " +
+                "collection will show up.");
     }
 
     // ── Import mode ───────────────────────────────────────────────────────────
@@ -1160,8 +1161,8 @@ public class ItemImportPanel : IDisposable
                              "Two items with the same value swap each other out when worn,\n" +
                              "exactly as two body mods do. Detected from the mod's files on\n" +
                              "import; type the same value into two items to pair them up by hand.");
-        ImGui.TextDisabled("Blank leaves this item independent of the others");
-        ImGui.TextDisabled($"in {slot.DisplayName()} — wearing it displaces nothing.");
+        ImGui.TextDisabled($"Leave blank to wear this independently of other " +
+                           $"{slot.DisplayName()} items.");
     }
 
     private void DrawSlotRow(SlotConfig cfg)
@@ -1176,20 +1177,24 @@ public class ItemImportPanel : IDisposable
         ImGui.TextUnformatted(cfg.Slot.DisplayName());
         ImGui.PopStyleColor();
 
+        // Each badge drops to the next line rather than running off the side of the panel
         if (cfg.GlamourerItemName != null)
         {
-            ImGui.SameLine();
-            ImGui.TextDisabled($"→ {cfg.GlamourerItemName}");
+            var badge = $"→ {cfg.GlamourerItemName}";
+            UiLayout.SameLineIfRoomForText(badge);
+            ImGui.TextDisabled(badge);
         }
         else if (cfg.Slot.IsModOnly())
         {
-            ImGui.SameLine();
-            ImGui.TextDisabled("(no item — enabling the mod is the whole effect)");
+            const string badge = "(no item — the mod is the whole effect)";
+            UiLayout.SameLineIfRoomForText(badge);
+            ImGui.TextDisabled(badge);
 
             if (cfg.Replaces != null)
             {
-                ImGui.SameLine();
-                ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f), $"· replaces {cfg.Replaces}");
+                var replaces = $"· replaces {cfg.Replaces}";
+                UiLayout.SameLineIfRoomForText(replaces);
+                ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f), replaces);
                 if (ImGui.IsItemHovered())
                     ImGui.SetTooltip($"Another {cfg.Slot.DisplayName()} item replacing '{cfg.Replaces}'\n" +
                                      "will swap this one out when worn. Editable after import.");
@@ -1197,13 +1202,14 @@ public class ItemImportPanel : IDisposable
         }
         else
         {
-            ImGui.SameLine();
-            ImGui.TextDisabled("(item not found in game data)");
+            const string badge = "(item not found in game data)";
+            UiLayout.SameLineIfRoomForText(badge);
+            ImGui.TextDisabled(badge);
         }
 
         if (cfg.SourceMod != null)
         {
-            ImGui.SameLine();
+            UiLayout.SameLineIfRoomForText("· from supplement");
             ImGui.TextColored(new Vector4(0.5f, 0.85f, 0.6f, 1f), "· from supplement");
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip($"This slot comes from '{cfg.SourceMod}',\nnot from the main mod.");
@@ -1211,7 +1217,7 @@ public class ItemImportPanel : IDisposable
 
         if (cfg.AlreadyImported)
         {
-            ImGui.SameLine();
+            UiLayout.SameLineIfRoomForText("· already imported");
             ImGui.TextColored(new Vector4(1f, 0.7f, 0.3f, 1f), "· already imported");
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("A wardrobe item already exists for this mod and slot.\n" +
@@ -1646,11 +1652,11 @@ public class ItemImportPanel : IDisposable
         // Existing tags as chips with remove button.
         // Only call SameLine *between* chips — never after the last one — so the
         // next widget always starts on a fresh line without needing NewLine() to
-        // cancel a dangling SameLine.
+        // cancel a dangling SameLine. A chip that would not fit starts a new row.
         var removeIdx = -1;
         for (var i = 0; i < _editTags.Count; i++)
         {
-            if (i > 0) ImGui.SameLine();
+            if (i > 0) UiLayout.SameLineIfRoom(ChipWidth(_editTags[i]));
             ImGui.PushID($"tag_{i}");
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.35f, 0.2f, 0.55f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.45f, 0.28f, 0.68f, 1f));
@@ -1668,9 +1674,9 @@ public class ItemImportPanel : IDisposable
         if (ImGui.InputText("##newtag", ref _editTagInput, 128,
                 ImGuiInputTextFlags.EnterReturnsTrue))
             TryAddTag();
-        ImGui.SameLine();
+        UiLayout.SameLineIfRoomForButton("Add");
         if (ImGui.SmallButton("Add")) TryAddTag();
-        ImGui.TextDisabled("Use / for sub-tags: e.g. Shoes/Boots/Ankle Boots");
+        ImGui.TextDisabled("Use / for sub-tags, e.g. Shoes/Boots/Ankle Boots");
 
         // Quick-add suggestions from other items
         var suggestions = _config.WardrobeItems
@@ -1684,12 +1690,13 @@ public class ItemImportPanel : IDisposable
 
         if (suggestions.Count > 0)
         {
-            ImGui.TextDisabled("Existing tags:  (right-click to edit before adding)");
+            ImGui.TextDisabled("Existing tags — right-click one to edit it before adding.");
             for (var i = 0; i < suggestions.Count; i++)
             {
-                if (i > 0) ImGui.SameLine();
                 var s     = suggestions[i];
                 var label = s.Contains('/') ? s[(s.LastIndexOf('/') + 1)..] + "…" : s;
+
+                if (i > 0) UiLayout.SameLineIfRoomForButton(label);
 
                 if (ImGui.SmallButton($"{label}##sug_{s}"))
                 {
@@ -1709,6 +1716,13 @@ public class ItemImportPanel : IDisposable
             }
         }
     }
+
+    /// <summary>
+    /// Width of one tag chip: the tag button and the × that removes it, which are always drawn
+    /// together and so have to move onto a new row together.
+    /// </summary>
+    private static float ChipWidth(string tag) =>
+        UiLayout.ButtonWidth(tag) + ImGui.GetStyle().ItemSpacing.X + UiLayout.ButtonWidth("×");
 
     private void TryAddTag()
     {

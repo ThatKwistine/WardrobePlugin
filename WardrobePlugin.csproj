@@ -11,7 +11,7 @@
     <!-- Must match AssemblyVersion in WardrobePlugin.json AND both version fields in
          pluginmaster.json, and must increase for Dalamud to offer an update. All three files
          are bumped together when releasing — see RELEASING.md. -->
-    <Version>1.3.0.1</Version>
+    <Version>1.3.1.0</Version>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
     <NoWarn>MSB3277;MSB3270</NoWarn>
@@ -22,8 +22,11 @@
     <PackageReference Include="System.Drawing.Common" Version="10.0.0" />
   </ItemGroup>
 
-  <!-- Ships the plugin icon inside latest.zip. Dalamud looks for images/icon.png.
-       Restricted to images so the folder's README does not end up in the distributable. -->
+  <!-- Stages the icon into the build output. It does NOT end up inside latest.zip —
+       DalamudPackager zips only the plugin assembly and manifest — but that is fine:
+       for a third-party repo Dalamud fetches the icon from the manifest's IconUrl,
+       which points at images/icon.png on the main branch.
+       Restricted to *.png so the folder's README stays out of the output. -->
   <ItemGroup>
     <None Include="images\*.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>

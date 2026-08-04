@@ -1,0 +1,80 @@
+# Troubleshooting
+
+## An item does nothing when I wear it
+
+**This is the single most common problem, and it is almost always the collection.**
+
+Penumbra enables the mod exactly as asked, reports success, and logs nothing unusual — but if that
+collection is not the one affecting your character, nothing shows up.
+
+1. In Penumbra, look at **Collections → Your Character** to see which collection applies.
+2. Note that an **Individual Assignment** for that character overrules it.
+3. Set **Wardrobe → Settings → Default Collection** to the same one so future imports start there.
+4. For an item already imported, fix it under **Mods & Collections** in its edit panel.
+
+## Only some of an item's mods show up
+
+A mod is only visible on your character if it is enabled in the collection that character actually
+uses. If an item's main and supplementary mods end up in different collections, every mod still
+enables successfully and the log looks clean, but only some of them appear.
+
+The edit panel flags a split like this and warns on wear. Changing a mod's collection there also
+moves every other item that referenced the same mod in the same old collection, so a mistake repeated
+across items only needs fixing once.
+
+## An item is enabled in Penumbra but not showing on my character
+
+The wardrobe flags these as desynced. It usually follows a crash or a manual change made in Penumbra
+directly. Use the desync recovery prompt rather than **Unequip All**, which would otherwise have
+nothing to unequip while the mod stays on.
+
+## Two items sharing a mod won't both register as worn
+
+An item only registers as worn if its mods are enabled *and* their option selections match what the
+item saved. Two items sharing a mod but wanting different checkboxes cannot both be worn.
+
+If they occupy the same slot, make them [variants](Items-and-Mods.md#variants) of each other instead.
+
+## `Failed to asynchronously load resource ... .mtrl` in the log
+
+The mod does not include that file for your character's race/gender. It is a gap in the mod, not a
+plugin fault — though it does make Penumbra reload repeatedly, which is what the plugin's delayed
+re-applies are there to survive.
+
+## The wrong item was detected
+
+Many FFXIV items share one model, and detection picks the lowest row ID among them. Use the **Game
+item** dropdown in the edit panel to choose the one you meant. See
+[Shared models](Items-and-Mods.md#shared-models).
+
+If a mod was updated and its file paths changed, click **Re-detect** instead.
+
+## Camera presets do nothing
+
+They only work with the native GPose camera. If BRIO's free camera is active it drives the camera
+independently. Turn BRIO's camera off and try again.
+
+## Mod names show as boxes or missing glyphs
+
+Some characters are missing from Dalamud's default font. The plugin substitutes replacements where it
+can. Italic text in the mod pickers needs a system italic font (Segoe UI / Calibri / Arial italic);
+without one the text is simply greyed instead.
+
+## Restoring a backup
+
+Backups are plain copies of the live config. Close the game, then put the file back over
+`%AppData%\XIVLauncher\pluginConfigs\WardrobePlugin.json`.
+
+Files are named `WardrobePlugin_<timestamp>.json`, plus `CameraPresets_<timestamp>.json` if a preset
+path is set.
+
+## Still stuck?
+
+Open an issue at
+[github.com/ThatKwistine/WardrobePlugin/issues](https://github.com/ThatKwistine/WardrobePlugin/issues).
+
+Please include:
+
+- your Wardrobe version (shown in the plugin installer)
+- your Penumbra and Glamourer versions
+- the relevant part of `/xllog`

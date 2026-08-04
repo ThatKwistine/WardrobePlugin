@@ -1,201 +1,90 @@
-# Wardrobe Plugin
+<div align="center">
 
-A Dalamud plugin for managing individual clothing items across **Penumbra** mods and **Glamourer**. Each wardrobe entry represents a single equipment slot — enabling or disabling exactly what you need without touching the rest of your look.
+<img src="images/icon.png" width="128" alt="Wardrobe">
+
+# Wardrobe
+
+**A visual wardrobe for your Penumbra mods.**
+
+Wear and unwear one piece at a time, without touching the rest of your look.
+
+</div>
+
+<!-- TODO: screenshot of the item grid goes here -->
+
+---
+
+## What it does
+
+Penumbra organises your mods. Glamourer sets your appearance. Neither gives you a way to see your
+clothes and put them on.
+
+Wardrobe does. Every entry is a single piece of gear with a picture, targeting a single equipment
+slot. Click **Wear** and it enables the right Penumbra mod, picks the right options, and tells
+Glamourer to equip the matching item — all of it, in the order that actually works. Click **Unequip**
+and the slot goes empty.
+
+- **One slot at a time.** Change your boots without disturbing anything else you have on.
+- **Outfits.** Save a whole look, wear it in one click, dye it in another.
+- **Pictures.** Drag images onto cards, or let the plugin take the screenshots for you.
+- **Find things.** Tags, favourites, search across names and notes, sort by name or date.
+
+It also handles the awkward cases: mods spanning several slots, mods needing an upscale or a
+compatibility patch alongside them, hair and skin mods, colour variants of the same piece, and —
+if you want them — emotes, VFX and mounts.
 
 ---
 
 ## Requirements
 
-| Plugin | Why |
+| | |
 |---|---|
-| [Penumbra](https://github.com/xivdev/Penumbra) | Mod file replacement — IPC V5 used to enable/configure mods |
-| [Glamourer](https://github.com/Ottermandias/Glamourer) | Appearance overrides — `SetItem.V3` used to push per-slot items |
-| Dalamud API level 15 | Plugin framework |
+| [**Penumbra**](https://github.com/xivdev/Penumbra) | Required. Does the mod file replacement. |
+| [**Glamourer**](https://github.com/Ottermandias/Glamourer) | Required. Does the appearance overrides. |
+| **Dalamud API 15** | The plugin framework. You have this if your other plugins work. |
+
+The plugin tells you on first launch if either is missing.
 
 ---
 
 ## Installation
 
-Add this to Dalamud Settings -> Experimental -> Custom Plugin Repositories, then Save and Close:
+1. In game, open **Dalamud Settings** (`/xlsettings`)
+2. Go to **Experimental → Custom Plugin Repositories**
+3. Paste this URL into the empty box at the bottom and press the **+** button:
 
-```
-https://raw.githubusercontent.com/ThatKwistine/WardrobePlugin/main/pluginmaster.json
-```
+   ```
+   https://raw.githubusercontent.com/ThatKwistine/WardrobePlugin/main/pluginmaster.json
+   ```
 
-Wardrobe will then appear in the normal plugin installer.
+4. Click **Save and Close**
+5. Open the plugin installer (`/xlplugins`), search for **Wardrobe**, and install
 
----
-
-## Features
-
-- **Per-slot wardrobe items** — each entry targets one equipment slot (head, body, hands, legs, feet, ears, neck, wrists, rings, weapons)
-- **Customisation mods** — hair, face, tail, Viera ears and skin mods are detected and managed the same way as gear
-- **Auto-detected game items** — the plugin analyses the mod's file paths to identify which FFXIV item it replaces; Glamourer is updated automatically on wear
-- **Multiple mods per item** — stack a primary mod with upscales, compatibility patches, etc.
-- **Outfits** — save everything currently worn as a named set, then wear or remove the whole thing in one click; shown in their own tab on the filter row, with their own preview images
-- **Variants** — copy an item to make another version of it with different mod options, for a colour swap or style change; each variant is its own entry with its own image
-- **Favourites** — mark items with the ♥ on their card and filter the grid down to just those
-- **Tags** — label items and filter the grid by tag; click a suggested tag to add it, right-click to load it into the box and edit it first
-- **Notes** — free text on an item for where it came from or what it goes with; web links in it are listed underneath as clickable rows that open in your browser
-- **Hourly backups** — copies the config to a folder of your choosing, skipping the write when nothing has changed
-- **Search and sort** — free-text search across item name, tags, notes, mod names, and the detected game item; sort by name (A–Z / Z–A) or date added (newest / oldest)
-- **Image browser** — point the plugin at a folder of images and drag a thumbnail onto any item or outfit card to assign it as the preview
-- **Screenshot sessions** — queue every item that has no preview image, equip each in turn, and pick up new screenshots from a watched folder automatically; optional per-slot GPose camera presets, a persisted "strip other items" mode, and a compact window mode that keeps the UI out of the shot
-- **Worn-item detection** — cross-references Penumbra's enabled mods and option selections against Glamourer's equipped items to work out what is already worn
-- **Clean unequip** — removing an item sets that Glamourer slot to the matching Emperor's New item so the slot appears empty
+Updates then arrive through the normal plugin installer like any other plugin.
 
 ---
 
-## What a wardrobe item stores
+## Getting started
 
-- **Name** and optional **preview image**
-- **Equipment slot** (Head / Body / Hands / Legs / Feet / Ears / Neck / Wrists / Ring / Main Hand / Off Hand)
-- **Mods list** — collection name, mod directory, mod name, and saved option group selections for each mod
-- **Detected game item** — the FFXIV item row ID and display name auto-detected from the mod's game file paths (can be re-detected after a mod update)
-- **Tags** — free-form labels for filtering
-- **Notes** — free text, searched along with the name; a ¶ on the card means an item has some
-- **Date added** — set on import, used for date sorting; hover an item's name to see it
-- **Favourite flag** — toggled from the card, filterable from the ♥ button on the slot filter row
+Open the wardrobe with `/wardrobe` or the plugin icon. On a fresh install you get a short setup for
+the settings that cause the most trouble when left unset — your Penumbra collection and your image
+folders. All of it is skippable and editable later.
 
----
+> **Set your collection to the one your character actually uses.** This is far and away the most
+> common reason a wardrobe item appears to do nothing. Check **Collections → Your Character** in
+> Penumbra.
 
-## First run
+### Adding your first item
 
-On a fresh install the window opens into a short setup covering the settings that cause the most
-trouble when left unset: your **Penumbra collection**, the **images** and **screenshots** folders,
-and **backups**. Every step is skippable and everything is editable afterwards in Settings, where
-**Run first-time setup again** reopens it.
+1. Click **+ Import Item**
+2. Pick a **collection**, then a **mod** — the search boxes filter long lists
+3. Click **Analyse Mod** — the plugin reads the mod's files and works out which slots it covers
+4. Tick the slot you want; the matching FFXIV item is detected automatically
+5. Optionally add upscales or patches under **+ Add Supplementary Mod**
+6. Click **Import**
 
-Existing configurations skip this automatically — anything already imported or configured is taken
-as evidence the plugin is already set up.
-
----
-
-## Adding an item
-
-1. Open the wardrobe: `/wardrobe` or click the plugin icon
-2. Click **+ Import Item** in the toolbar to open the import panel
-3. Pick a **collection** and then a **mod** from the dropdowns — use the search boxes to filter long lists (the collection is pre-selected from **Settings → Default Collection**)
-4. Click **Analyse Mod** — the plugin scans the mod's file paths and lists detected equipment slots
-5. Select the slot you want to import; the detected game item is shown automatically
-
-Mods you have already imported appear greyed out in the mod list, annotated with the slots they cover. They stay selectable, because one mod often supplies several slots — after analysing, any slot that would duplicate an existing item is pre-unchecked and marked, so a re-import only adds what is genuinely new. **Settings → Hide already-imported mods** drops them from the list entirely instead.
-
-Mods attached only as supplementary mods are shown greyed *and italic*, labelled `(support mod)`, and can be hidden separately via **Settings → Hide support mods**. Italic needs a system italic font (Segoe UI / Calibri / Arial italic); if none is found the text is simply greyed. With both hide options enabled the lists show only mods the wardrobe does not reference at all.
-
-All of this applies identically to the **+ Add Supplementary Mod** picker — both pickers render their rows through the same code path.
-6. Optionally add supplemental mods (upscales, patches) via **+ Add Supplemental Mod**
-7. Click **Import** — the item appears in the grid
-
-To assign an image: open **Images** in the toolbar, browse to your images folder in Settings, then drag a thumbnail onto the item card.
-
----
-
-## Notes and links
-
-Every item has a **Notes** box in its edit panel — where the mod came from, what it goes with, which
-variant is which, or a link to a preview video for something a still image cannot show. Notes are
-searched along with the name, so writing a creator's name in there is enough to find the item by it
-later, and a **¶** appears on the card of anything that has notes, with the text on hover.
-
-Any web addresses in the notes are listed as clickable rows below the box and open in your default
-browser. Three rules govern that, and they are there because notes are the sort of thing that gets
-passed around:
-
-- Only `http` and `https` are ever made clickable. A `file://` link, or a custom scheme, can start a
-  program on your machine, and nothing about a wardrobe needs that.
-- The text of a link is always the address itself. There is no way to label a link with something
-  other than where it goes, because that is exactly how a hostile link hides.
-- Nothing opens on its own. Hovering shows the full address first.
-
----
-
-## Wearing an item
-
-Click the **Wear** button on any card, or use the command:
-
-```
-/wardrobe wear <item name>
-```
-
-**What happens:**
-1. If something is already worn in that slot it is unequipped first
-2. Glamourer's `SetItem.V3` is called *before* any mod is touched
-3. For each mod: the mod is **enabled first**, then its option groups are applied
-4. `SetItem.V3` is called again, in case step 1 overwrote the slot
-5. If any mod was newly enabled, the item is re-applied a few times over the next several seconds
-
-Multiple items can be worn simultaneously as long as they occupy different slots. Two items sharing the same underlying mod are handled correctly — the mod stays enabled until all items using it are unequipped.
-
-**Why the order matters.** Enabling a mod makes Penumbra start an async resource reload, and Glamourer snapshots its state when that reload begins, re-applying the snapshot when it finishes. Calling `SetItem` first puts the right item in that snapshot. Enabling the mod before applying its options matters for the same reason — options set on a disabled mod are not picked up by the initial enable-reload, whereas changing an option on an already-enabled mod triggers a fresh reload that reads the correct state. The delayed re-applies (350 ms / 750 ms / 1800 ms / 4500 ms) exist because a mod with missing material files can keep reloading for several seconds, and each reload can undo the Glamourer state.
-
----
-
-## Outfits
-
-**Outfits** sits at the start of the slot filter row and switches the grid to your saved outfits.
-
-Wear a look you like, type a name, and **Save current look** records every item the wardrobe has on.
-Outfit cards then offer:
-
-- **Wear** — wears the outfit's items, leaving anything else you have on in place
-- **Only this** — wears them and removes everything else the wardrobe has on
-- **Update** — replaces **Only this** while the outfit is on, and saves what you are wearing now
-- **Remove** — takes the outfit's items back off
-- **Photo** — wears the outfit alone and waits for a screenshot, assigning it as the outfit's image
-- **Edit** — opens the outfit for renaming, setting a preview, taking its photo, and managing its contents
-
-Outfit cards are drawn larger than item cards by default, since outfit previews are usually
-full-body shots rather than close-ups. **Large cards** turns that off to match the item grid.
-
-The edit panel lists every item in the outfit as a row with a small thumbnail, its name and slot,
-an **Equip / Unequip** toggle so pieces can be tried individually, a **+ Dye** button that equips
-the piece with its configured dyes without wearing the rest of the outfit, and **Remove from
-outfit**. An
-**Add to outfit** picker at the bottom adds any wardrobe item not already in it, searchable by name.
-
-Each row also carries **Dye 1** and **Dye 2** pickers, listing the game's dyes with a colour swatch
-and a search box. Dyes are stored on the *outfit*, not the item, so the same piece can be dyed
-differently in different outfits. They are applied through Glamourer when the outfit is worn, and
-re-applied after a redraw — otherwise a Penumbra reload would strip the colour back to undyed.
-Customisation items cannot be dyed and say so.
-
-Above the list, a **Dye all items** pair of pickers sets either channel across every dyeable item in
-the outfit at once, for the common case of one dye through a whole set. Individual rows can then be
-changed afterwards; once they disagree, the picker at the top reads **Mixed**.
-
-### Editing an outfit by wearing it
-
-Rebuilding a look row by row is guesswork — a swap can only really be judged on the character. So
-wear the outfit, change whatever you like by hand, and press **Update** on its card, or **Update from
-what I'm wearing** in the edit panel. Everything the wardrobe has on becomes the outfit's contents.
-
-Dyes survive the swap: items still in the outfit keep the ones they had, and a piece moved into a
-slot takes over the dye the old occupant had there, on the assumption that the colour belonged to the
-outfit rather than to the piece. Re-dye the row afterwards if it did not. Dyes for items that are no
-longer worn are dropped, and the outfit's name and preview image are left alone.
-
-Outfits store item IDs, not a Glamourer state blob, so wearing one goes through the normal per-item
-path — enabling each item's Penumbra mods and applying their options. That is the part a Glamourer
-design cannot do on its own. If an item is deleted later, the card shows how many are missing and
-the rest still work.
-
-**Screenshot Outfits** starts a session covering every outfit without a preview, exactly like the
-item sessions.
-
----
-
-## Unequipping
-
-Click **Unequip** on a worn card (shown with a filled circle), or:
-
-```
-/wardrobe unequip
-```
-
-**What happens:**
-1. The Penumbra mod is disabled (unless another worn item still needs it)
-2. Glamourer's `SetItem.V3` is called with the Emperor's New item for that slot, making it appear empty
+Then open **Images** in the toolbar and drag a picture onto the new card — or use a
+[screenshot session](docs/Images-and-Screenshots.md) and let the plugin do it.
 
 ---
 
@@ -209,67 +98,26 @@ Click **Unequip** on a worn card (shown with a filled circle), or:
 
 ---
 
-## Building
+## Documentation
 
-1. Clone the repo next to a working Dalamud plugin dev setup
-2. Ensure `DalamudLibPath` points to your Dalamud `dev` folder (default: `%AppData%\XIVLauncher\addon\Hooks\dev\`)
-3. `dotnet build`
-4. Copy the output DLL to your Dalamud dev plugin folder
-
----
-
-## IPC surface used
-
-### Penumbra (V5)
-- `Penumbra.GetCollections.V5` — list available collections
-- `Penumbra.GetModList` — list all installed mods
-- `Penumbra.GetCurrentModSettings.V5` — read a mod's current enabled state and option selections
-- `Penumbra.TrySetMod.V5` — enable or disable a mod in a collection
-- `Penumbra.TrySetModSetting.V5` — set a **Single**-select option group (one option)
-- `Penumbra.TrySetModSettings.V5` — set a **Multi**-select option group (full list at once)
-- `Penumbra.GetModDirectory` — get the Penumbra mods root folder path
-- `Penumbra.RedrawObject.V5` — force a redraw of the local player
-- `Penumbra.GameObjectRedrawn.V3` — event fired after a redraw completes; used to re-apply Glamourer state
-
-> **Single vs Multi is not interchangeable.** `TrySetModSetting.V5` sets a group *to* the option you
-> pass — on a Multi group that **replaces** the whole selection rather than adding to it. Looping it
-> over a checkbox group leaves only one box ticked, and if you cache the group's prior state before
-> the loop it will oscillate between options on successive applies while still returning `Success`
-> every time. Always use the plural `TrySetModSettings.V5` for Multi groups.
-
-### Glamourer
-- `Glamourer.SetItem.V3` — equip a specific FFXIV item in one slot on the local player
-- `Glamourer.GetState` — read the full state object; used to detect what is currently equipped per slot
-- `Glamourer.SetMetaState` — toggle metadata state (visor, hat visibility, etc.)
-- `Glamourer.GetStateBase64` / `Glamourer.ApplyState` / `Glamourer.RevertState` — legacy outfit system (retained for backwards compatibility)
-
-All IPC calls are wrapped in try/catch; failures are logged as warnings rather than crashing.
-
-`Penumbra.Api.xml` ships next to `Penumbra.dll` in the installed plugin folder and is the
-authoritative reference for these labels and signatures — check it before assuming call semantics.
+| | |
+|---|---|
+| [Wearing items](docs/Wearing-Items.md) | How wear and unequip work, and why the order matters |
+| [Outfits and dyes](docs/Outfits.md) | Saving looks, per-item dyes, editing an outfit by wearing it |
+| [Items, mods and detection](docs/Items-and-Mods.md) | Variants, shared models, customisation mods, option groups |
+| [Images and screenshots](docs/Images-and-Screenshots.md) | Previews, automated sessions, camera presets |
+| [Settings and backups](docs/Settings.md) | Every setting, and how backups work |
+| [**Troubleshooting**](docs/Troubleshooting.md) | When something doesn't show up |
+| [Developing](docs/Developing.md) | Building from source and the IPC surface used |
 
 ---
 
-## Notes
+## Something not working?
 
-- **Reverting customisation mods.** Set **Settings → Revert customisation mods to** to a Glamourer design holding your character's normal look. Reverting a hair, face or skin item then re-applies that design's *customisations only* — its equipment is ignored, so whatever the wardrobe currently has equipped is untouched. Without a design set, the plugin falls back to restoring just the hairstyle number it noted when the item was applied.
-- **Customisation mods work differently to gear.** Hair, Face, Tail, Ears (Viera) and Skin replace part of the character model (`chara/human/…`) rather than an equipped item, so they have no game item, no shared-model picker, and no "Emperor's New" to strip to. Wearing one just enables its Penumbra mod and applies its options; unwearing disables it. **Strip** deliberately leaves them alone — it cannot remove a character's hair. Note this toggles how a hairstyle *looks*; it cannot switch which hairstyle your character has, as Glamourer's IPC exposes no customisation setter (only `SetItem`, `SetBonusItem` and `SetMetaState`). Pick the matching hairstyle in the character screen or Glamourer yourself.
-- **Slots contributed by supplementary mods.** Slot detection covers the primary mod *and* every supplementary mod, so an upscale that adds legs to a body-and-hands mod still offers Legs at import. Such slots are marked `· from supplement`. The slot list rebuilds whenever supplementary mods are added, removed or swapped, preserving anything already typed or chosen. Where both mods provide a model for the same slot, the primary mod's wins.
-- **Variants share a mod but not its options.** **Create variant of this item** in the edit panel copies an item, inheriting its mods, collections, options, detected game item and image, then opens the copy so you can change what differs. Because variants occupy the same slot they are never worn at once, so each can hold its own option selections. Items sharing a mod across *different* slots are worn together, and Penumbra holds only one option state per mod — so those still share options, and editing one updates the others.
-- **Shared models.** Many FFXIV items share one model — the Hakama legs model backs Asuran, Yasha, Yanxian, Nameless and more. Detection picks the lowest row ID among them, which is arbitrary. When more than one item shares the detected model, a **Game item** dropdown appears (per slot when importing, and in the edit panel) listing every candidate so the intended one can be chosen. This matters beyond cosmetics: the stored item ID is what Glamourer equips and what worn-detection compares against.
-- **Re-detecting items:** if a mod is updated and its file paths change, open the item in the edit panel and click **Re-detect** to re-run the analysis.
-- **Previews are always square.** Screenshot sessions crop the largest centred square out of the shot and save it at 512×512, so nothing is distorted. Images assigned by hand keep their original file untouched — they are centre-cropped **at draw time** by adjusting texture coordinates, so a portrait or landscape image fills the square without being stretched.
-- **Stains:** items worn on their own are applied undyed. Dyes are a property of an outfit, applied when that outfit is worn and re-applied after a redraw.
-- **`applyFlags = 0`** on `SetItem.V3` — this is the persistent mode that goes through Glamourer's state machine rather than a one-shot apply.
-- **The collection must be the one applied to your character.** This is the single most common reason a wardrobe item appears to do nothing. Penumbra enables the mod exactly as asked, reports success, and logs nothing unusual — but if that collection is not the one affecting your character, nothing shows up. In Penumbra, look at **Collections → Your Character** to see which collection applies, and note that an **Individual Assignment** for that character overrules it. Set **Settings → Default Collection** to the same one so imports start there.
-- **Keep an item's mods in one collection.** A mod is only visible on your character if it is enabled in the collection that character actually uses. If an item's main and supplementary mods end up in different collections, every mod still enables successfully and the log looks clean, but only some of them show up. Set **Settings → Default Collection** to the collection your character uses so imports start there. Existing items can be corrected under **Mods & Collections** in the edit panel, which flags a split and warns on wear. Changing a mod's collection there also moves every other item that referenced the same mod in the same old collection, so a mistake repeated across items only needs fixing once.
-- **Option group types.** Penumbra groups are `Single`, `Multi`, `Imc`, or `Combining`. Only `Single` is a one-of-N dropdown — the other three all store a bitmask and are shown as checkboxes. `Imc` groups are easy to mistake for single-select because their type string isn't "Multi", but each option carries a power-of-two `AttributeMask` and toggles independently. An unrecognised type is logged as a warning rather than silently treated as a dropdown.
-- **Detection requires matching options.** An item only registers as worn if its mods are enabled *and* their option selections — single- and multi-select alike — match what the item saved. Two items sharing a mod but wanting different checkboxes will not both register.
-- **Missing material warnings.** `Failed to asynchronously load resource ... .mtrl` in the log means the mod does not include that file for your character's race/gender. It is a gap in the mod, not a plugin fault, though it does make Penumbra reload repeatedly — which is what the delayed re-applies are there to survive.
-- **Backups** are written to **Settings → Backups**, at most once an hour and only when the content hash differs from the previous backup, so an idle session produces no copies. Files are named `WardrobePlugin_<timestamp>.json` (plus `CameraPresets_<timestamp>.json` if a preset path is set), and anything past the keep-count is deleted oldest-first. These are plain copies of the live config — restoring means closing the game and putting the file back over `%AppData%\XIVLauncher\pluginConfigs\WardrobePlugin.json`.
-- **Camera presets** are written directly to the game's camera and re-applied for about half a second, because a single write is overwritten by the game's own per-frame camera update. They only work with the native GPose camera — if BRIO's free camera is active it drives the camera independently and presets will have no visible effect.
-- **Slot icons** (experimental) — **Settings → Experimental → Use icons for slots** replaces slot names with icons on the item cards and slot filter row, choosing between FFXIV's own Character-window slot icons and Font Awesome. Both sets draw into the same fixed square so switching never reflows the layout. Hair, face, tail, ears and skin have no game icon and always use Font Awesome. Every icon carries a tooltip with the slot name, which is the only way to tell the two ring slots apart.
-- **Wardrobe sharing** (`WardrobeShareService`) — WebSocket hosting and the visitor allowlist — sits behind **Settings → Experimental → Enable experimental features**, and is hidden by default. It is scaffolded but has no backend yet, so connecting is currently a no-op.
+Start with [Troubleshooting](docs/Troubleshooting.md) — nine times out of ten it is the collection.
+
+If that doesn't cover it, [open an issue](https://github.com/ThatKwistine/WardrobePlugin/issues) with
+your Wardrobe, Penumbra and Glamourer versions and the relevant part of `/xllog`.
 
 ---
 
@@ -288,4 +136,5 @@ AGPL-3.0 matches [Dalamud](https://github.com/goatcorp/Dalamud), which this plug
 In practice it means you are free to use, study, modify and share it — and that anything built on it
 and distributed onward stays open too.
 
+<!-- TODO: state the icon's origin and licence here before the public release. -->
 The plugin icon is not covered by this licence.

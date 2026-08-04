@@ -68,8 +68,11 @@ public static class NoteText
     {
         // Coloured before the text is drawn, so the hover state is worked out from the rectangle it
         // is about to occupy — ImGui can only report hovering on an item that already exists
+        // Measured at the width the text will actually be wrapped to: a URL is easily wider than
+        // the panel, and a single-line measurement would put the hover rectangle off the side
         var start   = ImGui.GetCursorScreenPos();
-        var size    = ImGui.CalcTextSize(url);
+        var avail   = ImGui.GetContentRegionAvail().X;
+        var size    = ImGui.CalcTextSize(url, false, avail);
         var hovered = ImGui.IsMouseHoveringRect(start, new Vector2(start.X + size.X, start.Y + size.Y));
         var colour  = hovered ? LinkColourHovered : LinkColour;
 
@@ -77,10 +80,15 @@ public static class NoteText
         ImGui.TextUnformatted(url);
         ImGui.PopStyleColor();
 
-        var min = ImGui.GetItemRectMin();
-        var max = ImGui.GetItemRectMax();
-        ImGui.GetWindowDrawList().AddLine(
-            new Vector2(min.X, max.Y), new Vector2(max.X, max.Y), ImGui.GetColorU32(colour));
+        // Only underline a link that fits on one line — across a wrapped one the rule would run
+        // under the whole block, past where the last line ends. The colour still marks it as a link.
+        if (size.Y <= ImGui.GetTextLineHeight())
+        {
+            var min = ImGui.GetItemRectMin();
+            var max = ImGui.GetItemRectMax();
+            ImGui.GetWindowDrawList().AddLine(
+                new Vector2(min.X, max.Y), new Vector2(max.X, max.Y), ImGui.GetColorU32(colour));
+        }
 
         if (!ImGui.IsItemHovered()) return;
 

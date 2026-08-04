@@ -22,12 +22,11 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] public static IDataManager     DataManager  { get; private set; } = null!;
     [PluginService] public static IFramework       Framework    { get; private set; } = null!;
 
-    public static PenumbraIpc          Penumbra  { get; private set; } = null!;
-    public static GlamourerIpc         Glamourer { get; private set; } = null!;
-    public static CameraService        Camera    { get; private set; } = null!;
-    public static WardrobeShareService Share     { get; private set; } = null!;
-    public static SlotIconService      SlotIcons { get; private set; } = null!;
-    public static ItemLookupService    ItemLookup { get; private set; } = null!;
+    public static PenumbraIpc       Penumbra   { get; private set; } = null!;
+    public static GlamourerIpc      Glamourer  { get; private set; } = null!;
+    public static CameraService     Camera     { get; private set; } = null!;
+    public static SlotIconService   SlotIcons  { get; private set; } = null!;
+    public static ItemLookupService ItemLookup { get; private set; } = null!;
 
     private readonly Configuration            _config;
     private readonly WardrobeService          _wardrobeService;
@@ -68,7 +67,6 @@ public sealed class Plugin : IDalamudPlugin
         _wardrobeService   = new WardrobeService(Penumbra, Glamourer, _config, Log, Framework);
         _screenshotSession = new ScreenshotSessionService(_wardrobeService, _config, Framework, Log, Camera);
         _backupService     = new BackupService(_config, Framework, Log);
-        Share              = new WardrobeShareService(_wardrobeService, _config, Framework, Log);
 
         _windowSystem = new WindowSystem("WardrobePlugin");
         _italicFont = new ItalicFontService(Log);
@@ -140,7 +138,6 @@ public sealed class Plugin : IDalamudPlugin
         _italicFont.Dispose();
         _backupService.Dispose();
         _screenshotSession.Dispose();
-        Share.Dispose();
         _wardrobeService.Dispose();
         Camera.Dispose();
         Penumbra.Dispose();

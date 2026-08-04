@@ -53,14 +53,6 @@ public class Configuration : IPluginConfiguration
     /// <summary>Path to the JSON file used for exporting/importing camera presets.</summary>
     public string CameraPresetsPath { get; set; } = string.Empty;
 
-    // ── Wardrobe sharing ──────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Reveals unfinished features in the settings panel. Wardrobe sharing sits behind this:
-    /// it needs a backend that does not exist yet, so it is hidden unless explicitly opted into.
-    /// </summary>
-    public bool ExperimentalFeatures { get; set; }
-
     /// <summary>
     /// Manage mods that are not equipment — emotes and animations, VFX, mounts and minions.
     /// </summary>
@@ -76,12 +68,6 @@ public class Configuration : IPluginConfiguration
 
     /// <summary>Which icon set to use when <see cref="SlotIconsEnabled"/> is on.</summary>
     public SlotIconStyle SlotIconStyle { get; set; } = SlotIconStyle.GameIcons;
-
-    /// <summary>WebSocket server URL for the wardrobe sharing backend.</summary>
-    public string       ShareServerUrl { get; set; } = string.Empty;
-
-    /// <summary>Player names permitted to send remote wear/unequip commands.</summary>
-    public List<string> ShareAllowlist { get; set; } = new();
 
     /// <summary>Ordering applied to the item grid.</summary>
     public ItemSortMode SortMode { get; set; } = ItemSortMode.NameAsc;

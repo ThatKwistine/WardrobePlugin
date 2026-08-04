@@ -58,7 +58,9 @@ public static class EquipSlotEx
         EquipSlot.Hands     => "Hands",
         EquipSlot.Legs      => "Legs",
         EquipSlot.Feet      => "Feet",
-        EquipSlot.Ears      => "Ears",
+        // "Earrings", not "Ears": this is the accessory slot, and it sits in the same lists as the
+        // Viera ear model below
+        EquipSlot.Ears      => "Earrings",
         EquipSlot.Neck      => "Neck",
         EquipSlot.Wrists    => "Wrists",
         EquipSlot.RingRight => "Ring (R)",
@@ -68,13 +70,32 @@ public static class EquipSlotEx
         EquipSlot.Hair      => "Hair",
         EquipSlot.Face      => "Face",
         EquipSlot.Tail      => "Tail",
-        EquipSlot.VieraEars => "Ears (Viera)",
+        EquipSlot.VieraEars => "Viera Ears",
         EquipSlot.Skin      => "Skin",
         EquipSlot.Other     => "Other",
         EquipSlot.Emote     => "Emote",
         EquipSlot.Vfx       => "VFX",
         EquipSlot.Mount     => "Mount / Minion",
         _                   => "Unknown",
+    };
+
+    /// <summary>
+    /// A note for slots whose scope is not obvious from the name, shown as a tooltip wherever the
+    /// slot can be picked. Null when the name says it all.
+    /// </summary>
+    public static string? Hint(this EquipSlot s) => s switch
+    {
+        // One tail object serves every race that has one, so this is not a Miqo'te-only slot
+        EquipSlot.Tail      => "Tail models. Miqo'te, Au Ra and Hrothgar tails all land here.",
+
+        // Viera are the only race whose ears are a separate model object (obj/zear). Miqo'te and
+        // Hrothgar ears are part of the face and hair models, so those mods are detected as those.
+        EquipSlot.VieraEars => "The only ears with a model of their own.\n" +
+                               "Miqo'te and Hrothgar ears are part of the face and hair models,\n" +
+                               "so those mods land under Face or Hair instead.",
+
+        EquipSlot.Other     => "Textures shared by every character — piercings, tattoos, face paints.",
+        _                   => null,
     };
 
     /// <summary>
