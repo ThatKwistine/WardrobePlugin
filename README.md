@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="images/icon.png" width="128" alt="Wardrobe">
-
 # Wardrobe
 
 **A visual wardrobe for your Penumbra mods.**
