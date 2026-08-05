@@ -12,8 +12,8 @@ namespace WardrobePlugin.Ui;
 /// Finds web links in an item's notes and draws them as clickable rows.
 /// </summary>
 /// <remarks>
-/// Notes travel between people through the share service, so a link here is not necessarily one
-/// the reader wrote. Two rules follow, and both are deliberate: only http and https are ever made
+/// Notes are free text, so a link here is not necessarily one the reader wrote — a wardrobe entry
+/// can be pasted in from anywhere. Two rules follow, and both are deliberate: only http and https are ever made
 /// clickable — a file:// or a custom scheme can start a program, and nothing about a wardrobe needs
 /// that — and the text of a link is always the address itself. Showing a label over a different
 /// destination is exactly how a hostile link hides, so here what is on screen is what opens.

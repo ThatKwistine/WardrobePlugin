@@ -30,8 +30,20 @@ stretched.
 
 ## Camera presets
 
+A preset stores the camera angle, tilt, both kinds of zoom, and the field of view, so a session can
+frame each slot the same way every time.
+
+FFXIV has **two separate zooms** and a preset captures both:
+
+- **Scroll-wheel zoom**, the camera's distance from your character
+- **Camera Distance in the Group Pose settings menu**, which despite the name is a field-of-view
+  adjustment rather than a distance
+
 Presets are written directly to the game's camera and re-applied for about half a second, because a
 single write is overwritten by the game's own per-frame camera update.
 
 They only work with the **native GPose camera**. If BRIO's free camera is active it drives the camera
 independently and presets will have no visible effect.
+
+> Presets saved before the Group Pose camera distance was supported store a neutral value for it, so
+> they keep working unchanged. Hit **Update** on a slot to capture it.

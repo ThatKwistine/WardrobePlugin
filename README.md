@@ -8,8 +8,6 @@ Wear and unwear one piece at a time, without touching the rest of your look.
 
 </div>
 
-<!-- TODO: screenshot of the item grid goes here -->
-
 ---
 
 ## What it does
@@ -134,5 +132,4 @@ AGPL-3.0 matches [Dalamud](https://github.com/goatcorp/Dalamud), which this plug
 In practice it means you are free to use, study, modify and share it — and that anything built on it
 and distributed onward stays open too.
 
-<!-- TODO: state the icon's origin and licence here before the public release. -->
 The plugin icon is not covered by this licence.

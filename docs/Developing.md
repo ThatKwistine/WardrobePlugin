@@ -68,7 +68,13 @@ See [RELEASING.md](../RELEASING.md).
 send wear/unequip commands, gated by a viewer allowlist. It was scaffolded but never had a backend,
 so it was removed before the public release rather than ship dead settings UI.
 
-The code is preserved on the `archive/wardrobe-share` branch: `WardrobeShareService`,
-`RemoteCommand`, `WardrobeSnapshot`, the `ShareServerUrl` / `ShareAllowlist` config fields and
-`PluginUi.DrawShareSettings`. `WardrobeService.WardrobeChanged` is still raised on the main branch
-and was the hook the service subscribed to.
+The removed pieces were `WardrobeShareService`, `RemoteCommand`, `WardrobeSnapshot`, the
+`ShareServerUrl` / `ShareAllowlist` config fields and `PluginUi.DrawShareSettings`. They are
+recoverable from the history before `3950276`. `WardrobeService.WardrobeChanged` is still raised and
+was the hook the service subscribed to.
+
+Anything built here would have to meet Dalamud's
+[backend server rules](https://dalamud.dev/plugin-development/technical-considerations/): minimal
+data, client-side hashing of player information, opt-in telemetry, HTTPS via a DNS hostname, and no
+way to test whether a given player uses the plugin. The removed allowlist keyed on plain character
+names would not have passed that last one.

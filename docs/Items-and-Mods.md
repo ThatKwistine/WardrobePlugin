@@ -3,7 +3,7 @@
 ## What a wardrobe item stores
 
 - **Name** and optional **preview image**
-- **Equipment slot** (Head / Body / Hands / Legs / Feet / Ears / Neck / Wrists / Ring / Main Hand / Off Hand)
+- **Equipment slot** (Head / Body / Hands / Legs / Feet / Earrings / Neck / Wrists / Ring / Main Hand / Off Hand)
 - **Mods list** — collection name, mod directory, mod name, and saved option group selections for each mod
 - **Detected game item** — the FFXIV item row ID and display name auto-detected from the mod's game file paths
 - **Tags** — free-form labels for filtering
@@ -68,11 +68,13 @@ logged as a warning rather than silently treated as a dropdown.
 
 ## Customisation mods
 
-Hair, Face, Tail, Ears (Viera) and Skin replace part of the character model (`chara/human/…`) rather
+Hair, Face, Tail, Viera Ears and Skin replace part of the character model (`chara/human/…`) rather
 than an equipped item, so they have no game item, no shared-model picker, and no "Emperor's New" to
 strip to. Wearing one just enables its Penumbra mod and applies its options; unwearing disables it.
 
-**Strip** deliberately leaves them alone — it cannot remove a character's hair.
+**Strip** deliberately leaves them alone, because it cannot remove a character's hair. It skips
+emotes, VFX and mounts for the same reason: stripping is about what the character has *on*, and an
+emote is not worn.
 
 Note this toggles how a hairstyle *looks*; it cannot switch which hairstyle your character has, as
 Glamourer's IPC exposes no customisation setter (only `SetItem`, `SetBonusItem` and `SetMetaState`).
@@ -99,3 +101,6 @@ while it is off, so turning it back on restores them intact.
 
 Emote mods that replace the same animation swap each other out, like two body mods do. Which
 animation an item replaces is detected on import and can be changed when editing it.
+
+**Strip** leaves these running, but **removing an outfit takes them off**, because wearing the
+outfit is what enabled them in the first place.
