@@ -24,14 +24,18 @@ public unsafe class CameraService : IDisposable
         _log       = log;
     }
 
-    /// <summary>Current camera values, for diagnostics.</summary>
-    private string ReadBack()
-    {
-        var mgr = CameraManager.Instance();
-        if (mgr == null || mgr->Camera == null) return "camera unavailable";
-        var cam = mgr->Camera;
-        return $"dist={cam->Distance:F2} fov={cam->FoV:F3} h={cam->DirH:F3} v={cam->DirV:F3} tilt={cam->TiltOffset:F3}";
-    }
+    /// <summary>
+    /// GPose's field-of-view offset, at <c>Camera+0x13C</c>. Not named in FFXIVClientStructs.
+    /// </summary>
+    /// <remarks>
+    /// Found by diffing every float in both camera structs across a change to the Group Pose
+    /// "Camera Distance" slider. See <see cref="CameraPreset.GPoseFoVOffset"/> for how the game
+    /// derives the effective field of view from it.
+    /// </remarks>
+    private const int GPoseFoVOffsetOffset = 0x13C;
+
+    private static float* GPoseFoV(Camera* cam) =>
+        (float*)((byte*)cam + GPoseFoVOffsetOffset);
 
     public CameraPreset? Capture()
     {
@@ -45,6 +49,7 @@ public unsafe class CameraService : IDisposable
             DirH        = cam->DirH,
             DirV        = cam->DirV,
             TiltOffset  = cam->TiltOffset,
+            GPoseFoVOffset = *GPoseFoV(cam),
         };
     }
 
@@ -58,21 +63,11 @@ public unsafe class CameraService : IDisposable
     /// </remarks>
     public void Apply(CameraPreset preset, int frames = DefaultSustainFrames)
     {
-        // Three data points from one apply, enough to tell the failure modes apart:
-        //   write does not land            → we are writing somewhere that is not the live camera
-        //   lands then reverts next frame  → something is overwriting it (game loop, or Brio)
-        //   sticks but the view is unchanged → the camera being written is not the one rendering
-        _log.Debug($"[Wardrobe] Camera before : {ReadBack()}");
-        _log.Debug($"[Wardrobe] Camera wanted : dist={preset.Distance:F2} fov={preset.FoV:F3} " +
-                   $"h={preset.DirH:F3} v={preset.DirV:F3} tilt={preset.TiltOffset:F3}");
-
         if (!WriteToCamera(preset))
         {
             _log.Warning("[Wardrobe] Camera apply failed — CameraManager or its camera was null.");
             return;
         }
-
-        _log.Debug($"[Wardrobe] Camera after write: {ReadBack()}");
 
         if (frames <= 1) return;
 
@@ -97,16 +92,9 @@ public unsafe class CameraService : IDisposable
     {
         if (_sustaining == null || _framesLeft <= 0)
         {
-            if (_sustaining != null)
-                _log.Debug($"[Wardrobe] Camera after sustain: {ReadBack()}");
             CancelSustain();
             return;
         }
-
-        // Read before writing on the first sustained frame: this is the value the game left after
-        // its own update ran, which is what reveals an overwrite.
-        if (_framesLeft == DefaultSustainFrames)
-            _log.Debug($"[Wardrobe] Camera next frame (before re-write): {ReadBack()}");
 
         WriteToCamera(_sustaining);
         _framesLeft--;
@@ -125,6 +113,7 @@ public unsafe class CameraService : IDisposable
         cam->DirH           = preset.DirH;
         cam->DirV           = Math.Clamp(preset.DirV, cam->DirVMin, cam->DirVMax);
         cam->TiltOffset     = preset.TiltOffset;
+        *GPoseFoV(cam)      = preset.GPoseFoVOffset;
         return true;
     }
 
