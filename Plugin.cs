@@ -38,7 +38,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly WindowSystem             _windowSystem;
     private readonly PluginUi                _ui;
 
-    private const string CommandName = "/wardrobe";
+    private const string CommandName  = "/wardrobe";
+    private const string CommandAlias = "/wr";
 
     public Plugin(IDalamudPluginInterface pi)
     {
@@ -86,6 +87,11 @@ public sealed class Plugin : IDalamudPlugin
         {
             HelpMessage = "Open the Wardrobe window"
         });
+
+        Commands.AddHandler(CommandAlias, new CommandInfo(OnCommand)
+        {
+            HelpMessage = "Alias of /wardrobe"
+        });
     }
 
     private void OnCommand(string command, string args)
@@ -130,6 +136,7 @@ public sealed class Plugin : IDalamudPlugin
     public void Dispose()
     {
         Commands.RemoveHandler(CommandName);
+        Commands.RemoveHandler(CommandAlias);
         PluginInterface.UiBuilder.Draw        -= _windowSystem.Draw;
         PluginInterface.UiBuilder.OpenMainUi   -= OpenUi;
         PluginInterface.UiBuilder.OpenConfigUi -= OpenUi;
