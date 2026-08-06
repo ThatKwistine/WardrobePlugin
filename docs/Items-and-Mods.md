@@ -26,6 +26,53 @@ options enabled the lists show only mods the wardrobe does not reference at all.
 All of this applies identically to the **+ Add Supplementary Mod** picker — both pickers render their
 rows through the same code path.
 
+Option groups start from whatever Penumbra currently has active for the mod, rather than from each
+group's first option. If you have already picked a body size or ticked a set of toggles in Penumbra,
+the import arrives with those selected and you edit from there. It is a starting point only — nothing
+stays in sync afterwards, so changing the mod in Penumbra later does not change the wardrobe item.
+
+## Mass import
+
+**Mass Import** in the toolbar opens a window listing every mod in the chosen collection, for filling
+a wardrobe rather than adding a single piece. Pick the collection first: each mod's options are read
+from Penumbra when that mod is first analysed, and switching collection afterwards does not re-read
+them.
+
+Each row has a tick box, a **Set Mod Options** dropdown and a **+ Add Supplementary Mod** dropdown.
+The tick box in the header selects everything currently listed, which respects the search box and the
+two hide options — it never quietly selects rows you cannot see.
+
+Setting a mod as somebody's supplement greys it out, removes its tick box, and moves its row directly
+beneath its parent. Only that row moves; the rest of the list stays where it was. The row reads
+*Set as supplemental mod for …* and carries an **x** to undo it, so you do not have to go hunting for
+the parent to detach it. A supplement's own option groups appear inside its parent's **Set Mod
+Options**, the same way they do when importing one mod at a time.
+
+**Hide mods I have already imported** and **Hide supplementary mods** are the same two settings used
+by the single-import picker, so changing one here changes it everywhere. A supplement is hidden or
+shown with its parent rather than judged on its own, so you never see half of a configured pair.
+
+Clicking **Import Mods** creates items using the same rules as a single import: one item per detected
+slot, named after the mod with the slot in brackets when it produced more than one, and slots you
+already have an item for are skipped. The window stays open afterwards so you can carry on down the
+list.
+
+## Adding supplementary mods later
+
+The edit panel has its own **+ Add Supplementary Mod**, so an upscale or compatibility patch you
+missed can be attached without deleting and re-importing the item. Existing supplements can be
+removed there too; both take effect when you save, so **Cancel** discards them like any other edit.
+
+Adding or removing a supplement applies to **every item built from the same mod**, not just the one
+being edited — a mod covering body, legs and feet produces three items, and a body upscale belongs to
+all three. **This includes variants**, which sit in the same slot as their source. The panel tells
+you how many items will be affected before you save.
+
+This is deliberately different from how *options* propagate. Options are allowed to differ between
+same-slot variants, because Penumbra holds only one option state per mod and variants are never worn
+together. Which mods are attached is a property of the mod files themselves, so it does not vary
+between variants. A variant needing a different set of mods is really a separate item, not a variant.
+
 ## Slots contributed by supplementary mods
 
 Slot detection covers the primary mod *and* every supplementary mod, so an upscale that adds legs to
@@ -73,8 +120,8 @@ than an equipped item, so they have no game item, no shared-model picker, and no
 strip to. Wearing one just enables its Penumbra mod and applies its options; unwearing disables it.
 
 **Strip** deliberately leaves them alone, because it cannot remove a character's hair. It skips
-emotes, VFX and mounts for the same reason: stripping is about what the character has *on*, and an
-emote is not worn.
+animations, VFX and mounts for the same reason: stripping is about what the character has *on*, and
+an animation is not worn.
 
 Note this toggles how a hairstyle *looks*; it cannot switch which hairstyle your character has, as
 Glamourer's IPC exposes no customisation setter (only `SetItem`, `SetBonusItem` and `SetMetaState`).
@@ -91,15 +138,19 @@ item was applied.
 
 ## Other mod types
 
-**Settings → Manage other mod types** adds Emote, VFX and Mount / Minion to the filter bar and to the
-slot pickers. These have no game item to equip, so wearing one only enables its Penumbra mod —
+**Settings → Manage other mod types** adds Animation, VFX and Mount / Minion to the filter bar and to
+the slot pickers. These have no game item to equip, so wearing one only enables its Penumbra mod —
 Glamourer is left alone entirely.
+
+**Animation** covers every animation mod, not only emotes. Detection is by `.pap` file, which is the
+only place animation data lives, so idles, poses, movement, sitting and battle animations all land
+in the same category. If you want them separated further, use tags.
 
 It is off by default because the extra filter buttons and slot-picker entries are noise to a wardrobe
 made only of gear. Items already imported into those categories are kept but hidden from the grid
 while it is off, so turning it back on restores them intact.
 
-Emote mods that replace the same animation swap each other out, like two body mods do. Which
+Animation mods that replace the same animation swap each other out, like two body mods do. Which
 animation an item replaces is detected on import and can be changed when editing it.
 
 **Strip** leaves these running, but **removing an outfit takes them off**, because wearing the

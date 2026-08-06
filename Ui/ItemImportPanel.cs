@@ -78,6 +78,13 @@ public class ItemImportPanel : IDisposable
     // Held separately so Cancel discards the change like every other edit-mode field.
     private readonly List<string> _editModCollections = new();
 
+    /// <summary>
+    /// Indices into _editTarget.Mods staged for removal on save. Never contains 0 — the primary mod
+    /// is what the item *is*, so detaching it would leave an item that points at nothing.
+    /// Staged rather than applied immediately so Cancel discards it like every other edit.
+    /// </summary>
+    private readonly HashSet<int> _editModRemovals = new();
+
     // Manual game-item search in edit mode
     private string _itemSearch = string.Empty;
 
@@ -191,9 +198,11 @@ public class ItemImportPanel : IDisposable
         _editReplaces = item.Replaces ?? string.Empty;
         _editNotes    = item.Notes ?? string.Empty;
 
-        // Needed for the per-mod collection pickers; edit mode may be opened without import mode
-        // ever having run, so the list is not guaranteed to be loaded yet.
+        // Needed for the per-mod collection pickers, and for the supplementary-mod picker below;
+        // edit mode may be opened without import mode ever having run, so neither list is
+        // guaranteed to be loaded yet.
         _collections = _penumbra.GetCollections();
+        _mods        = _penumbra.GetMods();
         _editModCollections.Clear();
         foreach (var mod in item.Mods)
             _editModCollections.Add(mod.Collection);
@@ -386,6 +395,9 @@ public class ItemImportPanel : IDisposable
         DrawEditModCollections();
 
         ImGui.Spacing();
+        DrawEditExtraMods();
+
+        ImGui.Spacing();
         ImGui.Separator();
         ImGui.TextUnformatted("Tags");
         DrawTagEditor();
@@ -485,7 +497,7 @@ public class ItemImportPanel : IDisposable
         var footerBtnW = (ImGui.GetContentRegionAvail().X - 8) / 2;
         if (ImGui.Button("Save", new Vector2(footerBtnW, 0)))
         {
-            // Captured before the edits land: changing the slot, or what an emote replaces, changes
+            // Captured before the edits land: changing the slot, or what an animation replaces, changes
             // the key the item is tracked under. Without moving the entry across, the old key would
             // keep pointing at this item and it would read as both worn and not worn at once.
             var wasWorn    = _wardrobe.IsItemWorn(_editTarget!);
@@ -566,6 +578,11 @@ public class ItemImportPanel : IDisposable
                     }
                 }
             }
+
+            // Last, because it can add to and remove from _editTarget.Mods, and the loops above
+            // index into it against _editModCollections and _editModOptions.
+            ApplyEditSupplementChanges();
+
             _config.Save();
 
             // If the item is currently worn, re-apply immediately so Penumbra and Glamourer update.
@@ -715,10 +732,34 @@ public class ItemImportPanel : IDisposable
 
         for (var i = 0; i < _editTarget.Mods.Count && i < _editModCollections.Count; i++)
         {
-            var mod = _editTarget.Mods[i];
+            var mod     = _editTarget.Mods[i];
+            var removed = _editModRemovals.Contains(i);
+
+            ImGui.PushID($"emod_{i}");
+
+            if (removed)
+            {
+                ImGui.TextColored(new Vector4(1f, 0.5f, 0.4f, 1f), $"{mod.Label} — will be removed");
+                ImGui.SameLine();
+                if (ImGui.SmallButton("Keep")) _editModRemovals.Remove(i);
+                ImGui.Spacing();
+                ImGui.PopID();
+                continue;
+            }
+
             ImGui.TextUnformatted(mod.Label);
             UiLayout.SameLineIfRoomForText($"({mod.ModName})");
             ImGui.TextDisabled($"({mod.ModName})");
+
+            // Only supplements can be detached; index 0 is the mod the item is built from
+            if (i > 0)
+            {
+                ImGui.SameLine();
+                if (ImGui.SmallButton("X")) _editModRemovals.Add(i);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Remove this supplementary mod on save.\n" +
+                                     "It is removed from every item built from the same mod.");
+            }
 
             var cur = Array.FindIndex(collNames,
                 n => n.Equals(_editModCollections[i], StringComparison.OrdinalIgnoreCase));
@@ -741,12 +782,154 @@ public class ItemImportPanel : IDisposable
                     $"  '{_editModCollections[i]}' not found in Penumbra.");
 
             ImGui.Spacing();
+            ImGui.PopID();
         }
 
         if (_editModCollections.Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
             ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f),
                 "These mods are in different collections — only the ones in your character's " +
                 "collection will show up.");
+    }
+
+    /// <summary>
+    /// Attaches further supplementary mods to an item that has already been imported.
+    /// </summary>
+    /// <remarks>
+    /// Previously the only way to add an upscale or compatibility patch you had missed was to delete
+    /// the item and import it again, which also lost its name, image and tags. Rows are staged in
+    /// _extraMods and written on save, so Cancel discards them like every other edit-mode field.
+    /// </remarks>
+    private void DrawEditExtraMods()
+    {
+        if (_editTarget == null) return;
+
+        ImGui.TextUnformatted("Add Supplementary Mods");
+        ImGui.TextDisabled("Body upscales, compatibility patches, etc.");
+
+        var siblings = SiblingsOfPrimary(_editTarget);
+        if (siblings.Count > 1)
+        {
+            // Variants are counted in, but say so: they sit in the same slot as the item being
+            // edited, so nothing else on screen hints that they are part of the total.
+            var variants = siblings.Count(i => i != _editTarget && i.Slot == _editTarget.Slot);
+            ImGui.TextDisabled(variants > 0
+                ? $"Applies to all {siblings.Count} items built from this mod, variants included."
+                : $"Applies to all {siblings.Count} items built from this mod.");
+        }
+
+        for (var i = _extraMods.Count - 1; i >= 0; i--)
+            if (!DrawExtraMod(i))
+                _extraMods.RemoveAt(i);
+
+        // Import mode analyses supplements as a side effect of rebuilding its slot list, which never
+        // runs here. Without this a mod picked in edit mode would show no option groups, so none of
+        // its selections would be recorded and its options would be left to whatever Penumbra
+        // happened to have set. Cached inside, so this is one disk read per mod picked.
+        foreach (var extra in _extraMods)
+            EnsureExtraAnalysis(extra);
+
+        if (ImGui.Button("+ Add Supplementary Mod", new Vector2(-1, 0)))
+            _extraMods.Add(new ExtraMod
+            {
+                // Inherit the item's own collection rather than defaulting to index 0, which is
+                // whichever collection sorts first and is rarely the one in use.
+                CollectionIdx = CollectionIndexOf(_editTarget.Mods.Count > 0
+                    ? _editTarget.Mods[0].Collection
+                    : _config.DefaultCollection),
+            });
+    }
+
+    private int CollectionIndexOf(string? name)
+    {
+        if (string.IsNullOrEmpty(name)) return 0;
+        var idx = _collections.ToList().FindIndex(c => c.Equals(name, StringComparison.OrdinalIgnoreCase));
+        return idx < 0 ? 0 : idx;
+    }
+
+    /// <summary>
+    /// Every wardrobe item built from the same mod files as <paramref name="item"/> — the same
+    /// primary mod in the same collection — including <paramref name="item"/> itself.
+    /// </summary>
+    /// <remarks>
+    /// Unlike option propagation, this deliberately includes items in the same slot. Options must be
+    /// allowed to differ between same-slot variants because Penumbra holds one option state per mod
+    /// and variants are never worn together; but *which* mods are attached is a property of the mod
+    /// files, so a body upscale belongs to every item the mod produced, variants included.
+    /// </remarks>
+    private List<WardrobeItem> SiblingsOfPrimary(WardrobeItem item)
+    {
+        if (item.Mods.Count == 0) return new List<WardrobeItem> { item };
+
+        var dir  = item.Mods[0].ModDirectory;
+        var coll = item.Mods[0].Collection;
+
+        var siblings = _config.WardrobeItems
+            .Where(i => i.Mods.Count > 0 &&
+                        i.Mods[0].ModDirectory.Equals(dir, StringComparison.OrdinalIgnoreCase) &&
+                        i.Mods[0].Collection.Equals(coll, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (!siblings.Contains(item)) siblings.Add(item);
+        return siblings;
+    }
+
+    /// <summary>
+    /// Writes the staged supplementary-mod additions and removals to every item built from the same
+    /// mod. Must run after the collection and option loops above, which index into
+    /// _editTarget.Mods and would be thrown off by a removal.
+    /// </summary>
+    private void ApplyEditSupplementChanges()
+    {
+        if (_editTarget == null || _editTarget.Mods.Count == 0) return;
+
+        var siblings = SiblingsOfPrimary(_editTarget);
+
+        // Resolve removals to directories before touching anything — the staged indices are only
+        // meaningful against the list as it stands right now.
+        var removedDirs = _editModRemovals
+            .Where(i => i > 0 && i < _editTarget.Mods.Count)
+            .Select(i => _editTarget.Mods[i].ModDirectory)
+            .ToList();
+
+        foreach (var dir in removedDirs)
+        {
+            foreach (var item in siblings)
+            {
+                // From index 1: a mod that is somebody else's supplement may be another item's
+                // primary, and removing that would orphan the item.
+                for (var m = item.Mods.Count - 1; m >= 1; m--)
+                {
+                    if (!item.Mods[m].ModDirectory.Equals(dir, StringComparison.OrdinalIgnoreCase)) continue;
+                    _log.Debug($"[Wardrobe] Edit: removed supplement '{item.Mods[m].ModName}' from '{item.Name}'");
+                    item.Mods.RemoveAt(m);
+                }
+            }
+        }
+
+        foreach (var add in BuildExtraRefs())
+        {
+            foreach (var item in siblings)
+            {
+                if (item.Mods.Any(m => m.ModDirectory.Equals(add.ModDirectory, StringComparison.OrdinalIgnoreCase)))
+                    continue; // already attached, or it is this item's own primary
+
+                // Deep copy per item. Sharing one reference would make editing the supplement's
+                // options on one item silently rewrite every other item built from the same mod.
+                item.Mods.Add(new ModReference
+                {
+                    Label        = add.Label,
+                    Collection   = add.Collection,
+                    ModDirectory = add.ModDirectory,
+                    ModName      = add.ModName,
+                    Options      = new Dictionary<string, string>(add.Options),
+                    MultiOptions = add.MultiOptions.ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value)),
+                });
+                _log.Debug($"[Wardrobe] Edit: added supplement '{add.ModName}' to '{item.Name}'");
+            }
+        }
+
+        _editModRemovals.Clear();
+        _extraMods.Clear();
     }
 
     // ── Import mode ───────────────────────────────────────────────────────────
@@ -1146,7 +1329,7 @@ public class ItemImportPanel : IDisposable
     {
         var hint = slot switch
         {
-            EquipSlot.Emote => "e.g. j_pose — the animation file name",
+            EquipSlot.Animation => "e.g. j_pose — the animation file name",
             EquipSlot.Mount => "e.g. m0361 — the monster id",
             _               => "blank to wear independently",
         };
@@ -1333,6 +1516,8 @@ public class ItemImportPanel : IDisposable
                 {
                     extra.Analysis = _analysis.Analyze(path);
                     extra.GroupSelections.Clear();
+                    extra.MultiGroupSelections.Clear();
+                    SeedExtraFromPenumbra(extra, m);
                     _extrasDirty   = true;
                 }
             }
@@ -1467,8 +1652,33 @@ public class ItemImportPanel : IDisposable
         if (path == null) return null;
 
         extra.Analysis = _analysis.Analyze(path);
+        SeedExtraFromPenumbra(extra, m);
         return extra.Analysis;
     }
+
+    /// <summary>
+    /// Pre-selects a supplementary mod's options from Penumbra's live state, in its own collection
+    /// rather than the primary's — the two are independently chosen and often differ.
+    /// </summary>
+    private void SeedExtraFromPenumbra(ExtraMod extra, (string Dir, string Name) mod)
+    {
+        if (extra.Analysis == null) return;
+
+        var coll = _collections.Count > extra.CollectionIdx && extra.CollectionIdx >= 0
+            ? _collections[extra.CollectionIdx]
+            : string.Empty;
+
+        ModAnalysisService.SeedSelectionsFromPenumbra(
+            extra.Analysis.OptionGroups,
+            _penumbra.GetModSettingsFull(coll, mod.Dir, mod.Name),
+            extra.GroupSelections, extra.MultiGroupSelections);
+    }
+
+    /// <summary>The collection the import pickers currently point at, or empty when there are none.</summary>
+    private string SelectedCollection() =>
+        _collections.Count > 0
+            ? _collections[Math.Min(_collectionIdx, _collections.Count - 1)]
+            : string.Empty;
 
     private void DoAnalyze()
     {
@@ -1490,6 +1700,7 @@ public class ItemImportPanel : IDisposable
 
         RebuildSlotConfigs();
 
+        _multiGroupSelections.Clear();
         foreach (var g in _analysisResult.OptionGroups)
         {
             if (g.GroupType == ModGroupType.Multi)
@@ -1497,6 +1708,14 @@ public class ItemImportPanel : IDisposable
             else
                 _groupSelections[g.GroupName] = 0;
         }
+
+        // Then overwrite those defaults with whatever Penumbra already has active, so the import
+        // starts from the configuration the user set up there instead of from each group's first
+        // option — which for a body mod is usually the wrong chest size.
+        ModAnalysisService.SeedSelectionsFromPenumbra(
+            _analysisResult.OptionGroups,
+            _penumbra.GetModSettingsFull(SelectedCollection(), mod.Dir, mod.Name),
+            _groupSelections, _multiGroupSelections);
 
         // Pre-fill manual fields too
         _manualName  = mod.Name;
@@ -1529,7 +1748,7 @@ public class ItemImportPanel : IDisposable
         }
         else
         {
-            // Manually chosen slot, so there is no analysis to take a replace key from — an emote
+            // Manually chosen slot, so there is no analysis to take a replace key from — an animation
             // imported this way is independent until one is typed in when editing it
             targets = new[]
             {
@@ -1820,8 +2039,10 @@ public class ItemImportPanel : IDisposable
         _multiGroupSelections.Clear();
         _editModOptions.Clear();
         _editModCollections.Clear();
+        _editModRemovals.Clear();
         _slotConfigs.Clear();
         _extraMods.Clear();
+        _extrasDirty = false;
         _editName     = string.Empty;
         _editImage    = string.Empty;
         _editSlotIdx  = 0;

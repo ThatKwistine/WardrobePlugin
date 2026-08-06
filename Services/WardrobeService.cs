@@ -79,6 +79,40 @@ public class WardrobeService : IDisposable
         });
     }
 
+    // ── Mod ownership ─────────────────────────────────────────────────────────
+
+    /// <summary>Key identifying a mod in <see cref="Configuration.ModsEnabledByWardrobe"/>.</summary>
+    /// <remarks>
+    /// Collection and directory together, matching how <see cref="UnwearItem"/> decides a mod is
+    /// still needed. Mod *name* is deliberately left out: it is display text that changes when a
+    /// mod is renamed in Penumbra, which would silently orphan the claim.
+    /// </remarks>
+    private static string ModKey(ModReference mod) =>
+        $"{mod.Collection}|{mod.ModDirectory}".ToLowerInvariant();
+
+    /// <summary>
+    /// Records that the wardrobe, rather than the user, switched a mod on.
+    /// </summary>
+    private void ClaimMod(ModReference mod)
+    {
+        if (_config.ModsEnabledByWardrobe.Add(ModKey(mod)))
+            _log.Debug($"[Wardrobe] Claimed '{mod.ModName}' — the wardrobe enabled it, so the wardrobe may disable it");
+    }
+
+    /// <summary>
+    /// Whether the wardrobe enabled this mod and may therefore turn it off again.
+    /// </summary>
+    /// <remarks>
+    /// A mod that was already on when the item was worn is left alone: it is on for a reason the
+    /// wardrobe cannot see — a Glamourer design, or the user's own choice in Penumbra — and turning
+    /// it off would break something that has nothing to do with the item being removed.
+    /// </remarks>
+    private bool OwnsMod(ModReference mod) =>
+        _config.ModsEnabledByWardrobe.Contains(ModKey(mod));
+
+    private void ReleaseMod(ModReference mod) =>
+        _config.ModsEnabledByWardrobe.Remove(ModKey(mod));
+
     // ── Wardrobe items ────────────────────────────────────────────────────────
 
     public bool WearItem(WardrobeItem item, OutfitDye? dye = null)
@@ -147,11 +181,13 @@ public class WardrobeService : IDisposable
                 else
                 {
                     anyNewlyEnabled = true;
+                    ClaimMod(mod);
                 }
             }
             else
             {
-                _log.Debug($"[Wardrobe] Mod '{mod.ModName}' already enabled");
+                // Deliberately unclaimed — see OwnsMod
+                _log.Debug($"[Wardrobe] Mod '{mod.ModName}' already enabled — leaving it to whoever turned it on");
             }
 
             // Apply options on the now-enabled mod. If any option value changes (returns Success
@@ -325,8 +361,20 @@ public class WardrobeService : IDisposable
                     m.ModDirectory == mod.ModDirectory &&
                     string.Equals(m.Collection, mod.Collection, StringComparison.OrdinalIgnoreCase)));
 
-            if (!stillNeeded && _penumbra.SetModEnabled(mod.Collection, mod.ModDirectory, mod.ModName, false))
+            if (stillNeeded) continue;
+
+            // Only ever switch off what the wardrobe switched on
+            if (!OwnsMod(mod))
+            {
+                _log.Debug($"[Wardrobe] Leaving '{mod.ModName}' enabled — the wardrobe did not turn it on");
+                continue;
+            }
+
+            if (_penumbra.SetModEnabled(mod.Collection, mod.ModDirectory, mod.ModName, false))
+            {
+                ReleaseMod(mod);
                 disabledAny = true;
+            }
         }
 
         var slotKey = item.WornKey();
@@ -455,14 +503,26 @@ public class WardrobeService : IDisposable
     private ItemState Evaluate(WardrobeItem item, Dictionary<string, ulong>? glamEquipment)
     {
         // Check 1: all mods are enabled in Penumbra
-        var disabledMods = item.Mods
+        var offMods = item.Mods
             .Where(m => string.IsNullOrEmpty(m.ModDirectory) ||
                         !_penumbra.IsModEnabled(m.Collection, m.ModDirectory, m.ModName))
-            .Select(m => string.IsNullOrEmpty(m.ModDirectory) ? $"{m.ModName} (no dir)" : m.ModName)
             .ToList();
-        if (disabledMods.Count > 0)
+
+        // A mod that is off cannot be one the wardrobe is holding on, so drop any stale claim while
+        // the answer is already in hand. Catches the user disabling a mod in Penumbra directly: the
+        // claim would otherwise survive, and re-enabling it for a design would leave the wardrobe
+        // believing it may switch that mod off again.
+        foreach (var mod in offMods)
+            if (!string.IsNullOrEmpty(mod.ModDirectory) && _config.ModsEnabledByWardrobe.Remove(ModKey(mod)))
+            {
+                _prunedClaims = true;
+                _log.Debug($"[Wardrobe] Scan: released stale claim on '{mod.ModName}' — it is disabled in Penumbra");
+            }
+
+        if (offMods.Count > 0)
         {
-            _log.Debug($"[Wardrobe] Scan: '{item.Name}' skipped — mods not enabled in Penumbra: {string.Join(", ", disabledMods)}");
+            var names = offMods.Select(m => string.IsNullOrEmpty(m.ModDirectory) ? $"{m.ModName} (no dir)" : m.ModName);
+            _log.Debug($"[Wardrobe] Scan: '{item.Name}' skipped — mods not enabled in Penumbra: {string.Join(", ", names)}");
             return ItemState.Off;
         }
 
@@ -517,11 +577,16 @@ public class WardrobeService : IDisposable
     /// </remarks>
     public IReadOnlyList<WardrobeItem> FindDesynced() => Scan(adopt: false).Desynced;
 
+    /// <summary>Set by <see cref="Evaluate"/> when it drops a stale claim, so the scan can save once.</summary>
+    private bool _prunedClaims;
+
     private ScanResult Scan(bool adopt)
     {
         var added    = new HashSet<Guid>();
         var on       = new List<WardrobeItem>();
         var desynced = new List<WardrobeItem>();
+
+        _prunedClaims = false;
 
         // Fetch Glamourer's current equipment state once for the whole scan.
         // Keys are Glamourer slot names (Head, Body, RFinger, …); values are item row IDs.
@@ -569,7 +634,7 @@ public class WardrobeService : IDisposable
             _log.Information($"[Wardrobe] Scan: {unexplained.Count} item(s) have mods enabled that " +
                              $"Glamourer is not showing: {string.Join(", ", unexplained.Select(i => i.Name))}");
 
-        if (added.Count > 0) _config.Save();
+        if (added.Count > 0 || _prunedClaims) _config.Save();
         return new ScanResult(added, unexplained);
     }
 
@@ -581,6 +646,12 @@ public class WardrobeService : IDisposable
     /// gave the character. <see cref="UnwearItem"/> empties the slot to Emperor's New on its way
     /// out, which here would strip real gear the character is legitimately wearing.
     /// Mods another worn item still needs are left enabled, exactly as when unwearing.
+    /// </remarks>
+    /// <remarks>
+    /// The one path that turns off mods the wardrobe never claimed, and the only cleanup route for
+    /// leftovers it cannot account for — those an older version enabled before ownership was
+    /// tracked, or that a crash stranded. Unwearing must never guess, but this is the user pointing
+    /// at named items and asking for exactly this, which is why it may do what unwearing may not.
     /// </remarks>
     public void DisableItemMods(WardrobeItem item)
     {
@@ -598,13 +669,19 @@ public class WardrobeService : IDisposable
                     string.Equals(m.Collection, mod.Collection, StringComparison.OrdinalIgnoreCase)));
 
             if (!stillNeeded && _penumbra.SetModEnabled(mod.Collection, mod.ModDirectory, mod.ModName, false))
+            {
+                ReleaseMod(mod);
                 disabledAny = true;
+            }
         }
 
         _log.Information($"[Wardrobe] Disabled mods for desynced item '{item.Name}'");
 
         // Nothing swaps a Glamourer item here, so only a redraw makes the change visible
         if (disabledAny) _penumbra.RedrawPlayer();
+
+        // Releasing a claim is a config change, and this path has no caller that saves for it
+        if (disabledAny) _config.Save();
 
         WardrobeChanged?.Invoke();
     }

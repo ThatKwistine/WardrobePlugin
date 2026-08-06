@@ -90,7 +90,7 @@ public class ScreenshotSessionService : IDisposable
         FoldersReady && _config.WardrobeItems.Any(Photographable);
 
     /// <summary>
-    /// Items worth queueing for a bulk session. Emotes, VFX, mounts and minions are excluded:
+    /// Items worth queueing for a bulk session. Animations, VFX, mounts and minions are excluded:
     /// wearing one changes nothing about how the character stands there, so the session would
     /// take an identical shot of it for each. They can still be photographed one at a time from
     /// the edit panel, where the user is posing deliberately.

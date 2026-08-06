@@ -61,13 +61,13 @@ public class WardrobeItem
 
     /// <summary>
     /// What this mod replaces within its category, for the mod categories that have no equipment
-    /// slot to be exclusive on — the animation file name for an emote, the monster id for a mount.
+    /// slot to be exclusive on — the .pap file name for an animation, the monster id for a mount.
     /// </summary>
     /// <remarks>
     /// Two items sharing a key swap each other out on wear, exactly as two body mods in the same
     /// slot do. A blank key leaves the item independent of everything else in its category, which
     /// is the right default for VFX: those overlap in ways the file paths do not reveal.
-    /// Detected on import and editable afterwards, so two mods for the same emote can be lined up
+    /// Detected on import and editable afterwards, so two mods for the same animation can be lined up
     /// by hand when their file names differ.
     /// </remarks>
     public string? Replaces { get; set; }
@@ -100,7 +100,7 @@ public class WardrobeItem
     /// </summary>
     /// <remarks>
     /// Equipment and customisation are exclusive per slot, so the slot name is key enough. Mod
-    /// categories are not — several emote mods can be active at once — so they key on what they
+    /// categories are not — several animation mods can be active at once — so they key on what they
     /// replace instead, falling back to the item's own id when that is unknown so the item is
     /// simply independent rather than colliding with every other item in its category.
     /// A method rather than a property so it is not written into the saved config.

@@ -7,6 +7,18 @@ using WardrobePlugin.Models;
 
 namespace WardrobePlugin;
 
+/// <summary>
+/// Whether the one-off mod ownership explanation is still owed. Values are persisted, so do not
+/// renumber. <c>Unevaluated</c> is the default a config written before the field deserialises to,
+/// which is what distinguishes an upgrade from a fresh install.
+/// </summary>
+public enum OwnershipNoticeState
+{
+    Unevaluated = 0,
+    Pending     = 1,
+    Done        = 2,
+}
+
 [Serializable]
 public class Configuration : IPluginConfiguration
 {
@@ -54,7 +66,7 @@ public class Configuration : IPluginConfiguration
     public string CameraPresetsPath { get; set; } = string.Empty;
 
     /// <summary>
-    /// Manage mods that are not equipment — emotes and animations, VFX, mounts and minions.
+    /// Manage mods that are not equipment — animations, VFX, mounts and minions.
     /// </summary>
     /// <remarks>
     /// Off by default: it adds three filter buttons and three slot-picker entries that mean nothing
@@ -137,7 +149,45 @@ public class Configuration : IPluginConfiguration
     /// <summary>First-run setup has been completed or skipped.</summary>
     public bool OnboardingCompleted { get; set; }
 
+    /// <summary>
+    /// Mods the wardrobe enabled itself, as "collection|directory". Only these are turned off again
+    /// when the last item using them comes off.
+    /// </summary>
+    /// <remarks>
+    /// Keyed on the mod rather than the item, so a mod shared by items in two slots is claimed once
+    /// by whichever wore first and stays claimed until the last of them is removed.
+    /// Persisted because it is the only record of what the wardrobe switched on that survives a
+    /// session — <see cref="WornItems"/> is cleared on load, and Penumbra keeps no record of who
+    /// enabled a mod.
+    /// </remarks>
+    public HashSet<string> ModsEnabledByWardrobe { get; set; } = new();
+
+    /// <summary>Whether the one-off explanation of mod ownership still needs showing.</summary>
+    public OwnershipNoticeState ModOwnershipNotice { get; set; }
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
+
+    /// <summary>
+    /// Decides whether to explain, once, that mods enabled by an older version are not claimed.
+    /// </summary>
+    /// <remarks>
+    /// Ownership tracking starts empty rather than assuming the wardrobe enabled everything that
+    /// happens to be on: claiming a mod the user turned on themselves is the very fault being fixed,
+    /// where leaving one enabled is visible and undoable. The cost is that mods an older version
+    /// switched on are never claimed and so never switched off, which looks like a bug unless it is
+    /// said out loud — hence the notice. Only for configs that predate the field; a fresh install has
+    /// nothing left behind and is marked done without ever seeing it.
+    /// Returns true if anything changed, so the caller can save.
+    /// </remarks>
+    public bool MigrateModOwnership()
+    {
+        if (ModOwnershipNotice != OwnershipNoticeState.Unevaluated) return false;
+
+        ModOwnershipNotice = WardrobeItems.Count > 0
+            ? OwnershipNoticeState.Pending
+            : OwnershipNoticeState.Done;
+        return true;
+    }
 
     /// <summary>
     /// Marks setup as done for configs that predate it, so existing users are not shown a first-run

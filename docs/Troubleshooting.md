@@ -22,6 +22,16 @@ The edit panel flags a split like this and warns on wear. Changing a mod's colle
 moves every other item that referenced the same mod in the same old collection, so a mistake repeated
 across items only needs fixing once.
 
+## Removing an item left its mod enabled in Penumbra
+
+The wardrobe only turns off mods it turned on. If a mod was already enabled when you wore the item —
+because a Glamourer design uses it, or you enabled it yourself — removing the item leaves it alone,
+so whatever else depends on it keeps working. Turn it off in Penumbra when you want it off.
+
+Mods enabled by a version older than this one are not recognised as the wardrobe's either, since
+there was nothing tracking that at the time. Those stay on once and are best cleared with **Disable
+Their Mods** on the leftovers notice; after that they are enabled and disabled normally.
+
 ## An item is enabled in Penumbra but not showing on my character
 
 The wardrobe flags these as desynced. It usually follows a crash or a manual change made in Penumbra

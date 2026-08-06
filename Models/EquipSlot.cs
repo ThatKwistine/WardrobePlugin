@@ -35,9 +35,13 @@ public enum EquipSlot
 
     // Mods that are not worn on the character at all. Like customisation slots these are pure
     // Penumbra toggles with no Glamourer item, but unlike them they are not exclusive per slot:
-    // several emote mods can be active at once. What one displaces is decided by
+    // several animation mods can be active at once. What one displaces is decided by
     // WardrobeItem.Replaces instead. Hidden unless Configuration.ModCategoriesEnabled is on.
-    Emote     = 30,
+    //
+    // Covers every .pap file, not just emotes — idles, poses, movement and battle animations all
+    // land here. Named Emote until it became clear the name was describing a fraction of what it
+    // held. Persisted as its number, so the rename did not need a migration.
+    Animation = 30,
     Vfx       = 31,
     Mount     = 32,
 }
@@ -73,7 +77,7 @@ public static class EquipSlotEx
         EquipSlot.VieraEars => "Viera Ears",
         EquipSlot.Skin      => "Skin",
         EquipSlot.Other     => "Other",
-        EquipSlot.Emote     => "Emote",
+        EquipSlot.Animation => "Animation",
         EquipSlot.Vfx       => "VFX",
         EquipSlot.Mount     => "Mount / Minion",
         _                   => "Unknown",
@@ -95,6 +99,11 @@ public static class EquipSlotEx
                                "so those mods land under Face or Hair instead.",
 
         EquipSlot.Other     => "Textures shared by every character — piercings, tattoos, face paints.",
+
+        // The name reads narrower than the category is, and a wardrobe full of idle and walk mods
+        // filed under something called "Emote" was why it got renamed
+        EquipSlot.Animation => "Any animation mod, not just emotes — idles, poses,\n" +
+                               "movement and battle animations all land here.",
         _                   => null,
     };
 
@@ -108,7 +117,7 @@ public static class EquipSlotEx
         or EquipSlot.Other;
 
     /// <summary>
-    /// True for mods that are not worn on the character — emotes, VFX, mounts and minions.
+    /// True for mods that are not worn on the character — animations, VFX, mounts and minions.
     /// </summary>
     /// <remarks>
     /// These share the customisation slots' "enabling the Penumbra mod is the whole effect"
@@ -117,7 +126,7 @@ public static class EquipSlotEx
     /// <see cref="WardrobeItem.WornKey"/>.
     /// </remarks>
     public static bool IsModCategory(this EquipSlot s) => s is
-        EquipSlot.Emote or EquipSlot.Vfx or EquipSlot.Mount;
+        EquipSlot.Animation or EquipSlot.Vfx or EquipSlot.Mount;
 
     /// <summary>
     /// True when there is no game item behind the slot, so Glamourer has nothing to equip or strip
@@ -128,7 +137,7 @@ public static class EquipSlotEx
     /// <summary>
     /// Wording for the buttons that turn an item on and off. Gear is equipped, customisation is
     /// applied over the character you already have, and a mod category is simply switched on —
-    /// "Unequip" reads wrong for an emote nobody is wearing.
+    /// "Unequip" reads wrong for an animation nobody is wearing.
     /// </summary>
     /// <param name="gearWear">The on-label for equipment, which differs by context.</param>
     public static (string Wear, string Remove) ActionLabels(this EquipSlot s, string gearWear = "Wear") =>
@@ -148,7 +157,7 @@ public static class EquipSlotEx
     /// <summary>Mod categories, in the order they appear in the filter bar and in pickers.</summary>
     public static readonly EquipSlot[] ModCategories =
     {
-        EquipSlot.Emote, EquipSlot.Vfx, EquipSlot.Mount,
+        EquipSlot.Animation, EquipSlot.Vfx, EquipSlot.Mount,
     };
 
     /// <summary>

@@ -25,8 +25,8 @@ public record ModAnalysisResult(
     /// </summary>
     IReadOnlyDictionary<int, ushort> HairIdsByRace,
     /// <summary>
-    /// What the mod replaces within a mod category, keyed by slot — the animation file name for an
-    /// emote, the monster id for a mount. Equipment identifies itself by set ID instead, so only
+    /// What the mod replaces within a mod category, keyed by slot — the .pap file name for an
+    /// animation, the monster id for a mount. Equipment identifies itself by set ID instead, so only
     /// mod categories ever appear here. See <see cref="Models.WardrobeItem.Replaces"/>.
     /// </summary>
     IReadOnlyDictionary<EquipSlot, string> ReplaceKeys
@@ -102,6 +102,50 @@ public class ModAnalysisService
         PropertyNameCaseInsensitive = true,
         AllowTrailingCommas = true,
     };
+
+    /// <summary>
+    /// Pre-selects option groups from whatever Penumbra currently has active for the mod, so an
+    /// import starts from the configuration the user already set up in Penumbra rather than from
+    /// each group's first option.
+    /// </summary>
+    /// <remarks>
+    /// Only groups Penumbra actually reports are touched; the rest keep whatever the caller had,
+    /// which is each group's default. Option names are taken from the analysed group rather than
+    /// from Penumbra's reply, so a difference in casing cannot store a name that will not match
+    /// later. Anything Penumbra reports that the group does not list is dropped: a stale name from
+    /// a mod that has since been reorganised must not end up saved on a wardrobe item.
+    /// </remarks>
+    public static void SeedSelectionsFromPenumbra(
+        IReadOnlyList<ModOptionGroup> groups,
+        Dictionary<string, List<string>> live,
+        Dictionary<string, int> singleSel,
+        Dictionary<string, HashSet<string>> multiSel)
+    {
+        if (live.Count == 0) return;
+
+        foreach (var g in groups)
+        {
+            if (!live.TryGetValue(g.GroupName, out var active) || active.Count == 0) continue;
+
+            if (g.GroupType == ModGroupType.Single)
+            {
+                for (var i = 0; i < g.OptionNames.Count; i++)
+                {
+                    if (!g.OptionNames[i].Equals(active[0], StringComparison.OrdinalIgnoreCase)) continue;
+                    singleSel[g.GroupName] = i;
+                    break;
+                }
+            }
+            else
+            {
+                var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var name in g.OptionNames)
+                    if (active.Contains(name, StringComparer.OrdinalIgnoreCase))
+                        set.Add(name);
+                multiSel[g.GroupName] = set;
+            }
+        }
+    }
 
     /// <summary>
     /// Reads the Penumbra mod folder and returns which equipment slots it touches
@@ -346,8 +390,8 @@ public class ModAnalysisService
         m = AnimationPattern.Match(gamePath);
         if (m.Success)
         {
-            slots.Add(EquipSlot.Emote);
-            replace.TryAdd(EquipSlot.Emote, m.Groups[1].Value.ToLowerInvariant());
+            slots.Add(EquipSlot.Animation);
+            replace.TryAdd(EquipSlot.Animation, m.Groups[1].Value.ToLowerInvariant());
             return;
         }
 

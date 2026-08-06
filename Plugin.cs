@@ -37,6 +37,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ItalicFontService        _italicFont;
     private readonly WindowSystem             _windowSystem;
     private readonly PluginUi                _ui;
+    private readonly MassImportPanel         _massImport;
 
     private const string CommandName  = "/wardrobe";
     private const string CommandAlias = "/wr";
@@ -50,6 +51,7 @@ public sealed class Plugin : IDalamudPlugin
         _config.LoadPresets();
         if (_config.MigrateDateAdded()) _config.Save();
         if (_config.MigrateOnboarding()) _config.Save();
+        if (_config.MigrateModOwnership()) _config.Save();
 
         // Glamourer state is not persisted across sessions, so nothing is worn on load
         if (_config.WornItems.Count > 0)
@@ -74,8 +76,10 @@ public sealed class Plugin : IDalamudPlugin
         SlotIcons   = new SlotIconService(_config, Textures, _itemLookup);
 
         var panel = new ItemImportPanel(_config, _wardrobeService, Penumbra, Glamourer, _analysisService, _itemLookup, _screenshotSession, Log, _italicFont);
-        _ui = new PluginUi(_config, _wardrobeService, Textures, Log, panel, _screenshotSession, _backupService);
+        _massImport = new MassImportPanel(_config, Penumbra, _analysisService, _itemLookup, Log, _italicFont);
+        _ui = new PluginUi(_config, _wardrobeService, Textures, Log, panel, _screenshotSession, _backupService, _massImport);
         _windowSystem.AddWindow(_ui);
+        _windowSystem.AddWindow(_massImport);
 
         pi.UiBuilder.DisableGposeUiHide = true;
 
@@ -142,6 +146,7 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenConfigUi -= OpenUi;
 
         _ui.Dispose();
+        _massImport.Dispose();
         _italicFont.Dispose();
         _backupService.Dispose();
         _screenshotSession.Dispose();

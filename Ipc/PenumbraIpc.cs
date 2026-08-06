@@ -144,7 +144,16 @@ public class PenumbraIpc : IDisposable
         catch (Exception ex) { _log.Warning(ex, "[Wardrobe] IsModEnabled query failed"); return false; }
     }
 
-    public Dictionary<string, string> GetModSettings(string collectionName, string modDirectory, string modName)
+    /// <summary>
+    /// Every option Penumbra currently has selected for a mod, as group name → selected options.
+    /// </summary>
+    /// <remarks>
+    /// Kept separate from <see cref="GetModSettings"/>, which reduces each group to its first option
+    /// and so cannot describe a multi-select group with more than one box ticked. Anything seeding
+    /// an editable option set needs the whole selection, not a representative of it.
+    /// </remarks>
+    public Dictionary<string, List<string>> GetModSettingsFull(
+        string collectionName, string modDirectory, string modName)
     {
         try
         {
@@ -152,12 +161,14 @@ public class PenumbraIpc : IDisposable
             var (ec, inner) = _getCurrentModSettings.InvokeFunc(id, modDirectory, modName, false);
             if (ec != 0 || !inner.HasValue) return new();
             var (_, _, settings, _) = inner.Value;
-            return settings.ToDictionary(
-                kvp => kvp.Key,
-                kvp => kvp.Value.FirstOrDefault() ?? string.Empty);
+            return settings.ToDictionary(kvp => kvp.Key, kvp => new List<string>(kvp.Value));
         }
-        catch (Exception ex) { _log.Warning(ex, "[Wardrobe] Penumbra GetModSettings failed"); return new(); }
+        catch (Exception ex) { _log.Warning(ex, "[Wardrobe] Penumbra GetModSettingsFull failed"); return new(); }
     }
+
+    public Dictionary<string, string> GetModSettings(string collectionName, string modDirectory, string modName) =>
+        GetModSettingsFull(collectionName, modDirectory, modName)
+            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value.FirstOrDefault() ?? string.Empty);
 
     /// <summary>
     /// Returns true when every required option (single and multi-select) is currently active for

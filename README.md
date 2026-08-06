@@ -24,10 +24,11 @@ and the slot goes empty.
 - **Outfits.** Save a whole look, wear it in one click, dye it in another.
 - **Pictures.** Drag images onto cards, or let the plugin take the screenshots for you.
 - **Find things.** Tags, favourites, search across names and notes, sort by name or date.
+- **Bulk import.** Bring in a batch of mods at once instead of one at a time.
 
 It also handles the awkward cases: mods spanning several slots, mods needing an upscale or a
 compatibility patch alongside them, hair and skin mods, colour variants of the same piece, and —
-if you want them — emotes, VFX and mounts.
+if you want them — animations, VFX and mounts.
 
 ---
 
@@ -72,7 +73,7 @@ folders. All of it is skippable and editable later.
 
 ### Adding your first item
 
-1. Click **+ Import Item**
+1. Click **+ Import from Mod**
 2. Pick a **collection**, then a **mod** — the search boxes filter long lists
 3. Click **Analyse Mod** — the plugin reads the mod's files and works out which slots it covers
 4. Tick the slot you want; the matching FFXIV item is detected automatically
@@ -81,6 +82,17 @@ folders. All of it is skippable and editable later.
 
 Then open **Images** in the toolbar and drag a picture onto the new card — or use a
 [screenshot session](docs/Images-and-Screenshots.md) and let the plugin do it.
+
+### Importing a batch
+
+**Mass Import** in the toolbar lists every mod in a collection at once, for when you are filling a
+wardrobe rather than adding one piece. Tick what you want, optionally set each mod's options and
+attach its supplementary mods, then click **Import Mods**. Items are named after the mod, and slots
+you already have an item for are skipped.
+
+Anything imported this way can be renamed, re-imaged and re-detected afterwards in the edit panel,
+so it is worth being liberal here and tidying up later. See
+[Items, mods and detection](docs/Items-and-Mods.md#mass-import) for the details.
 
 ---
 
@@ -102,7 +114,7 @@ Then open **Images** in the toolbar and drag a picture onto the new card — or 
 |---|---|
 | [Wearing items](docs/Wearing-Items.md) | How wear and unequip work, and why the order matters |
 | [Outfits and dyes](docs/Outfits.md) | Saving looks, per-item dyes, editing an outfit by wearing it |
-| [Items, mods and detection](docs/Items-and-Mods.md) | Variants, shared models, customisation mods, option groups |
+| [Items, mods and detection](docs/Items-and-Mods.md) | Mass import, supplementary mods, variants, shared models, option groups |
 | [Images and screenshots](docs/Images-and-Screenshots.md) | Previews, automated sessions, camera presets |
 | [Settings and backups](docs/Settings.md) | Every setting, and how backups work |
 | [**Troubleshooting**](docs/Troubleshooting.md) | When something doesn't show up |

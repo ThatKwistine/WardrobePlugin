@@ -26,6 +26,7 @@ public class PluginUi : Window, IDisposable
     private readonly ItemImportPanel         _panel;
     private readonly ScreenshotSessionService _session;
     private readonly BackupService            _backup;
+    private readonly MassImportPanel          _massImport;
 
     // Holds ISharedImmediateTexture references so Dalamud won't free the GPU resource while
     // we still have the handle. GetWrapOrDefault() is called each frame to get a live handle.
@@ -134,7 +135,7 @@ public class PluginUi : Window, IDisposable
 
     public PluginUi(Configuration config, WardrobeService wardrobe,
         ITextureProvider textures, IPluginLog log, ItemImportPanel panel,
-        ScreenshotSessionService session, BackupService backup)
+        ScreenshotSessionService session, BackupService backup, MassImportPanel massImport)
         : base("Wardrobe###WardrobeMain",
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -145,6 +146,7 @@ public class PluginUi : Window, IDisposable
         _panel    = panel;
         _session  = session;
         _backup   = backup;
+        _massImport = massImport;
 
 
         // The window opens at this size and is then free to grow as far as the user drags it
@@ -235,6 +237,7 @@ public class PluginUi : Window, IDisposable
 
         UiLayout.PushWrap();
         DrawToolbar();
+        DrawModOwnershipNotice();
         DrawDesyncNotice();
         ImGui.Separator();
         DrawSlotFilter();
@@ -477,7 +480,7 @@ public class PluginUi : Window, IDisposable
     /// What the wardrobe holds, and what the import lists show.
     /// </summary>
     /// <remarks>
-    /// All three are off by default and none of them announce themselves: a wardrobe of emote mods
+    /// All three are off by default and none of them announce themselves: a wardrobe of animation mods
     /// is invisible until mod categories are on, and the import lists stay full of mods you have
     /// already dealt with until you find the two hide options. Asked here because a first-time user
     /// has no reason to go looking for any of them.
@@ -486,20 +489,21 @@ public class PluginUi : Window, IDisposable
     {
         ImGui.TextUnformatted("What should the wardrobe hold?");
         ImGui.Spacing();
-        ImGui.TextWrapped("Gear is always managed. Emotes and animations, VFX, and mounts and " +
-                          "minions can be kept alongside it — they have no game item to equip, so " +
-                          "wearing one only enables its Penumbra mod.");
+        ImGui.TextWrapped("Gear is always managed. Animations, VFX, and mounts and minions can be " +
+                          "kept alongside it — they have no game item to equip, so wearing one only " +
+                          "enables its Penumbra mod.");
         ImGui.Spacing();
 
         var categories = _config.ModCategoriesEnabled;
-        if (ImGui.Checkbox("Manage emotes, VFX and mounts too##onboard", ref categories))
+        if (ImGui.Checkbox("Manage animations, VFX and mounts too##onboard", ref categories))
         {
             _config.ModCategoriesEnabled = categories;
             _config.Save();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Adds Emote, VFX and Mount / Minion to the filter bar and to the\n" +
-                             "slot pickers. Turning it off later hides those items but keeps them.");
+            ImGui.SetTooltip("Adds Animation, VFX and Mount / Minion to the filter bar and to the\n" +
+                             "slot pickers. Animation covers emotes, idles, poses and battle\n" +
+                             "animations. Turning it off later hides those items but keeps them.");
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -737,6 +741,10 @@ public class PluginUi : Window, IDisposable
         if (ImGui.Button("  + Import from Mod  "))
             _panel.OpenImport();
 
+        UiLayout.SameLineIfRoomForButton("  Mass Import  ");
+        if (ImGui.Button("  Mass Import  "))
+            _massImport.Open();
+
         UiLayout.SameLineIfRoomForButton("  Images  ");
         ToggleButton("  Images  ", ref _showImageBrowser, onActivate: () =>
         {
@@ -804,7 +812,7 @@ public class PluginUi : Window, IDisposable
         {
             _wardrobe.StripAll();
 
-            // Anything left running keeps its marker, so the grid does not claim the emote mods
+            // Anything left running keeps its marker, so the grid does not claim the animation mods
             // that are still enabled were turned off
             _detectedWorn.RemoveWhere(id =>
                 _config.WardrobeItems.Find(x => x.Id == id) is not { } item || !item.Slot.IsModCategory());
@@ -814,7 +822,7 @@ public class PluginUi : Window, IDisposable
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Force every equipment slot to Emperor's New in Glamourer\n" +
                              "and disable all worn mods.\n\n" +
-                             "Emotes, VFX and mounts are left running — they are not\n" +
+                             "Animations, VFX and mounts are left running — they are not\n" +
                              "on the character, so there is nothing to strip.");
 
         UiLayout.SameLineIfRoomForButton(" Refresh ");
@@ -868,6 +876,37 @@ public class PluginUi : Window, IDisposable
     /// still enabled in Penumbra — Unequip All then has nothing to unequip, and Strip walks the
     /// same empty list, so the only way to turn the mods off is to go and find them in Penumbra.
     /// </remarks>
+    /// <summary>
+    /// Explains, once, that mods enabled before ownership was tracked will not be turned off.
+    /// </summary>
+    /// <remarks>
+    /// Shown only to configs that predate the change. Without it the new behaviour is indisting-
+    /// uishable from a bug: mods an older version switched on stay on when their item is removed,
+    /// with nothing on screen to say why or what to do instead.
+    /// </remarks>
+    private void DrawModOwnershipNotice()
+    {
+        if (_config.ModOwnershipNotice != OwnershipNoticeState.Pending) return;
+
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(0.55f, 0.8f, 1f, 1f),
+            "● The wardrobe now only turns off mods it turned on itself.");
+        ImGui.TextDisabled("A mod already enabled when you wear an item is left alone when you remove it, " +
+                           "so Glamourer designs relying on it keep working. Mods enabled by an earlier " +
+                           "version are not recognised as the wardrobe's and will stay on — turn those off " +
+                           "in Penumbra, or use Disable Their Mods whenever they are listed as leftovers.");
+        ImGui.Spacing();
+
+        if (ImGui.Button(" Got It ##ownership "))
+        {
+            _config.ModOwnershipNotice = OwnershipNoticeState.Done;
+            _config.Save();
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+    }
+
     private void DrawDesyncNotice()
     {
         // Deleting an item while the notice is up would otherwise leave a dangling reference here,
@@ -907,7 +946,9 @@ public class PluginUi : Window, IDisposable
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Turns the leftover mods off in Penumbra and leaves\n" +
                              "Glamourer alone, so gear you are actually wearing stays put.\n\n" +
-                             "Mods another worn item still needs are kept enabled.");
+                             "Mods another worn item still needs are kept enabled.\n" +
+                             "Everything else goes off whether the wardrobe enabled it\n" +
+                             "or not — this is the one place that does.");
         if (disableAll)
         {
             foreach (var item in _desynced)
@@ -1505,7 +1546,7 @@ public class PluginUi : Window, IDisposable
     {
         IEnumerable<WardrobeItem> query = _config.WardrobeItems;
 
-        // Emotes, VFX and mounts are hidden entirely rather than merely unfilterable while the mode
+        // Animations, VFX and mounts are hidden entirely rather than merely unfilterable while the mode
         // is off — with no filter button for them they would otherwise be stuck in every view.
         if (!_config.ModCategoriesEnabled)
             query = query.Where(x => !x.Slot.IsModCategory());
@@ -1740,7 +1781,7 @@ public class PluginUi : Window, IDisposable
         var btnW = (CardWidth - CardPad * 2 - 6) / 2;
 
         // Customisation mods are not worn or removed — you always have hair. They are applied, and
-        // "removing" one just turns the mod back off. The same goes for emotes, VFX and mounts,
+        // "removing" one just turns the mod back off. The same goes for animations, VFX and mounts,
         // which are not on the character at all.
         var (wearLabel, removeLabel) = item.Slot.ActionLabels();
         var modOnly = item.Slot.IsModOnly();
@@ -2420,7 +2461,7 @@ public class PluginUi : Window, IDisposable
         ImGui.SameLine();
 
         // A partly-worn outfit shows Wear above, so without this there would be nothing to press to
-        // take off what is still applied — most often the emote a Strip deliberately left running
+        // take off what is still applied — most often the animation a Strip deliberately left running
         if (partly)
         {
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.45f, 0.08f, 0.08f, 1f));
@@ -2430,7 +2471,7 @@ public class PluginUi : Window, IDisposable
             ImGui.PopStyleColor(2);
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Takes off the parts of this outfit that are still applied,\n" +
-                                 "including any emote or VFX mods still enabled.");
+                                 "including any animation or VFX mods still enabled.");
             ImGui.SameLine();
         }
 
@@ -2599,7 +2640,7 @@ public class PluginUi : Window, IDisposable
             ImGui.SetCursorPos(new Vector2(top.X, top.Y + rowThumb + 6));
 
             // Dyes are a property of an equipped game item, so anything without one — hair, an
-            // emote, a mount — has nothing to dye
+            // animation, a mount — has nothing to dye
             if (item.Slot.IsModOnly())
             {
                 ImGui.TextDisabled($"    {item.Slot.DisplayName()} mods cannot be dyed.");
@@ -3465,7 +3506,7 @@ public class PluginUi : Window, IDisposable
     private void DrawModCategorySettings()
     {
         ImGui.TextUnformatted("Other Mod Types");
-        ImGui.TextDisabled("Keep emotes, VFX and mounts alongside your gear. They have no game " +
+        ImGui.TextDisabled("Keep animations, VFX and mounts alongside your gear. They have no game " +
                            "item, so wearing one only enables its Penumbra mod.");
         ImGui.Spacing();
 
@@ -3482,8 +3523,10 @@ public class PluginUi : Window, IDisposable
             _config.Save();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Adds Emote, VFX and Mount / Minion to the filter bar and to the\n" +
+            ImGui.SetTooltip("Adds Animation, VFX and Mount / Minion to the filter bar and to the\n" +
                              "slot pickers when importing or editing an item.\n\n" +
+                             "Animation covers every animation mod, not only emotes — idles,\n" +
+                             "poses, movement and battle animations all land there.\n\n" +
                              "Turning it off hides items in those categories from the grid\n" +
                              "but keeps them saved — turning it back on restores them.");
 
@@ -3496,9 +3539,9 @@ public class PluginUi : Window, IDisposable
         }
 
         ImGui.Spacing();
-        ImGui.TextDisabled("Emotes replacing the same animation swap each other out, like two " +
-                           "body mods. What each one replaces is detected on import, and can be " +
-                           "changed when editing it.");
+        ImGui.TextDisabled("Animation mods replacing the same animation swap each other out, like " +
+                           "two body mods. What each one replaces is detected on import, and can " +
+                           "be changed when editing it.");
     }
 
     private void DrawSlotIconSettings()

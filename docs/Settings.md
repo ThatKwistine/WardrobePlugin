@@ -11,7 +11,7 @@ most trouble when left unset:
 
 1. **Intro**
 2. **Which Penumbra collection does your character use?**
-3. **What should the wardrobe hold?** Gear is always managed; emotes, VFX and mounts are optional
+3. **What should the wardrobe hold?** Gear is always managed; animations, VFX and mounts are optional
 4. **Where should item images live?**
 5. **Where does FFXIV save your screenshots?**
 6. **Keep backups of your wardrobe?**
@@ -44,12 +44,17 @@ What the import panel's mod lists leave out.
 With both on, the lists show only mods the wardrobe does not reference at all. Left off, those mods
 still appear but greyed and annotated.
 
+Both are also exposed as checkboxes at the top of the **Mass Import** window, where they matter most.
+They are the same two settings, not copies — changing either one in either place changes it
+everywhere.
+
 ---
 
 ## Other Mod Types
 
-**Manage other mod types** adds Emote, VFX and Mount / Minion to the filter bar and to the slot
-pickers when importing or editing.
+**Manage other mod types** adds Animation, VFX and Mount / Minion to the filter bar and to the slot
+pickers when importing or editing. Animation covers every animation mod, not only emotes — idles,
+poses, movement and battle animations all land there.
 
 These have no game item to equip, so wearing one only enables its Penumbra mod and Glamourer is left
 alone entirely. It is off by default because the extra buttons are noise to a wardrobe made only of
@@ -58,7 +63,7 @@ gear.
 Turning it off hides items in those categories from the grid but keeps them saved, so turning it
 back on restores them intact. A warning shows the count while any are hidden.
 
-Emote mods that replace the same animation swap each other out, like two body mods do. Which
+Animation mods that replace the same animation swap each other out, like two body mods do. Which
 animation an item replaces is detected on import and can be changed when editing it.
 
 ---

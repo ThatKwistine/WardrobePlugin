@@ -57,7 +57,7 @@ public class SlotIconService
 
         // Mod categories. No game icon exists for any of these — GetSlotIcon reads an item's UI
         // category and none of them is an item — so the glyph is all there is.
-        { EquipSlot.Emote,     FontAwesomeIcon.Running },
+        { EquipSlot.Animation, FontAwesomeIcon.Running },
         { EquipSlot.Vfx,       FontAwesomeIcon.Magic },
         { EquipSlot.Mount,     FontAwesomeIcon.Horse },
     };
