@@ -58,6 +58,52 @@ public class PluginUi : Window, IDisposable
     // so this trails by one frame — imperceptible, and avoids running the filters twice.
     private int _visibleCount;
 
+    // ── Bulk selection ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// While on, cards show a tick box in place of their Wear / Edit / X row and the whole card
+    /// toggles selection. A mode rather than an always-present tick box: the row is swapped rather
+    /// than added, so entering it does not resize a single card or reflow the grid.
+    /// </summary>
+    private bool _selectMode;
+
+    /// <summary>
+    /// Selected item ids. Cleared on leaving select mode, so no selection is ever carried around
+    /// invisibly and acted on later from a grid showing something else entirely.
+    /// </summary>
+    private readonly HashSet<Guid> _selected = new();
+
+    // Ids the grid drew last frame, so Select All acts on exactly what the filters are showing.
+    // Trails a frame like _visibleCount, and for the same reason.
+    private readonly List<Guid> _lastVisibleIds = new();
+
+    // Bulk tag entry
+    private string _bulkTag = string.Empty;
+    private string _bulkStatus = string.Empty;
+
+    /// <summary>
+    /// The right panel is showing the bulk actions rather than whatever was there before.
+    /// </summary>
+    /// <remarks>
+    /// Actions live behind a click instead of on screen throughout, because the panel is also where
+    /// the tag filter lives — and "filter to everything tagged X, then retag it" is the main reason
+    /// to bulk-edit tags at all. Both need the full width, and they are needed at different moments:
+    /// the filter while choosing, the actions only when applying.
+    /// </remarks>
+    private bool _bulkPanelOpen;
+
+    // Penumbra collections for the bulk move, read once on entering select mode rather than every
+    // frame: it is an IPC round trip, and the list does not change while the bar is on screen.
+    private IList<string> _bulkCollections = Array.Empty<string>();
+    private int           _bulkCollectionIdx;
+
+    /// <summary>
+    /// Confirmation for the bulk delete. A modal rather than an inline second click: deleting
+    /// dozens of items cannot be undone, and it is worth stating what is about to happen — and what
+    /// is not — somewhere the user has to read before agreeing.
+    /// </summary>
+    private const string BulkDeletePopup = "Delete selected items?###bulkDelete";
+
     // Set when the user expands out of compact mode mid-session; cleared when the session ends,
     // so it overrides the setting for this session only rather than turning it off permanently.
     private bool _compactOverride;
@@ -227,7 +273,7 @@ public class PluginUi : Window, IDisposable
         var totalW  = ImGui.GetContentRegionAvail().X;
         var totalH  = ImGui.GetContentRegionAvail().Y;
         var rightOpen = _panel.IsOpen || _showImageBrowser || _showSettings || _showTags
-                        || _editingOutfit != null;
+                        || _editingOutfit != null || (_selectMode && _bulkPanelOpen);
         var panelW    = rightOpen ? 360f : 0f;
         var gridW     = totalW - panelW - (rightOpen ? 8f : 0f);
 
@@ -237,6 +283,7 @@ public class PluginUi : Window, IDisposable
 
         UiLayout.PushWrap();
         DrawToolbar();
+        DrawBulkBar();
         DrawModOwnershipNotice();
         DrawDesyncNotice();
         ImGui.Separator();
@@ -264,6 +311,10 @@ public class PluginUi : Window, IDisposable
 
             if (_panel.IsOpen)
                 _panel.Draw();
+            // Above the filter panels on purpose: it is opened deliberately from the toolbar and
+            // steps back to whichever of them was showing.
+            else if (_selectMode && _bulkPanelOpen)
+                DrawSelectionPanel();
             else if (_editingOutfit != null)
                 DrawOutfitEditPanel();
             else if (_showTags)
@@ -745,6 +796,16 @@ public class PluginUi : Window, IDisposable
         if (ImGui.Button("  Mass Import  "))
             _massImport.Open();
 
+        UiLayout.SameLineIfRoomForButton(" Select ");
+        var wasSelecting = _selectMode;
+        ToggleButton(" Select ", ref _selectMode);
+        // ToggleButton only reports activation, and leaving the mode has to drop the selection
+        if (wasSelecting && !_selectMode) ExitSelectMode();
+        if (!wasSelecting && _selectMode) EnterSelectMode();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Pick several items and edit them together.\n" +
+                             "Cards show a tick box instead of their buttons while this is on.");
+
         UiLayout.SameLineIfRoomForButton("  Images  ");
         ToggleButton("  Images  ", ref _showImageBrowser, onActivate: () =>
         {
@@ -1001,6 +1062,395 @@ public class PluginUi : Window, IDisposable
 
         // Removed after the loop rather than inside it, so the list is not mutated while enumerated
         if (handled != null) _desynced.Remove(handled);
+    }
+
+    /// <summary>
+    /// Empties the selection without leaving the actions panel — it says "nothing selected" and
+    /// waits, rather than vanishing mid-task because you emptied the list to start again.
+    /// </summary>
+    private void ClearSelection()
+    {
+        _selected.Clear();
+        _bulkTag    = string.Empty;
+        _bulkStatus = string.Empty;
+    }
+
+    /// <summary>Leaves select mode entirely: no selection, and the panel hands back to whatever it covered.</summary>
+    private void ExitSelectMode()
+    {
+        _selectMode    = false;
+        _bulkPanelOpen = false;
+        ClearSelection();
+    }
+
+    private void EnterSelectMode()
+    {
+        _bulkCollections   = Plugin.Penumbra.GetCollections();
+        _bulkCollectionIdx = 0;
+
+        // Start on the configured default rather than whichever collection sorts first, which is
+        // rarely the one in use and would make a mis-click move items somewhere meaningless
+        if (!string.IsNullOrEmpty(_config.DefaultCollection))
+        {
+            var idx = _bulkCollections.ToList().FindIndex(
+                c => c.Equals(_config.DefaultCollection, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0) _bulkCollectionIdx = idx;
+        }
+    }
+
+    /// <summary>Selected items that still exist, in the grid's current order.</summary>
+    private List<WardrobeItem> SelectedItems() =>
+        _config.WardrobeItems.Where(i => _selected.Contains(i.Id)).ToList();
+
+    /// <summary>
+    /// Actions for the current selection, shown under the toolbar while select mode is on.
+    /// </summary>
+    /// <remarks>
+    /// Select All takes what the grid drew rather than the whole wardrobe, so it composes with the
+    /// search, slot, tag, worn and favourite filters instead of duplicating any of them: narrow the
+    /// grid to what you mean, then act on all of it.
+    /// </remarks>
+    private void DrawBulkBar()
+    {
+        if (!_selectMode) return;
+
+        ImGui.Spacing();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted($"{_selected.Count} selected");
+
+        UiLayout.SameLineIfRoomForButton(" Select All ");
+        if (ImGui.Button(" Select All "))
+        {
+            foreach (var id in _lastVisibleIds) _selected.Add(id);
+            _bulkStatus = string.Empty;
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Selects every item the current filters are showing,\n" +
+                             "not the whole wardrobe.");
+
+        UiLayout.SameLineIfRoomForButton(" Clear ");
+        if (ImGui.Button(" Clear ")) ClearSelection();
+
+        var none = _selected.Count == 0;
+
+        UiLayout.SameLineIfRoomForButton(" Edit Selected ");
+        if (none) ImGui.BeginDisabled();
+        if (ImGui.Button(" Edit Selected ")) _bulkPanelOpen = true;
+        if (none) ImGui.EndDisabled();
+        if (none && ImGui.IsItemHovered())
+            ImGui.SetTooltip("Tick some items first.");
+
+        UiLayout.SameLineIfRoomForButton(" Done ");
+        if (ImGui.Button(" Done ")) ExitSelectMode();
+    }
+
+    private void ApplyBulkFavourite(bool on)
+    {
+        var changed = 0;
+        foreach (var item in SelectedItems())
+        {
+            if (item.IsFavorite == on) continue;
+            item.IsFavorite = on;
+            changed++;
+        }
+
+        if (changed > 0) _config.Save();
+        _bulkStatus = changed == 0
+            ? "No items changed."
+            : $"{(on ? "Favourited" : "Unfavourited")} {changed} item(s).";
+    }
+
+    /// <summary>
+    /// Moves every mod on the selected items into one Penumbra collection.
+    /// </summary>
+    /// <remarks>
+    /// The single-item editor also moves other items referencing the same mod in the same old
+    /// collection, on the grounds that one item's wrong collection was probably wrong everywhere.
+    /// This deliberately does not: the selection *is* the statement of what to move, and quietly
+    /// changing items the user did not select would make the count in the bar a lie.
+    /// </remarks>
+    private void DrawBulkCollectionActions()
+    {
+        if (_bulkCollections.Count == 0) return;
+
+        var current = _bulkCollections[Math.Min(_bulkCollectionIdx, _bulkCollections.Count - 1)];
+
+        ImGui.TextUnformatted("Collection");
+        ImGui.TextDisabled("Moves every mod on the selected items into one collection. Other items " +
+                           "using the same mods are left where they are.");
+        ImGui.Spacing();
+
+        ImGui.SetNextItemWidth(-1);
+        if (ImGui.BeginCombo("##bulkColl", current))
+        {
+            for (var i = 0; i < _bulkCollections.Count; i++)
+            {
+                if (ImGui.Selectable(_bulkCollections[i], i == _bulkCollectionIdx))
+                    _bulkCollectionIdx = i;
+                if (i == _bulkCollectionIdx) ImGui.SetItemDefaultFocus();
+            }
+            ImGui.EndCombo();
+        }
+
+        ImGui.Spacing();
+        if (ImGui.Button($"Move to '{Truncate(current, 24)}'", new Vector2(-1, 0)))
+            ApplyBulkCollection(current);
+    }
+
+    private void ApplyBulkCollection(string collection)
+    {
+        var changed = 0;
+        var reWear  = new List<WardrobeItem>();
+
+        foreach (var item in SelectedItems())
+        {
+            var touched = false;
+            foreach (var mod in item.Mods)
+            {
+                if (mod.Collection.Equals(collection, StringComparison.OrdinalIgnoreCase)) continue;
+                mod.Collection = collection;
+                touched = true;
+            }
+
+            if (!touched) continue;
+            changed++;
+            if (_wardrobe.IsItemWorn(item)) reWear.Add(item);
+        }
+
+        if (changed > 0) _config.Save();
+
+        // A worn item's mods were enabled in the collection it just left, so re-apply it to switch
+        // them on in the new one. The old collection keeps them enabled — the same limitation the
+        // single-item editor has.
+        foreach (var item in reWear) _wardrobe.WearItem(item);
+        if (reWear.Count > 0) Plugin.Penumbra.RedrawPlayer();
+
+        _log.Information($"[Wardrobe] Bulk move: {changed} item(s) to '{collection}', " +
+                         $"{reWear.Count} re-applied");
+
+        _bulkStatus = changed == 0
+            ? "Already in that collection."
+            : $"Moved {changed} item(s) to '{collection}'.";
+    }
+
+    private void DrawBulkDeleteConfirm()
+    {
+        // Centred on the viewport, so it cannot open partly off-screen from a toolbar near an edge
+        var vp     = ImGui.GetMainViewport();
+        var centre = new Vector2(vp.Pos.X + vp.Size.X * 0.5f, vp.Pos.Y + vp.Size.Y * 0.5f);
+        ImGui.SetNextWindowPos(centre, ImGuiCond.Appearing, new Vector2(0.5f, 0.5f));
+
+        if (!ImGui.BeginPopupModal(BulkDeletePopup, ImGuiWindowFlags.AlwaysAutoResize)) return;
+
+        var items = SelectedItems();
+        var worn  = items.Count(_wardrobe.IsItemWorn);
+
+        ImGui.TextUnformatted($"Delete {items.Count} item(s) from the wardrobe?");
+        ImGui.Spacing();
+
+        // The reassurance that matters: this is a wardrobe entry, not the mod on disk
+        ImGui.TextDisabled("Your Penumbra mods are not touched — only these wardrobe entries,\n" +
+                           "with their names, images, tags and notes.");
+
+        if (worn > 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f),
+                $"{worn} of them are currently worn and will be taken off first.");
+        }
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("This cannot be undone.");
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.55f, 0.08f, 0.08f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.75f, 0.15f, 0.15f, 1f));
+        if (ImGui.Button($" Delete {items.Count} ", new Vector2(140, 0)))
+        {
+            ApplyBulkDelete(items);
+            ImGui.CloseCurrentPopup();
+        }
+        ImGui.PopStyleColor(2);
+
+        ImGui.SameLine();
+        if (ImGui.Button(" Cancel ", new Vector2(120, 0)))
+            ImGui.CloseCurrentPopup();
+
+        ImGui.EndPopup();
+    }
+
+    private void ApplyBulkDelete(List<WardrobeItem> items)
+    {
+        foreach (var item in items)
+        {
+            // save: false — one write at the end rather than one per item
+            if (_wardrobe.IsItemWorn(item)) _wardrobe.UnwearItem(item, save: false);
+            _config.WardrobeItems.Remove(item);
+            _imageCache.Remove(item.Id);
+        }
+
+        _config.Save();
+        _log.Information($"[Wardrobe] Bulk delete: removed {items.Count} item(s)");
+
+        // Nothing selected is left to act on, and a stale count in the bar would be misleading
+        _selected.Clear();
+        _bulkStatus = $"Deleted {items.Count} item(s).";
+    }
+
+    /// <summary>
+    /// The bulk actions, shown in the right panel once Edit Selected is pressed.
+    /// </summary>
+    /// <remarks>
+    /// Back rather than a close: it returns to whatever the panel was showing — usually the tag
+    /// filter — with the selection intact, so narrowing the grid and acting on it can be alternated
+    /// without starting over.
+    /// </remarks>
+    private void DrawSelectionPanel()
+    {
+        if (ImGui.Button(" < Back ")) _bulkPanelOpen = false;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Back to the panel you were on. The selection is kept.");
+
+        ImGui.SameLine();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted($"{_selected.Count} selected");
+
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        if (_selected.Count == 0)
+        {
+            ImGui.TextDisabled("Nothing selected. Tick some items in the grid.");
+            return;
+        }
+
+        DrawBulkTagActions();
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        DrawBulkCollectionActions();
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ImGui.TextUnformatted("Favourites");
+        ImGui.Spacing();
+        var favW = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemSpacing.X) / 2;
+        if (ImGui.Button("♥ Favourite", new Vector2(favW, 0)))  ApplyBulkFavourite(true);
+        ImGui.SameLine();
+        if (ImGui.Button("Unfavourite", new Vector2(favW, 0)))   ApplyBulkFavourite(false);
+
+        if (!string.IsNullOrEmpty(_bulkStatus))
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(0.5f, 0.85f, 0.6f, 1f), _bulkStatus);
+        }
+
+        // Pinned to the bottom, well away from everything else. A destructive action should not sit
+        // in the flow directly under a text field you were just typing in.
+        var bottom = ImGui.GetWindowHeight() - ImGui.GetFrameHeight() - ImGui.GetStyle().WindowPadding.Y;
+        if (bottom > ImGui.GetCursorPosY() + ImGui.GetFrameHeight())
+            ImGui.SetCursorPosY(bottom);
+        else
+            ImGui.Spacing();
+
+        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.45f, 0.08f, 0.08f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.65f, 0.12f, 0.12f, 1f));
+        if (ImGui.Button($"Delete {_selected.Count} item(s)", new Vector2(-1, 0)))
+            ImGui.OpenPopup(BulkDeletePopup);
+        ImGui.PopStyleColor(2);
+
+        DrawBulkDeleteConfirm();
+    }
+
+    /// <summary>
+    /// Add or remove one tag across the selection.
+    /// </summary>
+    /// <remarks>
+    /// Add and remove rather than "set": replacing the tag list would silently discard whatever
+    /// each item had of its own, which is exactly the kind of loss a bulk action must never cause.
+    /// </remarks>
+    private void DrawBulkTagActions()
+    {
+        var known = _config.WardrobeItems
+            .SelectMany(i => i.Tags)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        ImGui.TextUnformatted("Tags");
+        ImGui.TextDisabled("Added to or removed from every selected item. Tags an item already " +
+                           "has, and tags you are not naming here, are left alone.");
+        ImGui.Spacing();
+
+        // Existing tags, so a bulk apply cannot quietly invent a near-duplicate of one already in use
+        var pickW = known.Count > 0 ? 28f : 0f;
+        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - pickW
+                               - (known.Count > 0 ? ImGui.GetStyle().ItemSpacing.X : 0f));
+        ImGui.InputTextWithHint("##bulkTag", "tag name", ref _bulkTag, 64);
+
+        if (known.Count > 0)
+        {
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(pickW);
+            if (ImGui.BeginCombo("##bulkTagPick", string.Empty, ImGuiComboFlags.NoPreview))
+            {
+                foreach (var knownTag in known)
+                    if (ImGui.Selectable(knownTag)) _bulkTag = knownTag;
+                ImGui.EndCombo();
+            }
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Pick a tag already in use");
+        }
+
+        var tag      = _bulkTag.Trim();
+        var disabled = tag.Length == 0;
+
+        ImGui.Spacing();
+        if (disabled) ImGui.BeginDisabled();
+
+        var btnW = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemSpacing.X) / 2;
+        if (ImGui.Button("Add Tag", new Vector2(btnW, 0)))    ApplyBulkTag(tag, add: true);
+        ImGui.SameLine();
+        if (ImGui.Button("Remove Tag", new Vector2(btnW, 0))) ApplyBulkTag(tag, add: false);
+
+        if (disabled) ImGui.EndDisabled();
+    }
+
+    private void ApplyBulkTag(string tag, bool add)
+    {
+        var changed = 0;
+
+        foreach (var item in SelectedItems())
+        {
+            if (add)
+            {
+                if (item.Tags.Any(t => t.Equals(tag, StringComparison.OrdinalIgnoreCase))) continue;
+                item.Tags.Add(tag);
+                changed++;
+            }
+            else
+            {
+                changed += item.Tags.RemoveAll(t => t.Equals(tag, StringComparison.OrdinalIgnoreCase)) > 0 ? 1 : 0;
+            }
+        }
+
+        if (changed > 0) _config.Save();
+
+        _log.Information($"[Wardrobe] Bulk tag: {(add ? "added" : "removed")} '{tag}' " +
+                         $"on {changed} of {_selected.Count} selected item(s)");
+
+        // Says nothing changed rather than claiming a count, so applying a tag everything already
+        // has does not read as having done something
+        _bulkStatus = changed == 0
+            ? "No items changed."
+            : $"{(add ? "Tagged" : "Untagged")} {changed} item(s).";
+
+        // The selection survives, so several tags can be applied to the same set in a row
     }
 
     /// <summary>
@@ -1592,6 +2042,19 @@ public class PluginUi : Window, IDisposable
         var items = query.ToList();
         _visibleCount = items.Count;
 
+        // What Select All acts on. Recorded even when select mode is off, so turning it on and
+        // pressing Select All immediately does not act on a stale list from whenever it was last on.
+        _lastVisibleIds.Clear();
+        _lastVisibleIds.AddRange(items.Select(i => i.Id));
+
+        // Deleted items must not linger in the selection and reappear in a later bulk action.
+        // Only while selecting, and against a set rather than a scan per id: this runs every frame.
+        if (_selectMode && _selected.Count > 0)
+        {
+            var live = _config.WardrobeItems.Select(i => i.Id).ToHashSet();
+            _selected.RemoveWhere(id => !live.Contains(id));
+        }
+
         if (items.Count == 0)
         {
             ImGui.Spacing();
@@ -1777,6 +2240,18 @@ public class PluginUi : Window, IDisposable
         if (item.Tags.Count > 0 && ImGui.IsItemHovered())
             ImGui.SetTooltip(string.Join("  ", item.Tags.Select(t => $"#{t}")));
 
+        // In select mode the tick box takes the button row's place rather than being added below it.
+        // Same card height, so entering the mode does not reflow the grid, and the delete button is
+        // not on screen to be hit by mistake while clicking through dozens of cards.
+        if (_selectMode)
+        {
+            DrawCardSelector(item);
+            ImGui.EndChild();
+            ImGui.PopStyleColor(2);
+            ImGui.PopID();
+            return;
+        }
+
         // Buttons
         var btnW = (CardWidth - CardPad * 2 - 6) / 2;
 
@@ -1822,6 +2297,38 @@ public class PluginUi : Window, IDisposable
         ImGui.EndChild();
         ImGui.PopStyleColor(2);
         ImGui.PopID();
+    }
+
+    /// <summary>
+    /// The select-mode row: a tick box, plus the whole card as a click target for it.
+    /// </summary>
+    /// <remarks>
+    /// The card body counts because ticking forty items through a 20px box each time is miserable,
+    /// and nothing on the body is otherwise clickable — the image, name and badges are plain text.
+    /// The favourite heart stays live, so it is excluded along with the tick box itself by ignoring
+    /// clicks that landed on any widget.
+    /// </remarks>
+    private void DrawCardSelector(WardrobeItem item)
+    {
+        var selected = _selected.Contains(item.Id);
+
+        if (ImGui.Checkbox("##pick", ref selected))
+            Select(item.Id, selected);
+
+        ImGui.SameLine();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextDisabled(selected ? "Selected" : "Select");
+
+        if (ImGui.IsWindowHovered() && !ImGui.IsAnyItemHovered() &&
+            ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            Select(item.Id, !selected);
+    }
+
+    private void Select(Guid id, bool on)
+    {
+        if (on) _selected.Add(id);
+        else    _selected.Remove(id);
+        _bulkStatus = string.Empty;
     }
 
     private unsafe void DrawItemImage(WardrobeItem item)
