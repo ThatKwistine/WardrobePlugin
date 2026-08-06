@@ -62,7 +62,7 @@ Updates then arrive through the normal plugin installer like any other plugin.
 
 ## Getting started
 
-Open the wardrobe with `/wardrobe` or the plugin icon. On a fresh install you get a short setup for
+Open the wardrobe with `/wardrobe` (or `/wr`) or the plugin icon. On a fresh install you get a short setup for
 the settings that cause the most trouble when left unset — your Penumbra collection and your image
 folders. All of it is skippable and editable later.
 
@@ -91,6 +91,8 @@ Then open **Images** in the toolbar and drag a picture onto the new card — or 
 | `/wardrobe` | Open the wardrobe window |
 | `/wardrobe wear <name>` | Wear an item by exact name (case-insensitive) |
 | `/wardrobe unequip` | Unequip all currently worn items |
+
+`/wr` is a shorthand for `/wardrobe` and takes the same arguments.
 
 ---
 

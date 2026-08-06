@@ -62,6 +62,10 @@ public class PluginUi : Window, IDisposable
     private bool _compactOverride;
     private bool _wasCompact;
 
+    // The size the window had the last time it drew expanded, so leaving compact mode puts it back
+    // where the user left it rather than at the default.
+    private Vector2? _lastExpandedSize;
+
     // Right panel mode
     private bool _showImageBrowser;
     private bool _showSettings;
@@ -125,6 +129,9 @@ public class PluginUi : Window, IDisposable
     private const float OutfitCardWidth  = 280f;
     private const float OutfitCardHeight = 400f;
 
+    private static readonly Vector2 DefaultSize = new(1000, 700);
+    private static readonly Vector2 Unbounded   = new(float.MaxValue, float.MaxValue);
+
     public PluginUi(Configuration config, WardrobeService wardrobe,
         ITextureProvider textures, IPluginLog log, ItemImportPanel panel,
         ScreenshotSessionService session, BackupService backup)
@@ -140,10 +147,14 @@ public class PluginUi : Window, IDisposable
         _backup   = backup;
 
 
+        // The window opens at this size and is then free to grow as far as the user drags it
+        Size          = DefaultSize;
+        SizeCondition = ImGuiCond.FirstUseEver;
+
         SizeConstraints = new WindowSizeConstraints
         {
             MinimumSize = new Vector2(480, 360),
-            MaximumSize = new Vector2(1600, 1100),
+            MaximumSize = Unbounded,
         };
     }
 
@@ -160,7 +171,7 @@ public class PluginUi : Window, IDisposable
         if (compact != _wasCompact)
         {
             // Resize only on the transition, so the window stays user-resizable either side of it
-            Size          = compact ? new Vector2(360, 200) : new Vector2(1000, 700);
+            Size          = compact ? new Vector2(360, 200) : _lastExpandedSize ?? DefaultSize;
             SizeCondition = ImGuiCond.Always;
             _wasCompact   = compact;
         }
@@ -178,12 +189,16 @@ public class PluginUi : Window, IDisposable
             : new WindowSizeConstraints
             {
                 MinimumSize = new Vector2(480, 360),
-                MaximumSize = new Vector2(1600, 1100),
+                MaximumSize = Unbounded,
             };
     }
 
     public override void Draw()
     {
+        // Remember the expanded size every frame it is not compact. On the frame we go compact this
+        // is already skipped, so what is kept is the size from before the switch — the user's own.
+        if (!CompactActive) _lastExpandedSize = ImGui.GetWindowSize();
+
         if (!_config.OnboardingCompleted)
         {
             DrawOnboarding();
