@@ -1,0 +1,64 @@
+name: Update download count
+
+# Dalamud renders whatever DownloadCount says in pluginmaster.json; nothing counts anything on its
+# own, so without this the manifest holds whatever number was last written by hand.
+#
+# Weekly rather than daily: the figure moves slowly and every change is a commit on main.
+# workflow_dispatch is here so it can be run on demand — including after GitHub pauses the schedule,
+# which it does automatically once a public repo has gone 60 days without activity.
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sum release asset downloads
+        id: count
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # All three download links point at /releases/latest, so per-release counts only reflect
+          # how long each release spent as the latest one. The sum is the only meaningful figure.
+          #
+          # per_page=100 rather than --paginate: with --paginate, gh applies --jq to each page
+          # separately and would print one subtotal per page instead of one total.
+          total=$(gh api "repos/${{ github.repository }}/releases?per_page=100" \
+                    --jq '[.[].assets[].download_count] | add // 0')
+
+          # A transient API failure must never write a blank or a stray string over a real count
+          if ! [[ "$total" =~ ^[0-9]+$ ]]; then
+            echo "Refusing to write unexpected download total: '$total'" >&2
+            exit 1
+          fi
+
+          echo "total=$total" >> "$GITHUB_OUTPUT"
+          echo "Total downloads: $total"
+
+      - name: Write it into pluginmaster.json
+        run: |
+          # A targeted substitution rather than jq, which would reformat the whole file and lose the
+          # column alignment the manifest is written with.
+          sed -i -E 's/("DownloadCount":[[:space:]]*)[0-9]+/\1${{ steps.count.outputs.total }}/' \
+            pluginmaster.json
+
+      - name: Commit if it changed
+        run: |
+          if git diff --quiet -- pluginmaster.json; then
+            echo "Download count unchanged — nothing to commit."
+            exit 0
+          fi
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pluginmaster.json
+          git commit -m "Update download count to ${{ steps.count.outputs.total }}"
+          git push
