@@ -19,7 +19,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      # v5 and up run on Node 24; v4 targeted Node 20, which the runners now force-upgrade and warn
+      # about. Kept at a major that still defaults persist-credentials to true, since the last step
+      # pushes with the token checkout leaves behind.
+      - uses: actions/checkout@v7
 
       - name: Sum release asset downloads
         id: count
