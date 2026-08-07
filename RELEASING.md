@@ -33,11 +33,35 @@ hosted on GitHub, which friends add to Dalamud themselves.
 
    This produces `bin/Release/net10.0-windows/WardrobePlugin/latest.zip`.
 
-4. Create a GitHub release and attach `latest.zip` as an asset. The download links in
+4. Write the release notes. They **open** with the **Installation** section, copied out of
+   `README.md` word for word — see [Release notes](#release-notes) below.
+5. Create a GitHub release and attach `latest.zip` as an asset. The download links in
    `pluginmaster.json` use `/releases/latest/download/latest.zip`, so they resolve to whatever
    the newest release is and never need editing.
-5. Commit and push the updated `pluginmaster.json`. Dalamud reads it from the branch directly,
+6. Commit and push the updated `pluginmaster.json`. Dalamud reads it from the branch directly,
    so this is the step that actually publishes the update.
+
+## Release notes
+
+**Start with Installation, copied from `README.md`'s `## Installation` section word for word** — the
+numbered `/xlsettings` steps, the fenced `pluginmaster.json` URL, and the closing line about updates
+arriving through the plugin installer.
+
+It goes first, before the list of changes, and it is copied rather than paraphrased. The plugin ships
+through a custom repository rather than the official one, so a release page reaches people who have
+no idea how to install it, and nobody lands on the README from a release link. Copying it verbatim
+keeps the two from drifting into two different sets of instructions — read it out of the README at
+release time rather than writing it from memory, since it is the source of truth and may have
+changed.
+
+Then the changes, under **What's new** and, where there are any, **Fixes**.
+
+Two things to hold to in that part:
+
+- **Only claim what has been seen working.** A fix that is correct in code is not a user-visible
+  improvement until someone has run it. Say what changed, not what it ought to feel like.
+- **Never name whoever reported something.** Credit and thanks belong in the issue thread, not in the
+  notes.
 
 ## Notes
 
