@@ -46,22 +46,40 @@ jobs:
           echo "total=$total" >> "$GITHUB_OUTPUT"
           echo "Total downloads: $total"
 
-      - name: Write it into pluginmaster.json
+      - name: Write it into pluginmaster.json and push
+        env:
+          TOTAL: ${{ steps.count.outputs.total }}
         run: |
-          # A targeted substitution rather than jq, which would reformat the whole file and lose the
-          # column alignment the manifest is written with.
-          sed -i -E 's/("DownloadCount":[[:space:]]*)[0-9]+/\1${{ steps.count.outputs.total }}/' \
-            pluginmaster.json
-
-      - name: Commit if it changed
-        run: |
-          if git diff --quiet -- pluginmaster.json; then
-            echo "Download count unchanged — nothing to commit."
-            exit 0
-          fi
-
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pluginmaster.json
-          git commit -m "Update download count to ${{ steps.count.outputs.total }}"
-          git push
+
+          # main can move between checkout and push — a release, a fix, anything — and the push is
+          # then rejected. Rather than rebasing a commit that is already written, start again from
+          # whatever is now on the remote and redo the one-line edit on top of it. No rebase means
+          # no conflict is possible, so a busy repo cannot fail this job.
+          for attempt in 1 2 3; do
+            git fetch --quiet origin main
+            git reset --quiet --hard origin/main   # safe: a CI working tree holds nothing of value
+
+            # A targeted substitution rather than jq, which would reformat the whole file and lose
+            # the column alignment the manifest is written with.
+            sed -i -E 's/("DownloadCount":[[:space:]]*)[0-9]+/\1'"$TOTAL"'/' pluginmaster.json
+
+            if git diff --quiet -- pluginmaster.json; then
+              echo "Download count already reads $TOTAL — nothing to commit."
+              exit 0
+            fi
+
+            git add pluginmaster.json
+            git commit --quiet -m "Update download count to $TOTAL"
+
+            if git push; then
+              echo "Pushed download count $TOTAL."
+              exit 0
+            fi
+
+            echo "Push rejected — main moved. Retrying ($attempt of 3)."
+          done
+
+          echo "Could not push after 3 attempts." >&2
+          exit 1
