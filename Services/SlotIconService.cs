@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
@@ -5,6 +6,7 @@ using Dalamud.Interface;
 using Dalamud.Interface.Textures;
 using Dalamud.Plugin.Services;
 using WardrobePlugin.Models;
+using WardrobePlugin.Ui;
 
 namespace WardrobePlugin.Services;
 
@@ -62,8 +64,31 @@ public class SlotIconService
         { EquipSlot.Mount,     FontAwesomeIcon.Horse },
     };
 
-    /// <summary>The square edge length icons are drawn at, scaled for the current font size.</summary>
-    public static float ScaledSize => IconSize * ImGui.GetIO().FontGlobalScale;
+    /// <summary>Bounds on the size multipliers, so a stored value cannot make icons invisible or
+    /// large enough to swallow the window.</summary>
+    public const float MinScale = 0.5f;
+    public const float MaxScale = 3f;
+
+    /// <summary>The size icons are drawn at with no user scaling — the baseline the rest measure from.</summary>
+    /// <remarks>
+    /// Scaled with the rest of the layout, so an icon keeps its proportion to the text beside it at
+    /// any Global Font Scale. See <see cref="Ui.UiScale"/> for what the factor is tied to.
+    /// </remarks>
+    public static float BaseScaledSize => UiScale.S(IconSize);
+
+    /// <summary>Edge length for icons drawn on item cards and inline.</summary>
+    public float ScaledSize => BaseScaledSize * Math.Clamp(_config.SlotIconScale, MinScale, MaxScale);
+
+    /// <summary>
+    /// Edge length for the slot filter row, which is sized separately.
+    /// </summary>
+    /// <remarks>
+    /// The row and the cards want opposite things: the row is a fixed width with as many slots on it
+    /// as will fit, so smaller icons mean fewer spill into the More dropdown, while a card has one
+    /// icon and only legibility to care about. One slider for both would trade them off against each
+    /// other for no reason.
+    /// </remarks>
+    public float ScaledRowSize => BaseScaledSize * Math.Clamp(_config.SlotIconRowScale, MinScale, MaxScale);
 
     /// <summary>
     /// Texture handle for this slot's game icon, if game icons are selected and one is loaded.
@@ -101,11 +126,12 @@ public class SlotIconService
     /// Draws the icon for a slot inline, into a fixed square. Returns false if nothing could be
     /// drawn, so callers can fall back to the slot name.
     /// </summary>
-    public bool Draw(EquipSlot slot)
+    public bool Draw(EquipSlot slot) => Draw(slot, ScaledSize);
+
+    /// <param name="size">Square edge length to draw into, for callers with their own sizing.</param>
+    public bool Draw(EquipSlot slot, float size)
     {
         if (!Enabled) return false;
-
-        var size = ScaledSize;
 
         if (TryGetGameIcon(slot, out var handle))
         {

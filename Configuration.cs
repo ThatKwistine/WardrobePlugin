@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using Dalamud.Configuration;
 using WardrobePlugin.Models;
@@ -32,6 +33,52 @@ public class Configuration : IPluginConfiguration
 
     /// <summary>Slot name (EquipSlot.ToString()) → currently worn WardrobeItem ID.</summary>
     public Dictionary<string, Guid>   WornItems     { get; set; } = new();
+
+    /// <summary>
+    /// Tags created before anything has them, so a scheme can be laid out ahead of tagging.
+    /// </summary>
+    /// <remarks>
+    /// Only a registry of names. Tags on items are the real record and need no entry here — this
+    /// exists purely so a tag with no items yet still appears in the pickers and the filter tree,
+    /// which are otherwise built by scanning what items already carry. Deleting an entry removes the
+    /// name from that list and nothing else; a tag any item holds survives it.
+    /// </remarks>
+    public List<string> DefinedTags { get; set; } = new();
+
+    /// <summary>
+    /// Variant groups the user has expanded, keyed on the original item's id. Everything else is
+    /// drawn folded.
+    /// </summary>
+    /// <remarks>
+    /// Expanded rather than collapsed is the stored state so a group that has never been touched
+    /// starts folded, which is the point of grouping — a wardrobe of colour variants opens as one
+    /// card each. An id whose item is gone is simply never matched, so stale entries are harmless.
+    /// </remarks>
+    public HashSet<string> ExpandedVariantGroups { get; set; } = new();
+
+    /// <summary>How <c>Create variant of this item</c> names the copy it makes.</summary>
+    /// <remarks>
+    /// Defaults to the style variants have always used, so an existing wardrobe carries on naming
+    /// them the way it already has. Only ever a starting point — the copy opens for editing, and the
+    /// name is the first field in it.
+    /// </remarks>
+    public VariantNameStyle VariantNameStyle { get; set; } = VariantNameStyle.Suffix;
+
+    /// <summary>Whether variants are folded into their original at all.</summary>
+    /// <remarks>
+    /// The way out for anyone who does not want the grouping, and the way to see everything at once
+    /// without expanding each group in turn. Off means every item gets its own card, exactly as
+    /// before variants were grouped.
+    /// </remarks>
+    public bool GroupVariants { get; set; } = true;
+
+    /// <summary>Every tag the wardrobe knows: those on items, plus those created ahead of use.</summary>
+    public List<string> AllTags() =>
+        WardrobeItems.SelectMany(i => i.Tags)
+            .Concat(DefinedTags)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
     /// <summary>Folder on disk containing wardrobe item images, shown in the image browser.</summary>
     public string ImagesFolder { get; set; } = string.Empty;
@@ -80,6 +127,17 @@ public class Configuration : IPluginConfiguration
 
     /// <summary>Which icon set to use when <see cref="SlotIconsEnabled"/> is on.</summary>
     public SlotIconStyle SlotIconStyle { get; set; } = SlotIconStyle.GameIcons;
+
+    /// <summary>Size multiplier for slot icons on item cards. 1 is the original fixed size.</summary>
+    /// <remarks>
+    /// Item cards grow taller to match, so a larger icon pushes nothing off the bottom of a card.
+    /// Clamped on read by <see cref="Services.SlotIconService"/> rather than on write, so a value
+    /// hand-edited into the config file cannot break the layout.
+    /// </remarks>
+    public float SlotIconScale { get; set; } = 1f;
+
+    /// <summary>Size multiplier for slot icons on the filter row, separate from the cards.</summary>
+    public float SlotIconRowScale { get; set; } = 1f;
 
     /// <summary>Ordering applied to the item grid.</summary>
     public ItemSortMode SortMode { get; set; } = ItemSortMode.NameAsc;
@@ -224,6 +282,51 @@ public class Configuration : IPluginConfiguration
             WardrobeItems[i].DateAdded = epoch.AddSeconds(i);
             changed = true;
         }
+        return changed;
+    }
+
+    /// <summary>
+    /// Groups items saved before <see cref="WardrobeItem.VariantOfId"/> existed, by inferring which
+    /// are variants of which. Returns true if anything changed.
+    /// </summary>
+    /// <remarks>
+    /// Runs once — any item already carrying a <c>VariantOfId</c> means the wardrobe has been
+    /// through this, so a group the user has since broken apart by hand is not silently reassembled
+    /// on the next launch.
+    /// <para>
+    /// The rule is the one the Variants feature has always described: items in the same slot backed
+    /// by exactly the same mods are the same piece in different options. It is a guess, and it is
+    /// the only one available for items that never recorded where they came from — so the earliest
+    /// by <see cref="WardrobeItem.DateAdded"/> is taken as the original, matching the order they
+    /// were actually created in, and the edit panel can detach anything it gets wrong.
+    /// </para>
+    /// <para>
+    /// Items with no mods are left alone: their signature is empty, and grouping every such item
+    /// together would fold unrelated things into one card.
+    /// </para>
+    /// </remarks>
+    public bool MigrateVariantGroups()
+    {
+        if (WardrobeItems.Any(i => i.VariantOfId.HasValue)) return false;
+
+        var changed = false;
+
+        var groups = WardrobeItems
+            .Where(i => i.ModSignature().Length > 0)
+            .GroupBy(i => $"{i.Slot}\n{i.ModSignature()}");
+
+        foreach (var group in groups)
+        {
+            var members = group.OrderBy(i => i.DateAdded).ToList();
+            if (members.Count < 2) continue;
+
+            foreach (var variant in members.Skip(1))
+            {
+                variant.VariantOfId = members[0].Id;
+                changed = true;
+            }
+        }
+
         return changed;
     }
 

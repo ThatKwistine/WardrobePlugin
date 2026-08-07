@@ -45,6 +45,15 @@ public class PluginUi : Window, IDisposable
     // Tag filter: empty = show all
     private readonly HashSet<string> _tagFilter = new();
 
+    // Make-a-tag box in the Tags panel, and what the last attempt did
+    private string _newTag       = string.Empty;
+    private string _newTagStatus = string.Empty;
+
+    // Per original item: how many of its variants the grid is showing, and how many it folded away.
+    // Rebuilt every frame by FoldVariants from what the filters left, so it always describes what is
+    // actually on screen rather than the whole wardrobe.
+    private readonly Dictionary<Guid, (int Total, int Hidden)> _variantCounts = new();
+
     // Free-text search: empty = show all. Deliberately not persisted.
     private string _search = string.Empty;
 
@@ -53,6 +62,9 @@ public class PluginUi : Window, IDisposable
 
     // Worn-only filter: items the wardrobe has on, plus anything the last scan found enabled
     private bool _wornOnly;
+
+    // Variant-group filter: show only pieces that exist in more than one version
+    private bool _variantsOnly;
 
     // Items the grid drew last frame, for the toolbar count. The toolbar draws before the grid,
     // so this trails by one frame — imperceptible, and avoids running the filters twice.
@@ -78,7 +90,7 @@ public class PluginUi : Window, IDisposable
     private readonly List<Guid> _lastVisibleIds = new();
 
     // Bulk tag entry
-    private string _bulkTag = string.Empty;
+    private string _bulkTag    = string.Empty;
     private string _bulkStatus = string.Empty;
 
     /// <summary>
@@ -167,16 +179,37 @@ public class PluginUi : Window, IDisposable
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
         { ".png", ".jpg", ".jpeg", ".bmp", ".tga", ".webp" };
 
-    private const float CardWidth   = 180f;
-    private const float CardPad     = 10f;
-    private const float ThumbSize   = CardWidth - CardPad * 2; // 160 — square thumbnail
-    private const float CardHeight  = 280f;
+    // Design pixels, at Dalamud's default text size. Everything below reads them through UiScale,
+    // so a larger text setting grows the cards with the text rather than clipping it.
+    private const float BaseCardWidth  = 180f;
+    private const float BaseCardPad    = 10f;
+    private const float BaseCardHeight = 280f;
+
+    private static float CardWidth => UiScale.S(BaseCardWidth);
+    private static float CardPad   => UiScale.S(BaseCardPad);
+    private static float ThumbSize => CardWidth - CardPad * 2; // square thumbnail
+
+    /// <summary>
+    /// Card height, grown to fit a slot icon larger than the size the card was designed around.
+    /// </summary>
+    /// <remarks>
+    /// The icon sits on the badge row, so scaling it up pushes the button row towards the bottom
+    /// edge — and past it, since a card clips rather than scrolls. Everything that lays the grid out
+    /// reads this, so the rows grow with it and nothing overlaps.
+    /// </remarks>
+    private static float CardHeight =>
+        UiScale.S(BaseCardHeight) + (Plugin.SlotIcons.Enabled
+            ? Math.Max(0f, Plugin.SlotIcons.ScaledSize - SlotIconService.BaseScaledSize)
+            : 0f);
 
     // Outfit previews are full-body shots rather than close-ups, so they get more room by default
-    private const float OutfitCardWidth  = 280f;
-    private const float OutfitCardHeight = 400f;
+    private static float OutfitCardWidth  => UiScale.S(280f);
+    private static float OutfitCardHeight => UiScale.S(400f);
 
+    // Window.Size and Window.SizeConstraints are scaled by Dalamud itself — see IWindow's docs — so
+    // these stay in unscaled units. Putting them through UiScale would scale them twice.
     private static readonly Vector2 DefaultSize = new(1000, 700);
+    private static readonly Vector2 CompactSize = new(360, 200);
     private static readonly Vector2 Unbounded   = new(float.MaxValue, float.MaxValue);
 
     public PluginUi(Configuration config, WardrobeService wardrobe,
@@ -195,15 +228,10 @@ public class PluginUi : Window, IDisposable
         _massImport = massImport;
 
 
-        // The window opens at this size and is then free to grow as far as the user drags it
-        Size          = DefaultSize;
+        // Size and constraints are set in PreDraw rather than here, because both scale with
+        // Dalamud's Global Font Scale and that can be changed while the plugin is running. Read once
+        // in the constructor, the window would keep whatever bounds were right at load.
         SizeCondition = ImGuiCond.FirstUseEver;
-
-        SizeConstraints = new WindowSizeConstraints
-        {
-            MinimumSize = new Vector2(480, 360),
-            MaximumSize = Unbounded,
-        };
     }
 
     /// <summary>True while the main window should render as a compact session view.</summary>
@@ -212,19 +240,39 @@ public class PluginUi : Window, IDisposable
 
     public override void PreDraw()
     {
+        FontScope.Push(ref _fontScope);
+
         // Forget any manual expand once the session is over
         if (_session.State == SessionState.Idle) _compactOverride = false;
 
         var compact = CompactActive;
-        if (compact != _wasCompact)
+
+        // Global Font Scale changed — carry the window's size with it, in both directions.
+        //
+        // Growing happens on its own whether we like it or not: MinimumSize is scaled, so at 300%
+        // the window is forced out to at least 1440x1080. Shrinking does not, because a smaller
+        // minimum only *permits* a smaller window, it does not resize one — so without this, scaling
+        // up and back down left the window stranded at its enlarged size.
+        //
+        // No arithmetic on the size itself: _lastExpandedSize is kept in unscaled units, and Dalamud
+        // multiplies Size by the current scale on the way out. Scaling it here as well is what blew
+        // the window up to tens of thousands of pixels, compounding on every change.
+        var factor  = UiScale.Factor;
+        var rescale = _lastScaleFactor > 0f && MathF.Abs(factor - _lastScaleFactor) > 0.001f;
+        _lastScaleFactor = factor;
+
+        if (compact != _wasCompact || rescale)
         {
-            // Resize only on the transition, so the window stays user-resizable either side of it
-            Size          = compact ? new Vector2(360, 200) : _lastExpandedSize ?? DefaultSize;
+            // Resize only on a transition or a scale change, so the window stays user-resizable
+            // either side of both
+            Size          = compact ? CompactSize : _lastExpandedSize ?? DefaultSize;
             SizeCondition = ImGuiCond.Always;
             _wasCompact   = compact;
         }
         else
         {
+            // FirstUseEver, so this only lands on the very first frame and never fights a resize
+            Size          = _lastExpandedSize ?? DefaultSize;
             SizeCondition = ImGuiCond.FirstUseEver;
         }
 
@@ -241,11 +289,24 @@ public class PluginUi : Window, IDisposable
             };
     }
 
+    public override void PostDraw() => FontScope.Pop(ref _fontScope);
+
+    /// <summary>Held between <see cref="PreDraw"/> and <see cref="PostDraw"/>. See <see cref="FontScope"/>.</summary>
+    private IDisposable? _fontScope;
+
+    /// <summary>Last <see cref="UiScale.Factor"/> seen, to spot the setting being changed.</summary>
+    private float _lastScaleFactor;
+
     public override void Draw()
     {
         // Remember the expanded size every frame it is not compact. On the frame we go compact this
         // is already skipped, so what is kept is the size from before the switch — the user's own.
-        if (!CompactActive) _lastExpandedSize = ImGui.GetWindowSize();
+        //
+        // Divided back out of the current scale, because GetWindowSize reports real pixels while
+        // Size is in the unscaled units Dalamud multiplies up. Storing pixels and handing them back
+        // as Size is a feedback loop that multiplies the window by the scale on every frame it is
+        // applied.
+        if (!CompactActive) _lastExpandedSize = ImGui.GetWindowSize() / UiScale.Factor;
 
         if (!_config.OnboardingCompleted)
         {
@@ -274,12 +335,14 @@ public class PluginUi : Window, IDisposable
         var totalH  = ImGui.GetContentRegionAvail().Y;
         var rightOpen = _panel.IsOpen || _showImageBrowser || _showSettings || _showTags
                         || _editingOutfit != null || (_selectMode && _bulkPanelOpen);
-        var panelW    = rightOpen ? 360f : 0f;
+        var panelW    = rightOpen ? UiScale.S(360f) : 0f;
         var gridW     = totalW - panelW - (rightOpen ? 8f : 0f);
+
 
         // ── Left: sticky header + scrolling grid only ─────────────────────────
         ImGui.BeginChild("##leftOuter", new Vector2(gridW, totalH), false,
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
+
 
         UiLayout.PushWrap();
         DrawToolbar();
@@ -306,6 +369,7 @@ public class PluginUi : Window, IDisposable
             ImGui.SameLine();
             ImGui.BeginChild("##rightPanel", new Vector2(panelW, totalH), true,
                 ImGuiWindowFlags.AlwaysVerticalScrollbar);
+
 
             UiLayout.PushWrap();
 
@@ -374,19 +438,19 @@ public class PluginUi : Window, IDisposable
 
         if (_onboardStep > 0)
         {
-            if (ImGui.Button("Back", new Vector2(90, 0))) _onboardStep--;
+            if (ImGui.Button("Back", UiScale.S(90, 0))) _onboardStep--;
             ImGui.SameLine();
         }
 
         if (_onboardStep < OnboardLastStep)
         {
-            if (ImGui.Button("Next", new Vector2(90, 0))) _onboardStep++;
+            if (ImGui.Button("Next", UiScale.S(90, 0))) _onboardStep++;
         }
         else
         {
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.13f, 0.38f, 0.13f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.18f, 0.55f, 0.18f, 1f));
-            if (ImGui.Button("Finish", new Vector2(90, 0)))
+            if (ImGui.Button("Finish", UiScale.S(90, 0)))
             {
                 _config.OnboardingCompleted = true;
                 _config.Save();
@@ -505,7 +569,7 @@ public class PluginUi : Window, IDisposable
             if (found >= 0) curIdx = found;
         }
 
-        ImGui.SetNextItemWidth(300);
+        ImGui.SetNextItemWidth(UiScale.S(300));
         if (ImGui.BeginCombo("##onboardColl", names[curIdx]))
         {
             for (var i = 0; i < names.Length; i++)
@@ -826,6 +890,11 @@ public class PluginUi : Window, IDisposable
         {
             _showImageBrowser = false;
             _showSettings     = false;
+
+            // Whatever the last visit ended on has been read by now, and would otherwise reappear
+            // as if something had just happened
+            _newTag       = string.Empty;
+            _newTagStatus = string.Empty;
         });
 
 
@@ -1267,7 +1336,7 @@ public class PluginUi : Window, IDisposable
 
         ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.55f, 0.08f, 0.08f, 1f));
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.75f, 0.15f, 0.15f, 1f));
-        if (ImGui.Button($" Delete {items.Count} ", new Vector2(140, 0)))
+        if (ImGui.Button($" Delete {items.Count} ", UiScale.S(140, 0)))
         {
             ApplyBulkDelete(items);
             ImGui.CloseCurrentPopup();
@@ -1275,7 +1344,7 @@ public class PluginUi : Window, IDisposable
         ImGui.PopStyleColor(2);
 
         ImGui.SameLine();
-        if (ImGui.Button(" Cancel ", new Vector2(120, 0)))
+        if (ImGui.Button(" Cancel ", UiScale.S(120, 0)))
             ImGui.CloseCurrentPopup();
 
         ImGui.EndPopup();
@@ -1287,6 +1356,8 @@ public class PluginUi : Window, IDisposable
         {
             // save: false — one write at the end rather than one per item
             if (_wardrobe.IsItemWorn(item)) _wardrobe.UnwearItem(item, save: false);
+            _wardrobe.ForgetLinksTo(item.Id);
+            _wardrobe.ReparentVariantsOf(item);
             _config.WardrobeItems.Remove(item);
             _imageCache.Remove(item.Id);
         }
@@ -1325,6 +1396,12 @@ public class PluginUi : Window, IDisposable
             ImGui.TextDisabled("Nothing selected. Tick some items in the grid.");
             return;
         }
+
+        DrawBulkLinkActions();
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
 
         DrawBulkTagActions();
 
@@ -1369,6 +1446,111 @@ public class PluginUi : Window, IDisposable
     }
 
     /// <summary>
+    /// Link every item in the selection to every other, or break those links again.
+    /// </summary>
+    /// <remarks>
+    /// Every pair rather than a chain, because links are followed one hop only: a chain would leave
+    /// the ends unable to reach each other, so wearing the middle piece would bring the set and
+    /// wearing an end would bring one item. Pairing them all makes any member wear the whole set.
+    /// Two items in one slot cannot be linked and are reported rather than silently dropped —
+    /// selecting a row of tops and pressing Link is an easy mistake, and one that would otherwise
+    /// look like the button had done nothing.
+    /// </remarks>
+    private void DrawBulkLinkActions()
+    {
+        var items = SelectedItems();
+
+        ImGui.TextUnformatted("Linked items");
+        ImGui.TextDisabled("Linked items are worn and taken off together. Each card keeps a button " +
+                           "for using just that one.");
+        ImGui.Spacing();
+
+        var tooFew = items.Count < 2;
+        if (tooFew) ImGui.BeginDisabled();
+
+        var btnW = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemSpacing.X) / 2;
+        if (ImGui.Button("Link", new Vector2(btnW, 0)))   ApplyBulkLink(items, link: true);
+        ImGui.SameLine();
+        if (ImGui.Button("Unlink", new Vector2(btnW, 0))) ApplyBulkLink(items, link: false);
+
+        if (tooFew) ImGui.EndDisabled();
+
+        // AllowWhenDisabled, or the one tooltip that explains why the buttons are greyed out would
+        // be the one tooltip ImGui refuses to show
+        if (tooFew && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip("Tick at least two items.");
+
+        // Unlink above only undoes links *within* the selection, which cannot reach a partner that
+        // is no longer ticked. This is the way out of that.
+        if (ImGui.SmallButton("Clear every link on these items"))
+            ApplyClearLinks(items);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Unlinks the selected items from everything, including items\n" +
+                             "that are not selected. The items themselves are kept.");
+    }
+
+    private void ApplyBulkLink(List<WardrobeItem> items, bool link)
+    {
+        var changed = 0;
+        var refused = new List<string>();
+
+        for (var i = 0; i < items.Count; i++)
+        for (var j = i + 1; j < items.Count; j++)
+        {
+            if (link)
+            {
+                if (WardrobeService.AreLinked(items[i], items[j])) continue;
+                if (_wardrobe.Link(items[i], items[j], out var refusal)) changed++;
+                else if (refusal != null) refused.Add($"{items[i].Name} + {items[j].Name}");
+            }
+            else if (_wardrobe.Unlink(items[i], items[j]))
+            {
+                changed++;
+            }
+        }
+
+        if (changed > 0) _config.Save();
+
+        _log.Information($"[Wardrobe] Bulk link: {(link ? "linked" : "unlinked")} {changed} pair(s) " +
+                         $"across {items.Count} selected item(s)"
+                       + (refused.Count > 0 ? $"; refused: {string.Join(", ", refused)}" : string.Empty));
+
+        if (changed == 0 && refused.Count == 0)
+            _bulkStatus = link ? "Already linked." : "None of these were linked.";
+        else
+            _bulkStatus = $"{(link ? "Linked" : "Unlinked")} {changed} pair(s)."
+                        + (refused.Count > 0
+                            ? $" {refused.Count} pair(s) share a slot and cannot be linked — " +
+                              "wearing one would take the other off."
+                            : string.Empty);
+    }
+
+    private void ApplyClearLinks(List<WardrobeItem> items)
+    {
+        // Counted up front: two selected items linked to each other are cleared by whichever is
+        // reached first, and the second would otherwise look untouched and go unreported
+        var changed = items.Count(i => i.LinkedItemIds.Count > 0);
+
+        foreach (var item in items)
+        {
+            if (item.LinkedItemIds.Count == 0) continue;
+
+            // Both sides, so the partners left behind are not still pointing here
+            foreach (var partner in _wardrobe.ResolveLinks(item))
+                partner.LinkedItemIds.Remove(item.Id);
+
+            item.LinkedItemIds.Clear();
+        }
+
+        if (changed > 0) _config.Save();
+        _log.Information($"[Wardrobe] Bulk link: cleared all links on {changed} item(s)");
+
+        _bulkStatus = changed == 0
+            ? "None of these had links."
+            : $"Cleared every link on {changed} item(s).";
+    }
+
+    /// <summary>
     /// Add or remove one tag across the selection.
     /// </summary>
     /// <remarks>
@@ -1377,34 +1559,24 @@ public class PluginUi : Window, IDisposable
     /// </remarks>
     private void DrawBulkTagActions()
     {
-        var known = _config.WardrobeItems
-            .SelectMany(i => i.Tags)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        // Pre-made tags included: applying one to a batch here is the main reason to make it early
+        var known = _config.AllTags();
 
         ImGui.TextUnformatted("Tags");
         ImGui.TextDisabled("Added to or removed from every selected item. Tags an item already " +
                            "has, and tags you are not naming here, are left alone.");
         ImGui.Spacing();
 
-        // Existing tags, so a bulk apply cannot quietly invent a near-duplicate of one already in use
-        var pickW = known.Count > 0 ? 28f : 0f;
-        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - pickW
-                               - (known.Count > 0 ? ImGui.GetStyle().ItemSpacing.X : 0f));
+        ImGui.SetNextItemWidth(-1);
         ImGui.InputTextWithHint("##bulkTag", "tag name", ref _bulkTag, 64);
 
+        // Browsing beats a flat list: tags are nested, so the tree is both the shortest route to a
+        // deep one and the only view that shows what already exists under a heading before a
+        // near-duplicate is typed in beside it
         if (known.Count > 0)
         {
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(pickW);
-            if (ImGui.BeginCombo("##bulkTagPick", string.Empty, ImGuiComboFlags.NoPreview))
-            {
-                foreach (var knownTag in known)
-                    if (ImGui.Selectable(knownTag)) _bulkTag = knownTag;
-                ImGui.EndCombo();
-            }
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Pick a tag already in use");
+            ImGui.Spacing();
+            DrawBulkTagTree();
         }
 
         var tag      = _bulkTag.Trim();
@@ -1419,6 +1591,37 @@ public class PluginUi : Window, IDisposable
         if (ImGui.Button("Remove Tag", new Vector2(btnW, 0))) ApplyBulkTag(tag, add: false);
 
         if (disabled) ImGui.EndDisabled();
+    }
+
+    /// <summary>
+    /// The tag tree, inline in the selection panel, for picking a tag to apply to the selection.
+    /// </summary>
+    /// <remarks>
+    /// The same shape as the Tags panel's filter tree, so tags are chosen the way they are
+    /// organised rather than out of a flat alphabetical list where <c>Shoes/Heels/Pumps</c> and
+    /// <c>Shoes/Boots/Ankle</c> sit apart from each other. Branches collapse, which is what keeps it
+    /// usable once there are a hundred tags — a flat list only gets longer.
+    /// <para>
+    /// A scrolling box of its own rather than part of the panel's flow: the panel below it is fixed
+    /// content ending in Delete, and a tree that grew with the tag list would push that around.
+    /// </para>
+    /// </remarks>
+    private void DrawBulkTagTree()
+    {
+        var height = ImGui.GetTextLineHeightWithSpacing() * 12;
+
+        // EndChild unconditionally — it is required even when BeginChild returns false
+        if (ImGui.BeginChild("##bulkTagTree", new Vector2(-1, height), true))
+            TagTree.DrawPicker(TagTree.Build(_config), "bulkpick",
+                path => _bulkTag.Trim().Equals(path, StringComparison.OrdinalIgnoreCase),
+                path =>
+                {
+                    _bulkTag    = path;
+                    _bulkStatus = string.Empty;
+                });
+        ImGui.EndChild();
+
+        ImGui.TextDisabled("Click a tag to put it in the box above. Greyed tags have no items yet.");
     }
 
     private void ApplyBulkTag(string tag, bool add)
@@ -1510,16 +1713,16 @@ public class PluginUi : Window, IDisposable
     /// Below this much room, the bar stops reserving space for the search and sort controls and
     /// takes the whole row — a couple of slot buttons squeezed against them helps nobody.
     /// </summary>
-    private const float MinSlotRunWidth = 180f;
+    private static float MinSlotRunWidth => UiScale.S(180f);
 
-    private const float SearchBoxWidth = 200f;
-    private const float SortBoxWidth   = 150f;
+    private static float SearchBoxWidth => UiScale.S(200f);
+    private static float SortBoxWidth   => UiScale.S(150f);
 
     /// <summary>
     /// Spare room a slot button needs before it is promoted out of the More dropdown, so the bar
     /// settles instead of flickering while the window is being dragged.
     /// </summary>
-    private const float PromoteSlack = 24f;
+    private static float PromoteSlack => UiScale.S(24f);
 
     /// <summary>
     /// Slot buttons currently on the bar. Kept across frames because the split has hysteresis —
@@ -1552,7 +1755,7 @@ public class PluginUi : Window, IDisposable
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.42f, 0.3f, 0.62f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.52f, 0.38f, 0.74f, 1f));
         }
-        if (ImGui.Button("Outfits")) _outfitsView = !_outfitsView;
+        if (ImGui.Button("Outfits", FilterRowButton("Outfits"))) _outfitsView = !_outfitsView;
         var outfitsHovered = ImGui.IsItemHovered();
         if (outfitsActive) ImGui.PopStyleColor(2);
         if (outfitsHovered)
@@ -1574,7 +1777,7 @@ public class PluginUi : Window, IDisposable
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.55f, 0.15f, 0.28f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.72f, 0.2f, 0.36f, 1f));
         }
-        if (ImGui.Button("♥")) _favoritesOnly = !_favoritesOnly;
+        if (ImGui.Button("♥", FilterRowButton("♥"))) _favoritesOnly = !_favoritesOnly;
         var favHovered = ImGui.IsItemHovered();
         if (favActive) ImGui.PopStyleColor(2);
 
@@ -1590,7 +1793,7 @@ public class PluginUi : Window, IDisposable
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.13f, 0.45f, 0.35f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.18f, 0.60f, 0.46f, 1f));
         }
-        if (ImGui.Button("Worn")) _wornOnly = !_wornOnly;
+        if (ImGui.Button("Worn", FilterRowButton("Worn"))) _wornOnly = !_wornOnly;
         var wornHovered = ImGui.IsItemHovered();
         if (wornActive) ImGui.PopStyleColor(2);
 
@@ -1600,6 +1803,31 @@ public class PluginUi : Window, IDisposable
                 : "Show only what is currently on — items the wardrobe is\n" +
                   "tracking as worn, plus anything the last Scan found\n" +
                   "enabled in Penumbra.");
+
+        // Only offered once something is actually grouped. On a wardrobe with no variants it would
+        // be a button that empties the grid and never does anything else.
+        if (_config.WardrobeItems.Any(i => i.VariantOfId.HasValue))
+        {
+            UiLayout.SameLineIfRoomForButton("Variants");
+
+            // Same up-front capture as the two buttons above, for the same reason
+            var varActive = _variantsOnly;
+            if (varActive)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.36f, 0.26f, 0.55f, 1f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.48f, 0.35f, 0.72f, 1f));
+            }
+            if (ImGui.Button("Variants", FilterRowButton("Variants"))) _variantsOnly = !_variantsOnly;
+            var varHovered = ImGui.IsItemHovered();
+            if (varActive) ImGui.PopStyleColor(2);
+
+            if (varHovered)
+                ImGui.SetTooltip(varActive
+                    ? "Showing items that have variants. Click to show everything again."
+                    : "Show only pieces you have more than one version of —\n" +
+                      "an original and its variants. Folded groups still show\n" +
+                      "as one card, so this is a list of the pieces, not the copies.");
+        }
 
         DrawSlotButtons();
         DrawSearchAndSort();
@@ -1707,9 +1935,17 @@ public class PluginUi : Window, IDisposable
             ImGui.PushStyleColor(ImGuiCol.FrameBgActive,  new Vector4(0.4f, 0.6f, 0.9f, 1f));
         }
 
+        // A combo takes no explicit size, so its frame is grown with padding instead. Popped as soon
+        // as the frame is laid out, so the list inside keeps its normal row spacing.
+        var extraY = Math.Max(0f, (FilterRowHeight - ImGui.GetFrameHeight()) / 2f);
+        if (extraY > 0f)
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,
+                new Vector2(ImGui.GetStyle().FramePadding.X, ImGui.GetStyle().FramePadding.Y + extraY));
+
         ImGui.SetNextItemWidth(width);
         var open = ImGui.BeginCombo("##moreslots", preview);
 
+        if (extraY > 0f) ImGui.PopStyleVar();
         if (selected != null) ImGui.PopStyleColor(3);
 
         if (!open)
@@ -1753,6 +1989,22 @@ public class PluginUi : Window, IDisposable
     }
 
     /// <summary>
+    /// Height for every control on the filter row, so the text buttons match the icon buttons
+    /// standing next to them once the icons are scaled up.
+    /// </summary>
+    /// <remarks>
+    /// Zero while icons are off, which is ImGui's "size to the label" — the row's original height,
+    /// and one code path rather than a branch at every button.
+    /// </remarks>
+    private static float FilterRowHeight => Plugin.SlotIcons.Enabled
+        ? Plugin.SlotIcons.ScaledRowSize + ImGui.GetStyle().FramePadding.Y * 2
+        : 0f;
+
+    /// <summary>Size for a text button on the filter row: its own width, the row's height.</summary>
+    private static Vector2 FilterRowButton(string label) =>
+        new(UiLayout.ButtonWidth(label), FilterRowHeight);
+
+    /// <summary>
     /// Width one slot filter button occupies, which depends on whether it is drawn as an icon.
     /// Must track <see cref="DrawFilterButton"/>, or the bar will measure itself wrongly.
     /// </summary>
@@ -1760,7 +2012,7 @@ public class PluginUi : Window, IDisposable
     {
         if (Plugin.SlotIcons.Enabled &&
             (Plugin.SlotIcons.TryGetGameIcon(slot, out _) || Plugin.SlotIcons.TryGetFontIcon(slot, out _)))
-            return SlotIconService.ScaledSize + ImGui.GetStyle().FramePadding.X * 2;
+            return Plugin.SlotIcons.ScaledRowSize + ImGui.GetStyle().FramePadding.X * 2;
 
         return UiLayout.ButtonWidth(slot.DisplayName());
     }
@@ -1780,8 +2032,19 @@ public class PluginUi : Window, IDisposable
         var startX       = contentRight - SearchBlockWidth();
 
         // Only share the row if the controls clear the last slot button
-        if (startX > lastBtnRight + style.ItemSpacing.X)
+        var sharingRow = startX > lastBtnRight + style.ItemSpacing.X;
+        if (sharingRow)
             ImGui.SameLine(startX);
+
+        // Boxes take no explicit height, so they are padded up to the buttons' — but only while
+        // actually beside them. Wrapped onto a line of their own there is nothing to match, and
+        // stretching them there would just waste the height.
+        var extraY = sharingRow
+            ? Math.Max(0f, (FilterRowHeight - ImGui.GetFrameHeight()) / 2f)
+            : 0f;
+        if (extraY > 0f)
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,
+                new Vector2(style.FramePadding.X, style.FramePadding.Y + extraY));
 
         ImGui.SetNextItemWidth(SearchBoxWidth);
         ImGui.InputTextWithHint("##search", "Search name, tag, mod, note…", ref _search, 128);
@@ -1789,7 +2052,7 @@ public class PluginUi : Window, IDisposable
         if (!string.IsNullOrEmpty(_search))
         {
             ImGui.SameLine();
-            if (ImGui.Button("×##clearsearch")) _search = string.Empty;
+            if (ImGui.Button("×##clearsearch", new Vector2(0, FilterRowHeight))) _search = string.Empty;
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Clear search.");
         }
 
@@ -1799,7 +2062,14 @@ public class PluginUi : Window, IDisposable
         // Order must match the ItemSortMode enum values
         var sortLabels = new[] { "Name (A–Z)", "Name (Z–A)", "Newest first", "Oldest first" };
         var sortIdx    = (int)_config.SortMode;
-        if (ImGui.Combo("##sort", ref sortIdx, sortLabels, sortLabels.Length))
+        var sortChanged = ImGui.Combo("##sort", ref sortIdx, sortLabels, sortLabels.Length);
+
+        // This overload draws its own popup inside the call, so the four sort options inherit the
+        // padding and sit a little further apart than usual. Not worth splitting into BeginCombo and
+        // a hand-written list to avoid — the More dropdown does that only because it already had to.
+        if (extraY > 0f) ImGui.PopStyleVar();
+
+        if (sortChanged)
         {
             _config.SortMode = (ItemSortMode)sortIdx;
             _config.Save();
@@ -1825,7 +2095,7 @@ public class PluginUi : Window, IDisposable
         }
         else
         {
-            clicked = ImGui.Button(label);
+            clicked = ImGui.Button(label, FilterRowButton(label));
             hovered = ImGui.IsItemHovered();
         }
 
@@ -1848,7 +2118,7 @@ public class PluginUi : Window, IDisposable
     private static bool DrawIconButton(EquipSlot slot, out bool hovered)
     {
         var style = ImGui.GetStyle();
-        var size  = SlotIconService.ScaledSize;
+        var size  = Plugin.SlotIcons.ScaledRowSize;
         var btn   = new Vector2(size + style.FramePadding.X * 2, size + style.FramePadding.Y * 2);
 
         ImGui.PushID((int)slot);
@@ -1869,7 +2139,8 @@ public class PluginUi : Window, IDisposable
         }
         else
         {
-            clicked = ImGui.Button(slot.DisplayName());
+            // A slot with neither a game icon nor a glyph — still has to match the row's height
+            clicked = ImGui.Button(slot.DisplayName(), FilterRowButton(slot.DisplayName()));
         }
 
         hovered = ImGui.IsItemHovered();
@@ -1879,39 +2150,16 @@ public class PluginUi : Window, IDisposable
 
     // ── Tag filter tree ───────────────────────────────────────────────────────
 
-    private sealed class TagNode
-    {
-        public string Segment  = string.Empty;
-        public string FullPath = string.Empty;
-        public SortedDictionary<string, TagNode> Children = new(StringComparer.OrdinalIgnoreCase);
-    }
-
-    private TagNode BuildTagTree()
-    {
-        var root = new TagNode();
-        foreach (var item in _config.WardrobeItems)
-        foreach (var tag in item.Tags)
-        {
-            var parts = tag.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            var node  = root;
-            var path  = string.Empty;
-            foreach (var part in parts)
-            {
-                path = path.Length == 0 ? part : $"{path}/{part}";
-                if (!node.Children.TryGetValue(part, out var child))
-                    node.Children[part] = child = new TagNode { Segment = part, FullPath = path };
-                node = child;
-            }
-        }
-        return root;
-    }
-
     private void DrawTagTree(TagNode node)
     {
+        // Deleting mutates DefinedTags, which the tree being walked was built from
+        string? deleted = null;
+
         foreach (var (_, child) in node.Children)
         {
             var active = _tagFilter.Contains(child.FullPath);
-            if (active) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.78f, 0.58f, 1f, 1f));
+            if (active)            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.78f, 0.58f, 1f, 1f));
+            else if (!child.InUse) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.45f, 0.45f, 0.52f, 1f));
 
             var isLeaf = child.Children.Count == 0;
             var flags  = ImGuiTreeNodeFlags.SpanAvailWidth;
@@ -1921,7 +2169,21 @@ public class PluginUi : Window, IDisposable
                 flags |= ImGuiTreeNodeFlags.OpenOnArrow; // expand/collapse only via the arrow
 
             var open = ImGui.TreeNodeEx($"##{child.FullPath}", flags, child.Segment);
-            if (active) ImGui.PopStyleColor();
+            if (active || !child.InUse) ImGui.PopStyleColor();
+
+            if (!child.InUse)
+            {
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip($"{child.FullPath}\n\nNo items have this tag yet.\n" +
+                                     "Right-click to delete it.");
+
+                if (ImGui.BeginPopupContextItem($"##tagctx_{child.FullPath}"))
+                {
+                    if (ImGui.MenuItem($"Delete '{child.Segment}'"))
+                        deleted = child.FullPath;
+                    ImGui.EndPopup();
+                }
+            }
 
             if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
             {
@@ -1942,6 +2204,33 @@ public class PluginUi : Window, IDisposable
                 ImGui.TreePop();
             }
         }
+
+        if (deleted != null) DeleteDefinedTag(deleted);
+    }
+
+    /// <summary>
+    /// Removes a pre-made tag, along with any pre-made tags nested under it.
+    /// </summary>
+    /// <remarks>
+    /// Only ever reached from a branch nothing is tagged with, so nothing below it can be in use
+    /// either and no item loses a tag. The prefix sweep is what makes deleting a parent mean what it
+    /// looks like it means, rather than leaving orphaned children behind with no parent to find them
+    /// under.
+    /// </remarks>
+    private void DeleteDefinedTag(string path)
+    {
+        var removed = _config.DefinedTags.RemoveAll(t =>
+            t.Equals(path, StringComparison.OrdinalIgnoreCase) ||
+            t.StartsWith($"{path}/", StringComparison.OrdinalIgnoreCase));
+
+        if (removed == 0) return;
+
+        _tagFilter.RemoveWhere(f =>
+            f.Equals(path, StringComparison.OrdinalIgnoreCase) ||
+            f.StartsWith($"{path}/", StringComparison.OrdinalIgnoreCase));
+
+        _config.Save();
+        _log.Information($"[Wardrobe] Deleted {removed} pre-made tag(s) under '{path}'");
     }
 
     private void DrawTagFilter()
@@ -1953,10 +2242,13 @@ public class PluginUi : Window, IDisposable
             return;
         }
 
-        if (!_config.WardrobeItems.Any(i => i.Tags.Count > 0))
+        ImGui.Spacing();
+        DrawNewTagRow();
+
+        if (_config.AllTags().Count == 0)
         {
             ImGui.Spacing();
-            ImGui.TextDisabled("No tags yet. Add them when editing an item.");
+            ImGui.TextDisabled("No tags yet. Make one above, or add them when editing an item.");
             return;
         }
 
@@ -1973,10 +2265,70 @@ public class PluginUi : Window, IDisposable
                 if (ImGui.SmallButton("× Clear")) _tagFilter.Clear();
                 ImGui.Separator();
             }
-            DrawTagTree(BuildTagTree());
+            DrawTagTree(TagTree.Build(_config));
             ImGui.Spacing();
         }
         ImGui.Spacing();
+    }
+
+    /// <summary>
+    /// Creates a tag before any item has it, so a scheme can be laid out in one go and then applied.
+    /// </summary>
+    /// <remarks>
+    /// Tags otherwise only exist as a side effect of typing one into an item, which means the tag
+    /// list can only be built one item at a time and a typo becomes a second tag rather than an
+    /// error. Made here, they show up dimmed in the tree below and in every tag picker, ready to be
+    /// applied — most usefully from Select → Edit Selected, which can tag a whole batch at once.
+    /// </remarks>
+    private void DrawNewTagRow()
+    {
+        ImGui.SetNextItemWidth(-UiLayout.ButtonWidth(" Make Tag ") - ImGui.GetStyle().ItemSpacing.X);
+        var entered = ImGui.InputTextWithHint("##newtag", "new tag", ref _newTag, 64,
+            ImGuiInputTextFlags.EnterReturnsTrue);
+
+        ImGui.SameLine();
+        var name  = NormaliseTag(_newTag);
+        var empty = name.Length == 0;
+
+        if (empty) ImGui.BeginDisabled();
+        if (ImGui.Button(" Make Tag ") || (entered && !empty)) MakeTag(name);
+        if (empty) ImGui.EndDisabled();
+
+        ImGui.TextDisabled("Use / for sub-tags, e.g. Shoes/Boots. Tags with no items yet are shown " +
+                           "greyed out.");
+
+        if (!string.IsNullOrEmpty(_newTagStatus))
+            ImGui.TextColored(new Vector4(0.5f, 0.85f, 0.6f, 1f), _newTagStatus);
+    }
+
+    /// <summary>
+    /// Puts a typed tag into the exact form the tag tree builds its paths in.
+    /// </summary>
+    /// <remarks>
+    /// The tree trims each segment and drops empty ones, so <c>"Shoes / Boots"</c> becomes the path
+    /// <c>Shoes/Boots</c>. Storing the raw text would leave the stored name and the path that
+    /// represents it different strings, and deleting the tag — which matches on the path — would
+    /// quietly do nothing.
+    /// </remarks>
+    private static string NormaliseTag(string raw) =>
+        string.Join('/', raw.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+
+    private void MakeTag(string name)
+    {
+        // Compared against every known tag, not just the pre-made ones: a tag some item already
+        // carries needs no entry here, and adding one would be a duplicate that does nothing
+        if (_config.AllTags().Any(t => t.Equals(name, StringComparison.OrdinalIgnoreCase)))
+        {
+            _newTagStatus = $"'{name}' already exists.";
+            return;
+        }
+
+        _config.DefinedTags.Add(name);
+        _config.Save();
+        _log.Information($"[Wardrobe] Made tag '{name}'");
+
+        _newTag       = string.Empty;
+        _newTagStatus = $"Made '{name}'.";
     }
 
     // ── Item grid ─────────────────────────────────────────────────────────────
@@ -2003,6 +2355,16 @@ public class PluginUi : Window, IDisposable
 
         if (_favoritesOnly)
             query = query.Where(x => x.IsFavorite);
+        if (_variantsOnly)
+        {
+            // Both halves of a group: a variant on its own would be an odd thing to list without
+            // the item it is a variant of, and folding then has nothing to fold it into
+            var hasVariants = _config.WardrobeItems
+                .Where(x => x.VariantOfId.HasValue)
+                .Select(x => x.VariantOfId!.Value)
+                .ToHashSet();
+            query = query.Where(x => x.VariantOfId.HasValue || hasVariants.Contains(x.Id));
+        }
         if (_wornOnly)
             query = query.Where(IsWornOrDetected);
         if (_slotFilter != null)
@@ -2039,7 +2401,7 @@ public class PluginUi : Window, IDisposable
                                                .ThenBy(x => x.DateAdded),
         };
 
-        var items = query.ToList();
+        var items = FoldVariants(query.ToList());
         _visibleCount = items.Count;
 
         // What Select All acts on. Recorded even when select mode is off, so turning it on and
@@ -2110,6 +2472,8 @@ public class PluginUi : Window, IDisposable
                 var removed = _config.WardrobeItems[idx];
                 if (_wardrobe.IsItemWorn(removed))
                     _wardrobe.UnwearItem(removed, save: false);
+                _wardrobe.ForgetLinksTo(removed.Id);
+                _wardrobe.ReparentVariantsOf(removed);
                 _config.WardrobeItems.RemoveAt(idx);
                 _imageCache.Remove(toDelete.Value);
                 _config.Save();
@@ -2233,12 +2597,17 @@ public class PluginUi : Window, IDisposable
             : slotText;
         if (item.Tags.Count > 0) badge += badge.Length > 0 ? " ●" : "●";
 
-        if (badge.Length > 0) ImGui.TextUnformatted(badge);
-        else                  ImGui.NewLine();
+        var hasBadge = badge.Length > 0;
+        if (hasBadge) ImGui.TextUnformatted(badge);
         ImGui.PopStyleColor();
 
         if (item.Tags.Count > 0 && ImGui.IsItemHovered())
             ImGui.SetTooltip(string.Join("  ", item.Tags.Select(t => $"#{t}")));
+
+        // The badge line is kept even when it is empty, so every card stays the same height —
+        // whichever of the two filled it, or an empty line when neither did
+        if (!DrawVariantToggle(item, sameLine: hasBadge) && !hasBadge)
+            ImGui.NewLine();
 
         // In select mode the tick box takes the button row's place rather than being added below it.
         // Same card height, so entering the mode does not reflow the grid, and the delete button is
@@ -2252,8 +2621,11 @@ public class PluginUi : Window, IDisposable
             return;
         }
 
-        // Buttons
-        var btnW = (CardWidth - CardPad * 2 - 6) / 2;
+        // Buttons. The row is the card's inner width less the gaps between three of them, so the
+        // literals scale with everything else or the delete button walks off the edge.
+        var deleteW = UiScale.S(22f);
+        var editGap = UiScale.S(26f);
+        var btnW    = (CardWidth - CardPad * 2 - UiScale.S(6f)) / 2;
 
         // Customisation mods are not worn or removed — you always have hair. They are applied, and
         // "removing" one just turns the mod back off. The same goes for animations, VFX and mounts,
@@ -2261,27 +2633,40 @@ public class PluginUi : Window, IDisposable
         var (wearLabel, removeLabel) = item.Slot.ActionLabels();
         var modOnly = item.Slot.IsModOnly();
 
+        // The count goes in the label rather than behind a glyph, so what the button is about to do
+        // is legible without hovering it
+        var links      = _wardrobe.ResolveLinks(item);
+        var linkSuffix = links.Count > 0 ? $" +{links.Count}" : string.Empty;
+
         if (worn)
         {
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.55f, 0.08f, 0.08f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.75f, 0.15f, 0.15f, 1f));
-            if (ImGui.Button(removeLabel, new Vector2(btnW, 0)))
-                _wardrobe.UnwearItem(item);
+            if (ImGui.Button($"{removeLabel}{linkSuffix}", new Vector2(btnW, 0)))
+                _wardrobe.UnwearItemLinked(item);
             ImGui.PopStyleColor(2);
-            if (modOnly && ImGui.IsItemHovered())
+            if (links.Count > 0 && ImGui.IsItemHovered())
+                ImGui.SetTooltip($"Also takes off:\n{LinkList(links)}");
+            else if (modOnly && ImGui.IsItemHovered())
                 ImGui.SetTooltip("Turn this mod back off, restoring the default appearance.");
         }
         else
         {
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.13f, 0.38f, 0.13f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.18f, 0.55f, 0.18f, 1f));
-            if (ImGui.Button(wearLabel, new Vector2(btnW, 0)))
-                _wardrobe.WearItem(item);
+            if (ImGui.Button($"{wearLabel}{linkSuffix}", new Vector2(btnW, 0)))
+                _wardrobe.WearItemLinked(item);
             ImGui.PopStyleColor(2);
+            if (links.Count > 0 && ImGui.IsItemHovered())
+                ImGui.SetTooltip($"Also wears:\n{LinkList(links)}");
         }
 
+        // Right-click reaches the solo action too. The row below is the discoverable way in, but it
+        // is the first thing to go when a card runs short of room, and this cannot be crowded out.
+        DrawSoloContextMenu(item, worn, links);
+
         ImGui.SameLine();
-        if (ImGui.Button("Edit", new Vector2((btnW - 26) / 1, 0)))
+        if (ImGui.Button("Edit", new Vector2(btnW - editGap, 0)))
         {
             _imageCache.Remove(item.Id);
             _panel.OpenEdit(item);
@@ -2290,13 +2675,192 @@ public class PluginUi : Window, IDisposable
         ImGui.SameLine();
         ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
-        if (ImGui.Button("X", new Vector2(22, 0)))
+        if (ImGui.Button("X", new Vector2(deleteW, 0)))
             pendingDelete = item.Id;
         ImGui.PopStyleColor(2);
+
+        DrawSoloRow(item, worn, links);
 
         ImGui.EndChild();
         ImGui.PopStyleColor(2);
         ImGui.PopID();
+    }
+
+    /// <summary>
+    /// The fold control: on an original, how many variants are tucked behind it; on a variant, a way
+    /// back to folded without hunting for the original.
+    /// </summary>
+    /// <remarks>
+    /// Shares the badge row rather than taking a row of its own. The action row below is three
+    /// buttons across a 180px card with nothing spare, and the badge — a slot name and sometimes a
+    /// mod count — leaves most of its line empty. <see cref="UiLayout.SameLineIfRoom"/> drops the
+    /// button to the next line on the rare card whose badge is long enough to crowd it.
+    /// </remarks>
+    /// <param name="sameLine">
+    /// Whether the badge drew anything to sit beside. False when the card has no badge text at all,
+    /// where the button starts the line instead of joining it.
+    /// </param>
+    /// <returns>True if a button was drawn, so the caller knows the badge line is filled.</returns>
+    private bool DrawVariantToggle(WardrobeItem item, bool sameLine)
+    {
+        if (!_config.GroupVariants) return false;
+
+        var key = item.VariantOfId?.ToString() ?? item.Id.ToString();
+
+        // A variant only says so, and offers the way back. Everything about the group — the count,
+        // what is folded — is the original's to report, and repeating it on each variant would put
+        // the same number on four cards at once.
+        if (item.VariantOfId.HasValue)
+        {
+            if (sameLine) UiLayout.SameLineIfRoomForButton(" Fold ");
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0f, 0f, 0f, 0f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1f, 1f, 1f, 0.12f));
+            ImGui.PushStyleColor(ImGuiCol.Text,          new Vector4(0.62f, 0.62f, 0.70f, 1f));
+            var fold = ImGui.SmallButton(" Fold ");
+            ImGui.PopStyleColor(3);
+
+            if (fold)
+            {
+                _config.ExpandedVariantGroups.Remove(key);
+                _config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("A variant. Folds this group back into its original.");
+            return true;
+        }
+
+        if (!_variantCounts.TryGetValue(item.Id, out var counts) || counts.Total == 0) return false;
+
+        var expanded = _config.ExpandedVariantGroups.Contains(key);
+
+        // Collapsed with nothing actually folded away — every variant is worn, and so pinned visible.
+        // There is nothing for the button to reveal, so it is not offered.
+        if (!expanded && counts.Hidden == 0) return false;
+
+        var label = expanded ? $" Fold {counts.Total} " : $" +{counts.Hidden} ";
+
+        if (sameLine) UiLayout.SameLineIfRoomForButton(label);
+        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0f, 0f, 0f, 0f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1f, 1f, 1f, 0.12f));
+        ImGui.PushStyleColor(ImGuiCol.Text,          new Vector4(0.72f, 0.66f, 0.85f, 1f));
+        var clicked = ImGui.SmallButton(label);
+        ImGui.PopStyleColor(3);
+
+        if (clicked)
+        {
+            if (!_config.ExpandedVariantGroups.Remove(key))
+                _config.ExpandedVariantGroups.Add(key);
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(expanded
+                ? $"{counts.Total} variant(s) of this item are showing.\nClick to fold them away."
+                : $"{counts.Hidden} variant(s) are folded into this card.\nClick to show them.");
+
+        return true;
+    }
+
+    /// <summary>
+    /// Drops variants into their original's card, leaving a count behind.
+    /// </summary>
+    /// <remarks>
+    /// Runs after filtering and sorting, on what the grid was about to draw, so folding narrows the
+    /// visible set rather than deciding it. Two things are deliberately never folded away:
+    /// <list type="bullet">
+    /// <item>A variant whose original the filters excluded, which would otherwise be unreachable —
+    /// searching for a variant by name has to find it even though its original does not match.</item>
+    /// <item>A variant that is on the character. The original's card would show as unworn while the
+    /// variant it hid is what you are actually wearing.</item>
+    /// </list>
+    /// </remarks>
+    private List<WardrobeItem> FoldVariants(List<WardrobeItem> items)
+    {
+        _variantCounts.Clear();
+        if (!_config.GroupVariants) return items;
+
+        var visible = items.Select(i => i.Id).ToHashSet();
+        var result  = new List<WardrobeItem>(items.Count);
+
+        foreach (var item in items)
+        {
+            if (item.VariantOfId is not { } originalId || !visible.Contains(originalId))
+            {
+                result.Add(item);
+                continue;
+            }
+
+            var counts   = _variantCounts.GetValueOrDefault(originalId);
+            var expanded = _config.ExpandedVariantGroups.Contains(originalId.ToString());
+
+            if (expanded || IsWornOrDetected(item))
+            {
+                result.Add(item);
+                _variantCounts[originalId] = (counts.Total + 1, counts.Hidden);
+            }
+            else
+            {
+                _variantCounts[originalId] = (counts.Total + 1, counts.Hidden + 1);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>Linked partners as one name per line, for a tooltip.</summary>
+    private static string LinkList(List<WardrobeItem> links) =>
+        string.Join("\n", links.Select(i => $"  {i.Slot.DisplayName()} — {i.Name}"));
+
+    /// <summary>
+    /// The escape hatch from a link: wear or remove this item on its own, leaving its partners as
+    /// they are.
+    /// </summary>
+    /// <remarks>
+    /// A small button under the action row rather than a fourth button beside it — that row is
+    /// already three buttons across a 180px card and has no width left. Drawn only when the card has
+    /// the height to spare, since the card is a fixed size and growing it would reflow the grid for
+    /// every item whether it has links or not; the right-click menu covers the rest.
+    /// </remarks>
+    private void DrawSoloRow(WardrobeItem item, bool worn, List<WardrobeItem> links)
+    {
+        if (links.Count == 0) return;
+
+        var needed = ImGui.GetTextLineHeight() + ImGui.GetStyle().ItemSpacing.Y * 2;
+        if (ImGui.GetContentRegionAvail().Y < needed) return;
+
+        var (wearLabel, removeLabel) = item.Slot.ActionLabels();
+        var label = worn ? $"{removeLabel} only this" : $"{wearLabel} only this";
+
+        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0f, 0f, 0f, 0f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1f, 1f, 1f, 0.12f));
+        ImGui.PushStyleColor(ImGuiCol.Text,          new Vector4(0.62f, 0.62f, 0.70f, 1f));
+        var clicked = ImGui.SmallButton($"{label}##solo");
+        ImGui.PopStyleColor(3);
+
+        if (clicked) Solo(item, worn);
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(worn
+                ? $"Takes off only this item.\nLeaves these on:\n{LinkList(links)}"
+                : $"Wears only this item.\nLeaves these alone:\n{LinkList(links)}");
+    }
+
+    private void DrawSoloContextMenu(WardrobeItem item, bool worn, List<WardrobeItem> links)
+    {
+        if (links.Count == 0) return;
+        if (!ImGui.BeginPopupContextItem($"##solomenu_{item.Id}")) return;
+
+        var (wearLabel, removeLabel) = item.Slot.ActionLabels();
+        if (ImGui.MenuItem(worn ? $"{removeLabel} only this" : $"{wearLabel} only this"))
+            Solo(item, worn);
+
+        ImGui.EndPopup();
+    }
+
+    private void Solo(WardrobeItem item, bool worn)
+    {
+        if (worn) _wardrobe.UnwearItem(item);
+        else      _wardrobe.WearItem(item);
     }
 
     /// <summary>
@@ -2610,7 +3174,7 @@ public class PluginUi : Window, IDisposable
     {
         if (_session.State == SessionState.Idle) return;
 
-        ImGui.SetNextWindowSize(new Vector2(340, 0), ImGuiCond.Always);
+        ImGui.SetNextWindowSize(UiScale.S(340, 0), ImGuiCond.Always);
         ImGui.SetNextWindowPos(new Vector2(60, 60), ImGuiCond.Appearing);
         ImGui.SetNextWindowBgAlpha(0.92f);
 
@@ -2777,7 +3341,7 @@ public class PluginUi : Window, IDisposable
         var wornCount = _config.WornItems.Count;
 
         ImGui.Spacing();
-        ImGui.SetNextItemWidth(240);
+        ImGui.SetNextItemWidth(UiScale.S(240));
         ImGui.InputTextWithHint("##outfitname", "Name this outfit…", ref _newOutfitName, 128);
 
         var saveLabel = $"Save current look ({wornCount} item(s))";
@@ -2912,7 +3476,7 @@ public class PluginUi : Window, IDisposable
                                      .Select(i => $"{i.Slot.DisplayName()} — {i.Name}")));
         }
 
-        var btnW = (cardW - CardPad * 2 - 6) / 2;
+        var btnW = (cardW - CardPad * 2 - UiScale.S(6f)) / 2;
 
         if (worn)
         {
@@ -3484,7 +4048,7 @@ public class PluginUi : Window, IDisposable
             ? (string.IsNullOrEmpty(_config.RevertDesignName) ? "(unnamed design)" : _config.RevertDesignName)
             : "(none — put back the previous hairstyle)";
 
-        ImGui.SetNextItemWidth(260);
+        ImGui.SetNextItemWidth(UiScale.S(260));
         if (ImGui.BeginCombo("##revertdesign", current))
         {
             if (ImGui.Selectable("(none — put back the previous hairstyle)", !_config.RevertDesignId.HasValue))
@@ -3578,7 +4142,7 @@ public class PluginUi : Window, IDisposable
 
         ImGui.Spacing();
         ImGui.TextDisabled("Backups to keep (per file)");
-        ImGui.SetNextItemWidth(120);
+        ImGui.SetNextItemWidth(UiScale.S(120));
         var keep = _config.BackupKeepCount;
         if (ImGui.InputInt("##backupKeep", ref keep))
         {
@@ -3638,6 +4202,8 @@ public class PluginUi : Window, IDisposable
         SettingsBreak();
         DrawWearingSettings();
         SettingsBreak();
+        DrawVariantSettings();
+        SettingsBreak();
         DrawSlotIconSettings();
         SettingsBreak();
         DrawImageFolderSettings();
@@ -3676,7 +4242,7 @@ public class PluginUi : Window, IDisposable
             if (found >= 0) curIdx = found;
         }
 
-        ImGui.SetNextItemWidth(260);
+        ImGui.SetNextItemWidth(UiScale.S(260));
         if (ImGui.BeginCombo("##defaultColl", collNames[curIdx]))
         {
             for (var i = 0; i < collNames.Length; i++)
@@ -4051,6 +4617,106 @@ public class PluginUi : Window, IDisposable
                            "be changed when editing it.");
     }
 
+    private static readonly (VariantNameStyle Style, string Label)[] VariantNameStyles =
+    {
+        (VariantNameStyle.Suffix,    "Plain — (variant)"),
+        (VariantNameStyle.Numbered,  "Numbered — (Variant-1)"),
+        (VariantNameStyle.Lettered,  "Lettered — (Variant-A)"),
+        (VariantNameStyle.Timestamp, "When it was made — (date - time)"),
+    };
+
+    private void DrawVariantSettings()
+    {
+        ImGui.TextUnformatted("Variants");
+        ImGui.TextDisabled("Fold an item's variants into its card, with a button on the card to " +
+                           "show them. Turn this off to give every variant a card of its own.");
+        ImGui.Spacing();
+
+        DrawVariantNameSetting();
+
+        ImGui.Spacing();
+
+        var group = _config.GroupVariants;
+        if (ImGui.Checkbox("Group variants under their original", ref group))
+        {
+            _config.GroupVariants = group;
+            _config.Save();
+        }
+
+        if (!_config.GroupVariants) return;
+
+        ImGui.Spacing();
+        if (ImGui.Button("Fold every group", new Vector2(-1, 0)))
+        {
+            var count = _config.ExpandedVariantGroups.Count;
+            _config.ExpandedVariantGroups.Clear();
+            _config.Save();
+            _log.Information($"[Wardrobe] Folded {count} expanded variant group(s)");
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Puts every group you have expanded back to showing just its original.");
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("A variant that is currently worn is never folded away, so the grid " +
+                           "always shows what is on your character.");
+    }
+
+    /// <summary>
+    /// What <b>Create variant of this item</b> calls the copy it makes.
+    /// </summary>
+    /// <remarks>
+    /// Shown with a worked example of the next two, because the difference between the styles is
+    /// entirely in what happens on the second one — the plain suffix gives both the same name, and
+    /// the timestamp gives both the same name too if they are made in the same minute. Neither is
+    /// apparent from a single sample.
+    /// </remarks>
+    private void DrawVariantNameSetting()
+    {
+        ImGui.TextDisabled("Name new variants");
+
+        var current = VariantNameStyles.FirstOrDefault(s => s.Style == _config.VariantNameStyle);
+        var preview = current.Label ?? VariantNameStyles[0].Label;
+
+        ImGui.SetNextItemWidth(-1);
+        if (ImGui.BeginCombo("##variantName", preview))
+        {
+            foreach (var (style, label) in VariantNameStyles)
+            {
+                if (ImGui.Selectable(label, style == _config.VariantNameStyle))
+                {
+                    _config.VariantNameStyle = style;
+                    _config.Save();
+                }
+                if (style == _config.VariantNameStyle) ImGui.SetItemDefaultFocus();
+            }
+            ImGui.EndCombo();
+        }
+
+        var first  = "Silk Top" + WardrobeService.VariantSuffix(_config.VariantNameStyle, 1);
+        var second = "Silk Top" + WardrobeService.VariantSuffix(_config.VariantNameStyle, 2);
+
+        // The timestamp style is the one case where the two samples matching says nothing — they
+        // match because the preview draws them in the same frame, not because the style repeats
+        // itself. Showing one sample and naming the real condition is the honest way round.
+        if (_config.VariantNameStyle == VariantNameStyle.Timestamp)
+        {
+            ImGui.TextDisabled($"Right now that would be:  {first}");
+            ImGui.TextDisabled("Down to the minute, so two variants made within the same minute " +
+                               "share a name. Made any further apart, each is distinct.");
+        }
+        else
+        {
+            ImGui.TextDisabled($"First two would be:  {first},  {second}");
+
+            if (first == second)
+                ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
+                    "Every variant of an item gets the same name with this style.");
+        }
+
+        ImGui.TextDisabled("Only the name it starts with — the copy opens for editing, so it can " +
+                           "be changed there. Existing variants are not renamed.");
+    }
+
     private void DrawSlotIconSettings()
     {
         ImGui.TextUnformatted("Slot Icons");
@@ -4069,7 +4735,7 @@ public class PluginUi : Window, IDisposable
 
         ImGui.Spacing();
         ImGui.TextDisabled("Icon set");
-        ImGui.SetNextItemWidth(220);
+        ImGui.SetNextItemWidth(UiScale.S(220));
 
         // Order must match the SlotIconStyle enum values
         var styleLabels = new[] { "FFXIV game icons", "Font Awesome" };
@@ -4084,9 +4750,66 @@ public class PluginUi : Window, IDisposable
             ImGui.TextDisabled("Hair uses a character-creation icon. Face, tail, ears and skin " +
                                "have no game artwork, so they use Font Awesome.");
 
+        ImGui.Spacing();
+        DrawSlotIconSizes();
+
         // Live preview — also the quickest way to spot a wrong game-icon ID
         ImGui.Spacing();
         DrawSlotIconPreview();
+    }
+
+    /// <summary>
+    /// The two icon sizes: on item cards, and on the slot filter row.
+    /// </summary>
+    /// <remarks>
+    /// Separate because the two are traded against different things. Shrinking the filter row fits
+    /// more slots on it before the rest spill into <b>More</b>, which has nothing to do with how
+    /// legible one icon is on a card. Both are shown as their pixel size as well as a multiplier,
+    /// since a multiplier alone means nothing until you know what it multiplies.
+    /// </remarks>
+    private void DrawSlotIconSizes()
+    {
+        ImGui.TextDisabled("Icon size");
+
+        var card = _config.SlotIconScale;
+        ImGui.SetNextItemWidth(-1);
+        if (ImGui.SliderFloat("##iconscale", ref card,
+                SlotIconService.MinScale, SlotIconService.MaxScale,
+                $"Cards — {Plugin.SlotIcons.ScaledSize:0} px  (%.2fx)"))
+        {
+            _config.SlotIconScale = card;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The icon on each item card. Cards grow taller to fit a\n" +
+                             "larger one, so nothing is pushed off the bottom.");
+
+        var row = _config.SlotIconRowScale;
+        ImGui.SetNextItemWidth(-1);
+        if (ImGui.SliderFloat("##iconrowscale", ref row,
+                SlotIconService.MinScale, SlotIconService.MaxScale,
+                $"Filter row — {Plugin.SlotIcons.ScaledRowSize:0} px  (%.2fx)"))
+        {
+            _config.SlotIconRowScale = row;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The slot buttons along the top. Smaller icons fit more\n" +
+                             "slots on the row before the rest move into More.");
+
+        // Ctrl-click to type a value is an ImGui convention, not something a slider advertises
+        ImGui.TextDisabled("Drag, or ctrl-click to type a value.");
+
+        if (card != 1f || row != 1f)
+        {
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Reset"))
+            {
+                _config.SlotIconScale    = 1f;
+                _config.SlotIconRowScale = 1f;
+                _config.Save();
+            }
+        }
     }
 
     /// <summary>
@@ -4103,7 +4826,7 @@ public class PluginUi : Window, IDisposable
         var drewAny = false;
         foreach (var slot in EquipSlotEx.All)
         {
-            if (drewAny) UiLayout.SameLineIfRoom(SlotIconService.ScaledSize);
+            if (drewAny) UiLayout.SameLineIfRoom(Plugin.SlotIcons.ScaledSize);
             if (!Plugin.SlotIcons.Draw(slot)) continue;
             if (ImGui.IsItemHovered()) ImGui.SetTooltip(slot.DisplayName());
             drewAny = true;

@@ -81,14 +81,47 @@ applied.
 
 ---
 
+## Variants
+
+**Name new variants** chooses what **Create variant of this item** calls the copy — a plain
+`(variant)` suffix, numbered, lettered, or the date and time it was made. The panel shows what the
+first two variants of an item would be called, and warns if a style repeats itself. Only the
+starting name; the copy opens for editing, and existing variants are never renamed. See
+[Naming](Items-and-Mods.md#naming).
+
+**Group variants under their original** folds an item's variants into its card, leaving a **+N**
+button that shows how many are behind it. Turn it off to give every variant a card of its own, as it
+was before grouping existed.
+
+**Fold every group** closes every group you have expanded. Individual groups remember whether you
+left them open, so this is the one switch that resets all of them at once.
+
+A variant that is currently worn is never folded away, whatever these settings say. See
+[Folding variants away](Items-and-Mods.md#folding-variants-away).
+
+---
+
 ## Slot Icons
 
 **Use icons for slots** replaces slot names with icons on the item cards and slot filter row,
 choosing between FFXIV's own Character-window icons and Font Awesome. Both sets draw into the same
-fixed square so switching never reflows the layout.
+square so switching never reflows the layout.
 
 Hair, face, tail, Viera ears and skin have no game icon and always use Font Awesome. Every icon
 carries a tooltip with the slot name, which is the only way to tell the two ring slots apart.
+
+**Icon size** has two sliders, both showing the resulting size in pixels. Drag them, or ctrl-click to
+type a value. A **Reset** button appears once either is off the default.
+
+- **Cards** sizes the icon on each item card. Cards grow taller to fit a larger one, so nothing is
+  pushed off the bottom edge — the grid re-flows to match.
+- **Filter row** sizes the slot buttons along the top. Smaller icons fit more slots on the row
+  before the rest spill into **More**, which is the main reason to change it. Everything else on
+  that row — **Outfits**, **All**, **♥**, **Worn**, **Variants**, the **More** dropdown and the
+  search and sort boxes — grows to the same height, so the row stays level.
+
+They are separate because they trade against different things: the row is about how many slots fit,
+the cards are only about legibility. The preview underneath shows the card size.
 
 ---
 

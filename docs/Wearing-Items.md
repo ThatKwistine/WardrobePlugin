@@ -36,6 +36,54 @@ Click **Unequip** on a worn card (shown with a filled circle), or use `/wardrobe
 1. The Penumbra mod is disabled (unless another worn item still needs it)
 2. Glamourer's `SetItem.V3` is called with the Emperor's New item for that slot, making it appear empty
 
+## Linked items
+
+Two items can be linked so they are worn and taken off together — a top and the gloves that finish
+it, a hair mod and the accessory that sits in it.
+
+A linked item's card says so in its button: **Wear +1**, **Unequip +2**. Hovering it lists exactly
+what comes with it. Underneath is **Wear only this** (or **Unequip only this**), which acts on that
+one item and leaves its partners alone. The same action is on the right-click menu of the main
+button.
+
+Wearing a linked item skips any partner already worn, so nothing is needlessly re-applied.
+Unequipping only takes off the partners that are actually on.
+
+### Linking items
+
+Two ways in, and they do the same thing:
+
+- **Select** in the toolbar, tick two or more items, then **Edit Selected → Link**. This links every
+  item in the selection to every other one.
+- The **Linked items** section in an item's edit panel, which lists its partners and has a search
+  box to add another.
+
+Both write the link to *both* items, so it can be broken from either side. Because of that, changes
+in the edit panel apply immediately rather than waiting for **Save** — there is no sensible way for
+**Cancel** to take back half a link the other item already knows about.
+
+### What links do not do
+
+- **They do not chain.** If A is linked to B and B to C, wearing A brings B and stops there. What an
+  item pulls in is exactly the list shown on its card and in its editor, never anything further out.
+  To make a set of three all bring each other, link all three (selecting all three and pressing
+  **Link** does this).
+- **They do not cross a slot.** Two items in the same slot cannot be linked: wearing one takes the
+  other off, so the link would come apart every time it was used. The **Link** button reports how
+  many pairs it refused for this reason, and the edit panel's picker lists them greyed out with the
+  reason rather than hiding them.
+- **They do not affect outfits.** An outfit is an explicit list of items, so wearing one wears
+  exactly what it holds. Screenshot sessions and the desync notice likewise act on single items.
+
+### Unlinking
+
+- **Edit Selected → Unlink** breaks links *between* the selected items.
+- **Clear every link on these items** below it breaks all their links, including to items that are
+  not selected.
+- The **×** beside a partner in the edit panel breaks that one link.
+
+Deleting an item removes it from its partners' links.
+
 ## Worn-item detection
 
 The plugin works out what is already worn by cross-referencing Penumbra's enabled mods and option

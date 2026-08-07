@@ -26,6 +26,10 @@ options enabled the lists show only mods the wardrobe does not reference at all.
 All of this applies identically to the **+ Add Supplementary Mod** picker — both pickers render their
 rows through the same code path.
 
+A **Tags & Notes** section sits above the **Import** button. Whatever is set there is applied to
+every item the import creates. **Mass Import** has a **Tags** button beside **Import Mods** doing the
+same for a batch. See [Applying tags](Tags.md#applying-tags).
+
 Option groups start from whatever Penumbra currently has active for the mod, rather than from each
 group's first option. If you have already picked a body size or ticked a set of toggles in Penumbra,
 the import arrives with those selected and you edit from there. It is a starting point only — nothing
@@ -52,10 +56,14 @@ Options**, the same way they do when importing one mod at a time.
 by the single-import picker, so changing one here changes it everywhere. A supplement is hidden or
 shown with its parent rather than judged on its own, so you never see half of a configured pair.
 
+The **Tags** button beside **Import Mods** applies a set of tags to everything the batch creates. It
+carries a count once anything is set, so tags chosen and then dismissed are still visible before you
+import. See [Applying tags](Tags.md#applying-tags).
+
 Clicking **Import Mods** creates items using the same rules as a single import: one item per detected
 slot, named after the mod with the slot in brackets when it produced more than one, and slots you
 already have an item for are skipped. The window stays open afterwards so you can carry on down the
-list.
+list — the batch tags stay set, so a second run down the list keeps them.
 
 ## Adding supplementary mods later
 
@@ -90,6 +98,20 @@ importing, and in the edit panel) listing every candidate so the intended one ca
 matters beyond cosmetics: the stored item ID is what Glamourer equips and what worn-detection
 compares against.
 
+## Setting the game item by hand
+
+The **Game item** dropdown can only offer items that share the mod's detected model, so it is no help
+when the right item shares no model with the mod at all — a piercing or a tattoo hung on an Emperor's
+New piece because it is invisible, or a mod whose model was detected wrongly.
+
+**Set game item manually** covers that. It is a collapsed section on each import slot row and in the
+edit panel, searching every equippable item for that slot by name. **Clear game item** below it
+leaves the item with none, so wearing it enables the mod but equips nothing and unequipping it leaves
+the slot alone.
+
+On import this writes to the row, so **Cancel** discards it along with the rest of the panel. In the
+edit panel it saves immediately, like the dropdown above it.
+
 ## Re-detecting
 
 If a mod is updated and its file paths change, open the item in the edit panel and click
@@ -104,6 +126,80 @@ Because variants occupy the same slot they are never worn at once, so each can h
 selections. Items sharing a mod across *different* slots are worn together, and Penumbra holds only
 one option state per mod — so those still share options, and editing one updates the others.
 
+### Naming
+
+**Settings → Variants → Name new variants** picks how the copy is named:
+
+| Style | First two variants |
+|---|---|
+| Plain | `Silk Top (variant)`, `Silk Top (variant)` |
+| Numbered | `Silk Top (Variant-1)`, `Silk Top (Variant-2)` |
+| Lettered | `Silk Top (Variant-A)`, `Silk Top (Variant-B)` |
+| When it was made | `Silk Top (07/08/26 - 21:45)` |
+
+Plain is the default, because it is how variants have always been named. It gives every variant of
+an item the same name. The numbered and lettered styles count on from the variants the item already
+has, so they stay distinct however far apart the variants were created.
+
+The timestamp style goes down to the minute, so two variants made within the same minute share a
+name — made any further apart, each one is distinct.
+
+The name is only where the copy starts — it opens for editing, with the name as its first field.
+Changing the setting never renames variants you already have.
+
+Names come from the group's *original*, not from whatever was copied, so making a variant of a
+variant gives `Silk Top (Variant-3)` rather than `Silk Top (Variant-2) (Variant-2)`.
+
+### Folding variants away
+
+A variant belongs to the item it was copied from, and the grid folds it into that item's card rather
+than giving it one of its own. The original's card carries a **+N** button showing how many are
+tucked behind it; clicking it shows them, and **Fold N** puts them back. Any variant's card also has
+a **Fold** button, so you do not have to find the original to close the group again.
+
+Each group remembers whether you left it open. Groups you have never touched start folded, which is
+the point — a wardrobe full of colour variants opens as one card per piece.
+
+Two things are never folded away:
+
+- **A variant that is worn.** Folding it would leave the original's card looking unworn while the
+  variant it hid is what is actually on your character.
+- **A variant the filters matched when its original did not.** Searching for a variant by name has
+  to find it, even when the original does not match the search.
+
+**Settings → Variants** turns the folding off entirely, and has a **Fold every group** button for
+closing everything you have opened.
+
+### Which items count as variants
+
+Items created by **Create variant of this item** record where they came from, so their grouping is
+exact. Groups are flat: a variant of a variant belongs to the same original, not to the copy it was
+made from.
+
+Items imported before that was recorded are grouped once, on first launch, by inferring it — items
+in the same slot backed by exactly the same mods are taken to be the same piece in different
+options, oldest first as the original. That is the same rule this page has always used to describe
+what a variant *is*, but it is still a guess: two items you think of as separate will be grouped if
+they share a slot and a mod set.
+
+The edit panel's **Variants** section shows which group an item is in and has a button to leave it —
+**Not a variant of this** on a variant, **Break this group up** on an original. Nothing is deleted;
+the items simply get their own cards back. The inference only runs while no item has a recorded
+group, so a grouping you break apart is not reassembled on the next launch.
+
+Deleting an original does not scatter its variants — the oldest of them takes over as the head of
+the group, and the group keeps whichever fold state it had.
+
+### Finding them
+
+A **Variants** button appears on the filter bar, beside **♥** and **Worn**, once anything is
+grouped. It narrows the grid to pieces you have more than one version of — both the originals and
+their variants. Folded groups still show as one card, so this reads as a list of the pieces rather
+than of the copies. It combines with the search, slot and tag filters like every other filter.
+
+The button is hidden entirely on a wardrobe with no variants, where it could only ever empty the
+grid.
+
 ## Option group types
 
 Penumbra groups are `Single`, `Multi`, `Imc`, or `Combining`. Only `Single` is a one-of-N dropdown —
@@ -112,6 +208,12 @@ the other three all store a bitmask and are shown as checkboxes.
 `Imc` groups are easy to mistake for single-select because their type string isn't "Multi", but each
 option carries a power-of-two `AttributeMask` and toggles independently. An unrecognised type is
 logged as a warning rather than silently treated as a dropdown.
+
+Checkbox groups carry **All** and **None** buttons beside the group's name, with a count of how many
+are ticked — a mod whose toggles you want wholesale, or want to clear before picking two, does not
+need clicking through one at a time. They act on that group only, never the mod as a whole, and are
+hidden on a group with a single option. The same picker is used everywhere options are shown: the
+import panel, an item's **Mod Options** section, and Mass Import.
 
 ## Customisation mods
 

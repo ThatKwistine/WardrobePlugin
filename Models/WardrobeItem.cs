@@ -13,6 +13,25 @@ public enum ImageSortMode
     OldestFirst = 3,
 }
 
+/// <summary>
+/// How a new variant's name is built from the item it came from. Values are persisted, so do not
+/// renumber.
+/// </summary>
+public enum VariantNameStyle
+{
+    /// <summary>"Silk Top (variant)" — what variants were always named before this was a choice.</summary>
+    Suffix    = 0,
+
+    /// <summary>"Silk Top (Variant-1)", counting up from the variants the item already has.</summary>
+    Numbered  = 1,
+
+    /// <summary>"Silk Top (Variant-A)", lettered rather than numbered.</summary>
+    Lettered  = 2,
+
+    /// <summary>"Silk Top (07/08/26 - 21:45)" — when the variant was made.</summary>
+    Timestamp = 3,
+}
+
 public enum ItemSortMode
 {
     NameAsc       = 0,
@@ -84,6 +103,63 @@ public class WardrobeItem
     public string? Notes { get; set; }
 
     public List<string> Tags { get; set; } = new();
+
+    /// <summary>
+    /// Items worn and removed alongside this one — a top and the gloves that finish it, a hair mod
+    /// and the accessory that sits in it.
+    /// </summary>
+    /// <remarks>
+    /// Mutual: linking two items writes each into the other's list, so unlinking from either side
+    /// breaks it and neither can end up pulling in something that does not know about it. Followed
+    /// one hop only — what an item drags in is exactly the list stored here, never what its partners
+    /// are in turn linked to, so a link can never reach further than the one place it is shown.
+    /// <para>
+    /// Ids rather than references because the config is serialised, and they may go stale: an item
+    /// deleted while linked leaves its id behind in its partners. Every read resolves through
+    /// <see cref="Configuration.WardrobeItems"/> and drops what no longer exists.
+    /// </para>
+    /// </remarks>
+    public List<Guid> LinkedItemIds { get; set; } = new();
+
+    /// <summary>
+    /// The item this one is a variant of — the same mods in another colour or style. Null on an
+    /// item that is not a variant, which includes the original of a group.
+    /// </summary>
+    /// <remarks>
+    /// Groups are flat: making a variant of a variant records the original, not the variant it was
+    /// copied from, so an item is either an original or one hop from one. A tree would have to
+    /// decide what a count on the original means and how deep to fold, for a distinction — variant
+    /// of a variant — that means nothing when they are all the same mods with different options.
+    /// <para>
+    /// Recorded on <c>Create variant of this item</c>, and backfilled once for items that predate
+    /// the field by <see cref="Configuration.MigrateVariantGroups"/>, which has to infer it.
+    /// </para>
+    /// </remarks>
+    public Guid? VariantOfId { get; set; }
+
+    /// <summary>
+    /// Identifies the set of mods behind this item, for spotting variants among items saved before
+    /// they recorded which one they came from.
+    /// </summary>
+    /// <remarks>
+    /// Collection and directory per mod, sorted so the order they were attached in does not matter,
+    /// and lowercased to match how mods are compared everywhere else. Deliberately excludes options:
+    /// differing options are precisely what makes two items variants rather than duplicates.
+    /// Empty when the item has no usable mods, which callers treat as "cannot be grouped" rather
+    /// than as a group of its own.
+    /// </remarks>
+    public string ModSignature()
+    {
+        var parts = new List<string>();
+        foreach (var mod in Mods)
+        {
+            if (string.IsNullOrEmpty(mod.ModDirectory)) continue;
+            parts.Add($"{mod.Collection}|{mod.ModDirectory}".ToLowerInvariant());
+        }
+
+        parts.Sort(StringComparer.Ordinal);
+        return string.Join("\n", parts);
+    }
 
     /// <summary>Marked as a favourite by the user; can be filtered on in the grid.</summary>
     public bool IsFavorite { get; set; }

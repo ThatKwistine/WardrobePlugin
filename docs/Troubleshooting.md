@@ -54,8 +54,14 @@ re-applies are there to survive.
 ## The wrong item was detected
 
 Many FFXIV items share one model, and detection picks the lowest row ID among them. Use the **Game
-item** dropdown in the edit panel to choose the one you meant. See
+item** dropdown to choose the one you meant — it is on each slot row while importing as well as in
+the edit panel, so this can be fixed before the item is created. See
 [Shared models](Items-and-Mods.md#shared-models).
+
+The dropdown only appears when more than one item shares the model, and can only list items that do.
+If the one you want is not there, use **Set game item manually** to search the slot's items by name —
+also available in both places. See
+[Setting the game item by hand](Items-and-Mods.md#setting-the-game-item-by-hand).
 
 If a mod was updated and its file paths changed, click **Re-detect** instead.
 

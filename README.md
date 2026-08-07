@@ -21,9 +21,11 @@ Glamourer to equip the matching item — all of it, in the order that actually w
 and the slot goes empty.
 
 - **One slot at a time.** Change your boots without disturbing anything else you have on.
+- **Linked items.** Pieces that belong together go on and come off together, with a button for
+  wearing just the one.
 - **Outfits.** Save a whole look, wear it in one click, dye it in another.
 - **Pictures.** Drag images onto cards, or let the plugin take the screenshots for you.
-- **Find things.** Tags, favourites, search across names and notes, sort by name or date.
+- **Find things.** Nested tags, favourites, search across names and notes, sort by name or date.
 - **Bulk import.** Bring in a batch of mods at once instead of one at a time.
 
 It also handles the awkward cases: mods spanning several slots, mods needing an upscale or a
@@ -112,9 +114,10 @@ so it is worth being liberal here and tidying up later. See
 
 | | |
 |---|---|
-| [Wearing items](docs/Wearing-Items.md) | How wear and unequip work, and why the order matters |
+| [Wearing items](docs/Wearing-Items.md) | How wear and unequip work, linked items, and why the order matters |
 | [Outfits and dyes](docs/Outfits.md) | Saving looks, per-item dyes, editing an outfit by wearing it |
 | [Items, mods and detection](docs/Items-and-Mods.md) | Mass import, supplementary mods, variants, shared models, option groups |
+| [Tags](docs/Tags.md) | Sub-tags, making tags ahead of use, tagging a batch, filtering |
 | [Images and screenshots](docs/Images-and-Screenshots.md) | Previews, automated sessions, camera presets |
 | [Settings and backups](docs/Settings.md) | Every setting, and how backups work |
 | [**Troubleshooting**](docs/Troubleshooting.md) | When something doesn't show up |

@@ -39,6 +39,18 @@ public class MassImportPanel : Window, IDisposable
     private string        _importSummary = string.Empty;
 
     /// <summary>
+    /// Tags written onto every item this import creates.
+    /// </summary>
+    /// <remarks>
+    /// One set for the batch, not one per row. A tag control on each of a few hundred rows would
+    /// bury the list, and the tags worth setting here are the ones that are not about the individual
+    /// piece anyway — body type, creator, where the batch came from. Anything belonging to one item
+    /// is better applied afterwards, by selecting it in the grid.
+    /// </remarks>
+    private readonly List<string> _batchTags = new();
+    private string _batchTagInput = string.Empty;
+
+    /// <summary>
     /// Search inside the supplement picker. Separate from <see cref="_search"/> on purpose: sharing
     /// one field made typing in the picker silently filter the list behind it.
     /// </summary>
@@ -103,13 +115,8 @@ public class MassImportPanel : Window, IDisposable
         ItemLookupService itemLookup, IPluginLog log, ItalicFontService italicFont)
         : base("Mass Import###WardrobeMassImport")
     {
-        Size          = new Vector2(1100, 700);
+        // Sized in PreDraw, not here — see the note there
         SizeCondition = ImGuiCond.FirstUseEver;
-        SizeConstraints = new WindowSizeConstraints
-        {
-            MinimumSize = new Vector2(700, 400),
-            MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
-        };
 
         _config     = config;
         _penumbra   = penumbra;
@@ -121,11 +128,50 @@ public class MassImportPanel : Window, IDisposable
 
     // ── Open / close ──────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Sizes the window every frame, so it tracks Dalamud's Global Font Scale being changed while
+    /// the plugin is running rather than freezing at whatever it was when the panel was constructed.
+    /// </summary>
+    /// <remarks>
+    /// FirstUseEver, so assigning every frame lands once and never fights the user's own resize.
+    /// </remarks>
+    public override void PostDraw() => FontScope.Pop(ref _fontScope);
+
+    /// <summary>Held between <see cref="PreDraw"/> and <see cref="PostDraw"/>. See <see cref="FontScope"/>.</summary>
+    private IDisposable? _fontScope;
+
+    /// <summary>Last <see cref="UiScale.Factor"/> seen, to spot the setting being changed.</summary>
+    private float _lastScaleFactor;
+
+    public override void PreDraw()
+    {
+        FontScope.Push(ref _fontScope);
+
+        // A scaled MinimumSize forces this window larger when the setting goes up, and a smaller
+        // minimum will not pull it back down again — so the size is re-applied on a change. Back to
+        // the scaled default rather than a remembered size: this panel does not track one, and it is
+        // opened for a task and closed again rather than left arranged.
+        var factor  = UiScale.Factor;
+        var rescale = _lastScaleFactor > 0f && MathF.Abs(factor - _lastScaleFactor) > 0.001f;
+        _lastScaleFactor = factor;
+
+        // Unscaled: Dalamud scales Size and SizeConstraints itself — see IWindow's docs
+        Size          = new Vector2(1100, 700);
+        SizeCondition = rescale ? ImGuiCond.Always : ImGuiCond.FirstUseEver;
+        SizeConstraints = new WindowSizeConstraints
+        {
+            MinimumSize = new Vector2(700, 400),
+            MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
+        };
+    }
+
     public void Open()
     {
         _rows.Clear();
         _search        = string.Empty;
         _importSummary = string.Empty;
+        _batchTags.Clear();
+        _batchTagInput = string.Empty;
 
         _collections = _penumbra.GetCollections();
         _collectionIdx = 0;
@@ -316,13 +362,13 @@ public class MassImportPanel : Window, IDisposable
     // Column geometry, shared by the header and every row so they line up.
     // Both combos are a fixed width and sit together on the right, so the name gets the whole of
     // the left and grows with the window instead of running into a combo part-way across the row.
-    private const float CheckColW = 30f;
-    private const float OptColW   = 190f;
-    private const float SuppColW  = 260f;
+    private static float CheckColW => UiScale.S(30f);
+    private static float OptColW   => UiScale.S(190f);
+    private static float SuppColW  => UiScale.S(260f);
 
     private float NameColX  => CheckColW;
-    private float SuppColX  => Math.Max(NameColX + 130f + OptColW, _contentW - SuppColW);
-    private float OptColX   => SuppColX - OptColW - 10f;
+    private float SuppColX  => Math.Max(NameColX + UiScale.S(130f) + OptColW, _contentW - SuppColW);
+    private float OptColX   => SuppColX - OptColW - UiScale.S(10f);
 
     /// <summary>Room a row's name has before it would run into the options column.</summary>
     private float NameColW  => Math.Max(60f, OptColX - NameColX - 12f);
@@ -572,50 +618,7 @@ public class MassImportPanel : Window, IDisposable
         }
 
         foreach (var group in row.Analysis.OptionGroups)
-            DrawGroupPicker(group, row.SingleSel, row.MultiSel);
-    }
-
-    /// <summary>Mirrors <see cref="ItemImportPanel"/>'s group picker: Single is a dropdown, everything else checkboxes.</summary>
-    private static void DrawGroupPicker(ModOptionGroup group,
-        Dictionary<string, int> singleSel, Dictionary<string, HashSet<string>> multiSel)
-    {
-        ImGui.TextDisabled(group.GroupName);
-
-        if (group.GroupType == ModGroupType.Single)
-        {
-            if (!singleSel.ContainsKey(group.GroupName)) singleSel[group.GroupName] = 0;
-            var idx   = singleSel[group.GroupName];
-            var names = group.OptionNames.ToArray();
-            if (names.Length == 0) return;
-
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.BeginCombo($"##{group.GroupName}", idx < names.Length ? names[idx] : names[0]))
-            {
-                for (var i = 0; i < names.Length; i++)
-                {
-                    if (ImGui.Selectable(names[i], i == idx))
-                        singleSel[group.GroupName] = i;
-                    if (i == idx) ImGui.SetItemDefaultFocus();
-                }
-                ImGui.EndCombo();
-            }
-        }
-        else
-        {
-            if (!multiSel.ContainsKey(group.GroupName))
-                multiSel[group.GroupName] = new HashSet<string>();
-            var selected = multiSel[group.GroupName];
-
-            foreach (var opt in group.OptionNames)
-            {
-                var isChecked = selected.Contains(opt);
-                if (ImGui.Checkbox($"{opt}##{group.GroupName}_{opt}", ref isChecked))
-                {
-                    if (isChecked) selected.Add(opt);
-                    else           selected.Remove(opt);
-                }
-            }
-        }
+            ModOptionPicker.Draw(group, row.SingleSel, row.MultiSel);
     }
 
     private void DrawSupplementCombo(Row row)
@@ -693,13 +696,92 @@ public class MassImportPanel : Window, IDisposable
 
         var canImport = selected > 0;
         if (!canImport) ImGui.BeginDisabled();
-        if (ImGui.Button("Import Mods", new Vector2(140, 0)))
+        if (ImGui.Button("Import Mods", UiScale.S(140, 0)))
             DoImport();
         if (!canImport) ImGui.EndDisabled();
 
         ImGui.SameLine();
-        if (ImGui.Button("Close", new Vector2(120, 0)))
+        if (ImGui.Button("Close", UiScale.S(120, 0)))
             Close();
+
+        // On the button row rather than above it. The footer's height is reserved by Draw so the row
+        // list can fill what is left, and anything that adds a row here pushes these buttons off the
+        // bottom of the window — a popup costs no height at all, however much is inside it.
+        ImGui.SameLine();
+        var label = _batchTags.Count > 0 ? $"Tags ({_batchTags.Count})" : "Tags";
+        if (ImGui.Button($"{label}##batchTagsBtn", UiScale.S(120, 0)))
+            ImGui.OpenPopup(BatchTagsPopup);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Tags added to every item this import creates.");
+
+        DrawBatchTagsPopup();
+    }
+
+    private const string BatchTagsPopup = "##batchTagsPopup";
+
+    /// <summary>
+    /// Tags applied to everything this import creates, in a popup off the footer.
+    /// </summary>
+    /// <remarks>
+    /// A popup rather than an inline section because the footer's height is reserved in advance by
+    /// <see cref="Draw"/> so the row list can take the rest — anything that adds height here pushes
+    /// the Import button off the bottom of the window. The count on the button keeps a tag set and
+    /// then dismissed visible without opening it again.
+    /// </remarks>
+    private void DrawBatchTagsPopup()
+    {
+        if (!ImGui.BeginPopup(BatchTagsPopup)) return;
+
+        ImGui.TextDisabled("Added to every item this import creates. Best for what is true of\n" +
+                           "the whole batch — a body type, a creator — rather than any one piece.");
+        ImGui.Spacing();
+
+        var removeIdx = -1;
+        for (var i = 0; i < _batchTags.Count; i++)
+        {
+            if (i > 0) UiLayout.SameLineIfRoom(ImGui.CalcTextSize(_batchTags[i]).X + UiScale.S(40f));
+
+            ImGui.PushID($"btag_{i}");
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.35f, 0.2f, 0.55f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.45f, 0.28f, 0.68f, 1f));
+            ImGui.SmallButton(_batchTags[i]);
+            ImGui.PopStyleColor(2);
+            ImGui.SameLine();
+            if (ImGui.SmallButton("×")) removeIdx = i;
+            ImGui.PopID();
+        }
+        if (removeIdx >= 0) _batchTags.RemoveAt(removeIdx);
+
+        ImGui.SetNextItemWidth(UiScale.S(260f));
+        var entered = ImGui.InputTextWithHint("##batchTag", "tag name", ref _batchTagInput, 64,
+            ImGuiInputTextFlags.EnterReturnsTrue);
+        UiLayout.SameLineIfRoomForButton("Add");
+        if (ImGui.Button("Add") || entered) AddBatchTag(_batchTagInput);
+
+        // Nested rather than an early return: bailing out here would skip EndPopup and leave ImGui's
+        // stack unbalanced, which crashes inside cimgui a frame or two later, far from the cause
+        if (_config.AllTags().Count > 0)
+        {
+            ImGui.Spacing();
+            var height = ImGui.GetTextLineHeightWithSpacing() * 8;
+            if (ImGui.BeginChild("##batchTagTree", new Vector2(UiScale.S(320f), height), true))
+                TagTree.DrawPicker(TagTree.Build(_config), "batchpick",
+                    path => _batchTags.Contains(path, StringComparer.OrdinalIgnoreCase),
+                    AddBatchTag);
+            ImGui.EndChild();
+        }
+
+        ImGui.EndPopup();
+    }
+
+    private void AddBatchTag(string raw)
+    {
+        var tag = raw.Trim();
+        if (tag.Length == 0) return;
+        if (_batchTags.Contains(tag, StringComparer.OrdinalIgnoreCase)) return;
+
+        _batchTags.Add(tag);
+        _batchTagInput = string.Empty;
     }
 
     // ── Import ────────────────────────────────────────────────────────────────
@@ -810,6 +892,10 @@ public class MassImportPanel : Window, IDisposable
                     HairIdByRace      = slot == EquipSlot.Hair
                         ? analysis.HairIdsByRace.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value)
                         : new Dictionary<string, ushort>(),
+
+                    // Copied per item, not shared — one list across hundreds of items would have
+                    // every one of them re-tagged when any single item was edited later
+                    Tags              = new List<string>(_batchTags),
                 };
 
                 item.Mods.Add(new ModReference

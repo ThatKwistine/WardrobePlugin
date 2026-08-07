@@ -88,6 +88,24 @@ public class ItemImportPanel : IDisposable
     // Manual game-item search in edit mode
     private string _itemSearch = string.Empty;
 
+    // Search box for the linked-items picker in edit mode
+    private string _linkSearch = string.Empty;
+
+    // ── Import mode: tags and notes ───────────────────────────────────────────
+
+    /// <summary>
+    /// Tags given to every item this import creates, and the notes written on all of them.
+    /// </summary>
+    /// <remarks>
+    /// One set for the whole import rather than one per slot. A mod covering body and legs produces
+    /// two items that are the same outfit, the same creator and the same body type, so per-slot tag
+    /// boxes would mean typing the same thing twice for no gain. Anything that genuinely differs is
+    /// a rename away in the edit panel.
+    /// </remarks>
+    private readonly List<string> _importTags = new();
+    private string _importTagInput = string.Empty;
+    private string _importNotes    = string.Empty;
+
     // Single-select group → selected option index
     private readonly Dictionary<string, int> _groupSelections = new();
     // Multi-select (checkbox) group → set of checked option names
@@ -116,6 +134,9 @@ public class ItemImportPanel : IDisposable
         public bool      AlreadyImported;
         /// <summary>Model set ID for this slot, used to offer items sharing the same model.</summary>
         public ushort?   SetId;
+        /// <summary>Search text for this row's manual game-item picker. Per row, so two open at
+        /// once do not share one box.</summary>
+        public string    ItemSearch = string.Empty;
         /// <summary>Supplementary mod that contributed this slot, or null when the primary mod covers it.</summary>
         public string?   SourceMod;
         /// <summary>What the mod replaces within its category, for mod-category slots only.</summary>
@@ -197,6 +218,7 @@ public class ItemImportPanel : IDisposable
         _editTagInput = string.Empty;
         _editReplaces = item.Replaces ?? string.Empty;
         _editNotes    = item.Notes ?? string.Empty;
+        _linkSearch   = string.Empty;
 
         // Needed for the per-mod collection pickers, and for the supplementary-mod picker below;
         // edit mode may be opened without import mode ever having run, so neither list is
@@ -408,6 +430,10 @@ public class ItemImportPanel : IDisposable
 
         ImGui.Spacing();
         ImGui.Separator();
+        DrawLinkedItemsEditor(_editTarget!);
+
+        ImGui.Spacing();
+        ImGui.Separator();
 
         if (_session.FoldersReady)
         {
@@ -468,7 +494,7 @@ public class ItemImportPanel : IDisposable
                     }
                     else
                         foreach (var g in opts.Analysis.OptionGroups)
-                            DrawGroupPicker(g, opts.SingleSel, opts.MultiSel);
+                            ModOptionPicker.Draw(g, opts.SingleSel, opts.MultiSel);
                     ImGui.Spacing();
                 }
             }
@@ -483,6 +509,8 @@ public class ItemImportPanel : IDisposable
         ImGui.TextDisabled("A copy with the same mods but different options — another colour " +
                            "or style. It becomes an item of its own.");
         ImGui.Spacing();
+
+        DrawVariantGroup(_editTarget!);
 
         if (ImGui.Button("Create variant of this item", new Vector2(-1, 0)))
             CreateVariant(_editTarget!);
@@ -604,6 +632,54 @@ public class ItemImportPanel : IDisposable
     }
 
     /// <summary>
+    /// Where this item sits in its variant group, and the way out of it.
+    /// </summary>
+    /// <remarks>
+    /// Groups made by <c>Create variant</c> are recorded exactly, but items that predate that were
+    /// grouped by inference — same slot, same mods — which cannot tell a real variant from two items
+    /// that merely share a mod. Detaching has to be reachable, or a wrong guess would fold two
+    /// unrelated items into one card with nothing to be done about it.
+    /// Applies immediately: it also rewrites the other items in the group, which <b>Cancel</b> has
+    /// no way to put back.
+    /// </remarks>
+    private void DrawVariantGroup(WardrobeItem item)
+    {
+        var original = _wardrobe.ResolveOriginal(item);
+        var variants = original == null ? _wardrobe.ResolveVariants(item) : new List<WardrobeItem>();
+
+        if (original == null && variants.Count == 0) return;
+
+        if (original != null)
+        {
+            ImGui.TextDisabled("A variant of:");
+            ImGui.TextUnformatted($"  {original.Name}");
+        }
+        else
+        {
+            ImGui.TextDisabled($"{variants.Count} variant(s) of this item:");
+            foreach (var variant in variants)
+                ImGui.TextUnformatted($"  {variant.Name}");
+        }
+
+        ImGui.Spacing();
+
+        if (ImGui.SmallButton(original != null ? "Not a variant of this" : "Break this group up"))
+        {
+            _wardrobe.DetachFromVariantGroup(item);
+            _config.Save();
+            _log.Information($"[Wardrobe] '{item.Name}' detached from its variant group");
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(original != null
+                ? "Makes this a wardrobe item in its own right, with its own card\n" +
+                  "in the grid. Nothing about the item itself changes."
+                : "Separates every variant into an item of its own. Nothing is\n" +
+                  "deleted — they each get their own card again.");
+
+        ImGui.Spacing();
+    }
+
+    /// <summary>
     /// Clones an item as a new wardrobe entry, so it can be given a different set of mod options.
     /// </summary>
     /// <remarks>
@@ -624,8 +700,13 @@ public class ItemImportPanel : IDisposable
 
         var copy = new WardrobeItem
         {
-            Name              = $"{source.Name} (variant)",
+            // Read before the copy is added to the wardrobe, so the count it numbers from is the
+            // variants that already exist rather than including this one
+            Name              = _wardrobe.NextVariantName(source),
             Slot              = source.Slot,
+            // Groups stay flat: a variant of a variant belongs to the same original, not to the
+            // item it happened to be copied from
+            VariantOfId       = source.VariantOfId ?? source.Id,
             Replaces          = source.Replaces,
             Notes             = source.Notes,
             ImagePath         = source.ImagePath,
@@ -686,7 +767,7 @@ public class ItemImportPanel : IDisposable
         }
 
         ImGui.Spacing();
-        if (ImGui.BeginChild("##itemresults", new Vector2(-1, 160), true))
+        if (ImGui.BeginChild("##itemresults", new Vector2(-1, UiScale.S(160f)), true))
         {
             foreach (var (id, name) in results)
             {
@@ -963,7 +1044,7 @@ public class ItemImportPanel : IDisposable
             ImGui.Spacing();
             ImGui.TextDisabled("Pick a mod and click Analyze.");
             ImGui.Spacing();
-            if (ImGui.Button("Cancel", new Vector2(120, 0)))
+            if (ImGui.Button("Cancel", UiScale.S(120, 0)))
                 Close();
             return;
         }
@@ -976,7 +1057,7 @@ public class ItemImportPanel : IDisposable
         {
             ImGui.TextUnformatted("Options:");
             foreach (var g in _analysisResult.OptionGroups)
-                DrawGroupPicker(g, _groupSelections, _multiGroupSelections);
+                ModOptionPicker.Draw(g, _groupSelections, _multiGroupSelections);
             ImGui.Spacing();
         }
 
@@ -1039,6 +1120,10 @@ public class ItemImportPanel : IDisposable
             if (_analyzed) RebuildSlotConfigs();
         }
 
+        ImGui.Spacing();
+        ImGui.Separator();
+        DrawImportTagsAndNotes();
+
         // Confirm
         ImGui.Spacing();
         ImGui.Separator();
@@ -1051,16 +1136,96 @@ public class ItemImportPanel : IDisposable
         var importLabel = _slotConfigs.Count(c => c.Include) is var n and > 1
             ? $"Import {n} Items"
             : "Import";
-        if (ImGui.Button(importLabel, new Vector2(150, 0)))
+        if (ImGui.Button(importLabel, UiScale.S(150, 0)))
             DoImport();
         if (!canImport) ImGui.EndDisabled();
 
         ImGui.SameLine();
-        if (ImGui.Button("Cancel", new Vector2(120, 0)))
+        if (ImGui.Button("Cancel", UiScale.S(120, 0)))
             Close();
     }
 
     // ── Widget helpers ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Tags and notes applied to everything this import creates.
+    /// </summary>
+    /// <remarks>
+    /// Tagging at import is the only moment the information is actually to hand — what body type a
+    /// mod is for, where it came from, what it goes with. Left until later it means opening each
+    /// item again and remembering, which in practice means it does not happen.
+    /// </remarks>
+    private void DrawImportTagsAndNotes()
+    {
+        var plural = _slotConfigs.Count(c => c.Include) > 1 ? " every item this import creates" : " the new item";
+
+        ImGui.TextUnformatted("Tags & Notes");
+        ImGui.TextDisabled($"Applied to{plural}. Both can be changed afterwards when editing.");
+        ImGui.Spacing();
+
+        DrawImportTagChips();
+
+        ImGui.SetNextItemWidth(-UiLayout.ButtonWidth("Add") - ImGui.GetStyle().ItemSpacing.X);
+        var entered = ImGui.InputTextWithHint("##importTag", "tag name", ref _importTagInput, 64,
+            ImGuiInputTextFlags.EnterReturnsTrue);
+        ImGui.SameLine();
+        if (ImGui.Button("Add") || entered) AddImportTag(_importTagInput);
+
+        // The same tree the wardrobe's other tag pickers use, so a tag scheme laid out in the Tags
+        // panel is reachable here without retyping any of it
+        if (_config.AllTags().Count > 0)
+        {
+            ImGui.Spacing();
+            var height = ImGui.GetTextLineHeightWithSpacing() * 8;
+            if (ImGui.BeginChild("##importTagTree", new Vector2(-1, height), true))
+                TagTree.DrawPicker(TagTree.Build(_config), "importpick",
+                    path => _importTags.Contains(path, StringComparer.OrdinalIgnoreCase),
+                    AddImportTag);
+            ImGui.EndChild();
+            ImGui.TextDisabled("Click to add. Greyed tags have no items yet.");
+        }
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Notes");
+        var boxHeight = ImGui.GetTextLineHeight() * 3 + ImGui.GetStyle().FramePadding.Y * 2;
+        ImGui.InputTextMultiline("##importNotes", ref _importNotes, 2000, new Vector2(-1, boxHeight));
+    }
+
+    /// <summary>The tags staged for this import, each with a button to take it off again.</summary>
+    private void DrawImportTagChips()
+    {
+        if (_importTags.Count == 0) return;
+
+        var removeIdx = -1;
+        for (var i = 0; i < _importTags.Count; i++)
+        {
+            // SameLine only between chips, never after the last, so the next widget starts on a
+            // fresh line without a dangling SameLine to cancel
+            if (i > 0) UiLayout.SameLineIfRoom(ChipWidth(_importTags[i]));
+
+            ImGui.PushID($"itag_{i}");
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.35f, 0.2f, 0.55f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.45f, 0.28f, 0.68f, 1f));
+            ImGui.SmallButton(_importTags[i]);
+            ImGui.PopStyleColor(2);
+            ImGui.SameLine();
+            if (ImGui.SmallButton("×")) removeIdx = i;
+            ImGui.PopID();
+        }
+
+        if (removeIdx >= 0) _importTags.RemoveAt(removeIdx);
+        ImGui.Spacing();
+    }
+
+    private void AddImportTag(string raw)
+    {
+        var tag = raw.Trim();
+        if (tag.Length == 0) return;
+        if (_importTags.Contains(tag, StringComparer.OrdinalIgnoreCase)) return;
+
+        _importTags.Add(tag);
+        _importTagInput = string.Empty;
+    }
 
     private void DrawCollectionCombo()
     {
@@ -1212,46 +1377,6 @@ public class ItemImportPanel : IDisposable
                 _modSearch = string.Empty;
             }
             ImGui.EndCombo();
-        }
-    }
-
-    private static void DrawGroupPicker(ModOptionGroup group,
-        Dictionary<string, int> singleSel, Dictionary<string, HashSet<string>> multiSel)
-    {
-        ImGui.TextDisabled(group.GroupName);
-
-        if (group.GroupType == ModGroupType.Multi)
-        {
-            if (!multiSel.ContainsKey(group.GroupName))
-                multiSel[group.GroupName] = new HashSet<string>();
-            var selected = multiSel[group.GroupName];
-
-            foreach (var opt in group.OptionNames)
-            {
-                var isChecked = selected.Contains(opt);
-                if (ImGui.Checkbox($"{opt}##{group.GroupName}_{opt}", ref isChecked))
-                {
-                    if (isChecked) selected.Add(opt);
-                    else           selected.Remove(opt);
-                }
-            }
-        }
-        else
-        {
-            if (!singleSel.ContainsKey(group.GroupName)) singleSel[group.GroupName] = 0;
-            var idx   = singleSel[group.GroupName];
-            var names = group.OptionNames.ToArray();
-            ImGui.SetNextItemWidth(-1);
-            if (ImGui.BeginCombo($"##{group.GroupName}", idx < names.Length ? names[idx] : names[0]))
-            {
-                for (var i = 0; i < names.Length; i++)
-                {
-                    if (ImGui.Selectable(names[i], i == idx))
-                        singleSel[group.GroupName] = i;
-                    if (i == idx) ImGui.SetItemDefaultFocus();
-                }
-                ImGui.EndCombo();
-            }
         }
     }
 
@@ -1421,6 +1546,11 @@ public class ItemImportPanel : IDisposable
             cfg.GlamourerItemName = pickedName;
         }
 
+        // Same search the editor offers, for when the right item shares no model with the mod and
+        // so never appears in the picker above — or when detection found nothing at all
+        if (!cfg.Slot.IsModOnly())
+            DrawSlotManualItemPicker(cfg);
+
         ImGui.TextDisabled("Name");
         ImGui.SetNextItemWidth(-1);
         var n = cfg.Name;
@@ -1435,6 +1565,66 @@ public class ItemImportPanel : IDisposable
         ImGui.PopID();
     }
 
+    /// <summary>
+    /// <see cref="DrawManualItemPicker"/> for an import row, so the game item can be corrected
+    /// before the item exists rather than only afterwards.
+    /// </summary>
+    /// <remarks>
+    /// Collapsed by default: detection is right most of the time, and an always-open search box on
+    /// every slot of every import would bury the name and image fields that usually do need
+    /// attention. Writes to the row rather than to a wardrobe item, so Cancel discards it with
+    /// everything else on the panel.
+    /// </remarks>
+    private void DrawSlotManualItemPicker(SlotConfig cfg)
+    {
+        if (!ImGui.CollapsingHeader($"Set game item manually##manual_{cfg.Slot}")) return;
+
+        ImGui.TextDisabled($"Searches equippable {cfg.Slot.DisplayName()} items. Use this when the " +
+                           "detected item is wrong and the picker above does not list the right " +
+                           "one, or for mods that skin an existing item such as a piercing on an " +
+                           "Emperor's New piece.");
+        ImGui.Spacing();
+
+        ImGui.SetNextItemWidth(-1);
+        var search = cfg.ItemSearch;
+        if (ImGui.InputTextWithHint("##slotsearch", "Type at least 2 characters…", ref search, 128))
+            cfg.ItemSearch = search;
+
+        var results = _itemLookup.SearchItems(cfg.ItemSearch, cfg.Slot);
+        if (results.Count > 0)
+        {
+            ImGui.Spacing();
+            if (ImGui.BeginChild($"##slotresults_{cfg.Slot}", new Vector2(-1, UiScale.S(160f)), true))
+            {
+                foreach (var (id, name) in results)
+                {
+                    if (!ImGui.Selectable($"{name}##slotpick_{cfg.Slot}_{id}", id == cfg.GlamourerItemId))
+                        continue;
+
+                    cfg.GlamourerItemId   = id;
+                    cfg.GlamourerItemName = name;
+                    _log.Debug($"[Wardrobe] Import: {cfg.Slot} game item set manually to '{name}' (id={id})");
+                }
+            }
+            ImGui.EndChild();
+        }
+        else if (cfg.ItemSearch.Trim().Length >= 2)
+        {
+            ImGui.TextDisabled("No matching items for this slot.");
+        }
+
+        if (!cfg.GlamourerItemId.HasValue) return;
+
+        if (ImGui.SmallButton($"Clear game item##slotclear_{cfg.Slot}"))
+        {
+            cfg.GlamourerItemId   = null;
+            cfg.GlamourerItemName = null;
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Imports with no game item: Wear will enable the mod but equip\n" +
+                             "nothing, and Unwear will leave the slot alone.");
+    }
+
     // Returns false if the row was deleted
     private bool DrawExtraMod(int index)
     {
@@ -1443,11 +1633,11 @@ public class ItemImportPanel : IDisposable
 
         ImGui.Separator();
 
-        ImGui.SetNextItemWidth(-60);
+        ImGui.SetNextItemWidth(-UiScale.S(60f));
         var lbl = extra.Label;
         if (ImGui.InputText("##lbl", ref lbl, 64)) extra.Label = lbl;
         ImGui.SameLine();
-        var remove = ImGui.Button("X", new Vector2(50, 0));
+        var remove = ImGui.Button("X", UiScale.S(50, 0));
 
         var collNames = _collections.ToArray();
         if (collNames.Length > 0)
@@ -1470,7 +1660,7 @@ public class ItemImportPanel : IDisposable
         {
             var mi = Math.Min(extra.ModIdx, _mods.Count - 1);
             ImGui.TextDisabled("Mod  [~ to load options]");
-            ImGui.SetNextItemWidth(-60);
+            ImGui.SetNextItemWidth(-UiScale.S(60f));
 
             // Until a mod is chosen the preview must not imply mod 0 is selected
             var preview = extra.ModPicked ? _mods[mi].Name : "(pick a mod)";
@@ -1508,7 +1698,7 @@ public class ItemImportPanel : IDisposable
             // and an unbalanced Begin/EndDisabled corrupts ImGui's stack.
             var reloadDisabled = !extra.ModPicked;
             if (reloadDisabled) ImGui.BeginDisabled();
-            if (ImGui.Button("~", new Vector2(50, 0)))
+            if (ImGui.Button("~", UiScale.S(50, 0)))
             {
                 var m    = _mods[mi];
                 var path = _penumbra.GetModFolderPath(m.Dir);
@@ -1530,7 +1720,7 @@ public class ItemImportPanel : IDisposable
 
             if (extra.Analysis?.OptionGroups.Count > 0)
                 foreach (var g in extra.Analysis.OptionGroups)
-                    DrawGroupPicker(g, extra.GroupSelections, extra.MultiGroupSelections);
+                    ModOptionPicker.Draw(g, extra.GroupSelections, extra.MultiGroupSelections);
         }
 
         ImGui.PopID();
@@ -1773,6 +1963,11 @@ public class ItemImportPanel : IDisposable
                 HairIdByRace      = slot == EquipSlot.Hair && _analysisResult != null
                     ? _analysisResult.HairIdsByRace.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value)
                     : new Dictionary<string, ushort>(),
+
+                // Copied per item, not shared — one list across several items would have every one
+                // of them re-tagged when any single item was edited later
+                Tags              = new List<string>(_importTags),
+                Notes             = string.IsNullOrWhiteSpace(_importNotes) ? null : _importNotes.Trim(),
             };
             item.Mods.Add(new ModReference
             {
@@ -1866,6 +2061,119 @@ public class ItemImportPanel : IDisposable
         NoteText.DrawLinks(_editNotes);
     }
 
+    /// <summary>
+    /// The items worn and taken off alongside this one, with a picker to add more.
+    /// </summary>
+    /// <remarks>
+    /// Applied and saved as they are clicked rather than staged for Save, unlike every other field
+    /// here: a link is mutual, so it also lives on the other item, and there is no sensible way for
+    /// Cancel to take back half a relationship the other side has already been told about.
+    /// The section says so, so the difference is not a surprise.
+    /// </remarks>
+    private void DrawLinkedItemsEditor(WardrobeItem item)
+    {
+        ImGui.TextUnformatted("Linked items");
+        ImGui.TextDisabled("Worn and taken off together with this one. Its card keeps a button for " +
+                           "using just this item. Changes here apply straight away.");
+        ImGui.Spacing();
+
+        var links = _wardrobe.ResolveLinks(item);
+
+        if (links.Count == 0)
+        {
+            ImGui.TextDisabled("Not linked to anything.");
+        }
+        else
+        {
+            WardrobeItem? unlink = null;
+
+            foreach (var partner in links)
+            {
+                ImGui.PushID($"link_{partner.Id}");
+
+                if (ImGui.SmallButton("×")) unlink = partner;
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip($"Unlink '{partner.Name}'");
+
+                ImGui.SameLine();
+                ImGui.TextUnformatted($"{partner.Slot.DisplayName()} — {partner.Name}");
+
+                ImGui.PopID();
+            }
+
+            // Outside the loop: unlinking writes to both items, and the list being drawn is built
+            // from one of them
+            if (unlink != null)
+            {
+                _wardrobe.Unlink(item, unlink);
+                _config.Save();
+                _log.Information($"[Wardrobe] Unlinked '{item.Name}' from '{unlink.Name}'");
+            }
+        }
+
+        ImGui.Spacing();
+        DrawLinkPicker(item);
+    }
+
+    private void DrawLinkPicker(WardrobeItem item)
+    {
+        // A wardrobe can hold hundreds of items, so the list is capped and scrolls rather than
+        // running off the screen
+        if (!ImGui.BeginCombo("##linkadd", "Link another item…", ImGuiComboFlags.HeightLarge))
+            return;
+
+        if (ImGui.IsWindowAppearing())
+            ImGui.SetKeyboardFocusHere();
+
+        ImGui.SetNextItemWidth(-1);
+        ImGui.InputTextWithHint("##linksearch", "search", ref _linkSearch, 128);
+
+        var search = _linkSearch.Trim();
+
+        var candidates = _config.WardrobeItems
+            .Where(other => other.Id != item.Id && !WardrobeService.AreLinked(item, other))
+            .Where(other => search.Length == 0
+                         || other.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
+                         || other.Slot.DisplayName().Contains(search, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(other => (int)other.Slot)
+            .ThenBy(other => other.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        // Split rather than filtered, so searching for an item that cannot be linked finds it and
+        // says why instead of leaving you to wonder where it went
+        var linkable = candidates.Where(c => WardrobeService.LinkRefusal(item, c) == null).ToList();
+        var refused  = candidates.Except(linkable).ToList();
+
+        if (linkable.Count == 0 && refused.Count == 0)
+            ImGui.TextDisabled("Nothing matches.");
+
+        WardrobeItem? chosen = null;
+        foreach (var other in linkable)
+            if (ImGui.Selectable($"{other.Slot.DisplayName()} — {other.Name}##link_{other.Id}"))
+                chosen = other;
+
+        if (refused.Count > 0)
+        {
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.TextDisabled(item.Slot.IsModCategory()
+                ? $"Also replace {item.Replaces} — wearing one takes the other off:"
+                : $"Also {item.Slot.DisplayName()} items — wearing one takes the other off:");
+
+            foreach (var other in refused)
+                ImGui.TextDisabled($"  {other.Name}");
+        }
+
+        if (chosen != null && _wardrobe.Link(item, chosen, out _))
+        {
+            _config.Save();
+            _log.Information($"[Wardrobe] Linked '{item.Name}' with '{chosen.Name}'");
+            _linkSearch = string.Empty;
+            ImGui.CloseCurrentPopup();
+        }
+
+        ImGui.EndCombo();
+    }
+
     private void DrawTagEditor()
     {
         // Existing tags as chips with remove button.
@@ -1889,7 +2197,7 @@ public class ItemImportPanel : IDisposable
         if (removeIdx >= 0) _editTags.RemoveAt(removeIdx);
 
         // Add new tag — use "/" to create sub-tags e.g. "Shoes/Boots/Ankle Boots"
-        ImGui.SetNextItemWidth(200);
+        ImGui.SetNextItemWidth(UiScale.S(200));
         if (ImGui.InputText("##newtag", ref _editTagInput, 128,
                 ImGuiInputTextFlags.EnterReturnsTrue))
             TryAddTag();
@@ -1897,14 +2205,12 @@ public class ItemImportPanel : IDisposable
         if (ImGui.SmallButton("Add")) TryAddTag();
         ImGui.TextDisabled("Use / for sub-tags, e.g. Shoes/Boots/Ankle Boots");
 
-        // Quick-add suggestions from other items
-        var suggestions = _config.WardrobeItems
-            .SelectMany(i => i.Tags)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
+        // Every known tag, including ones made in the Tags panel before any item had them —
+        // otherwise a pre-made tag would have to be retyped from memory to be used
+        var suggestions = _config.AllTags()
             .Where(t => !_editTags.Contains(t, StringComparer.OrdinalIgnoreCase)
                      && (string.IsNullOrEmpty(_editTagInput)
                          || t.Contains(_editTagInput, StringComparison.OrdinalIgnoreCase)))
-            .OrderBy(t => t)
             .ToList();
 
         if (suggestions.Count > 0)
@@ -2051,6 +2357,9 @@ public class ItemImportPanel : IDisposable
         _slotChoices  = EquipSlotEx.Choices(_config.ModCategoriesEnabled);
         _editTags.Clear();
         _editTagInput = string.Empty;
+        _importTags.Clear();
+        _importTagInput = string.Empty;
+        _importNotes    = string.Empty;
     }
 
     public void Dispose() { }

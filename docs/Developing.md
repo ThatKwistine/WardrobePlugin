@@ -11,6 +11,49 @@ Dalamud loads the plugin from `bin/Debug/…` for local development — that pat
 `dalamudConfig.json`. Release exists only to produce `latest.zip`; building it does not change what
 you are running in game, and vice versa.
 
+## UI scaling
+
+Two rules, both learned the hard way.
+
+**Every fixed pixel size goes through `UiScale.S(…)`.** The factor is `ImGuiHelpers.GlobalScale`,
+which is Dalamud's **Global Font Scale** setting and nothing else — deliberately not derived from
+the bound font's size, which folds in Windows DPI the user never asked for. Card and panel widths,
+window sizes and minimums, column geometry and hard-coded button widths all read through it. A raw
+literal is a bug: at 300% the text grows and the box holding it does not, so the label clips.
+
+**The exception is `Window.Size` and `Window.SizeConstraints`.** Dalamud scales those itself —
+`IWindow`'s documentation says so outright — so they stay in unscaled units. Running them through
+`UiScale` scales them twice.
+
+That also means `ImGui.GetWindowSize()`, which reports real pixels, must be divided by
+`UiScale.Factor` before being remembered and handed back as `Size`. Storing pixels and returning them
+as an already-scaled property is a feedback loop that multiplies the window by the scale on every
+frame it is applied; it grew the main window to tens of thousands of pixels wide, past the point of
+being draggable back. Raw ImGui calls — `SetNextWindowSize`, `BeginChild`, `SetNextItemWidth`, button
+sizes — are not scaled by anyone and do need `UiScale`.
+
+Window `Size` and `SizeConstraints` are set in `PreDraw`, not in the constructor, so they follow the
+setting being changed while the plugin is running.
+
+A window also has to be **resized** when the scale changes, not merely re-constrained. A scaled
+`MinimumSize` forces the window larger when the setting goes up, but a smaller minimum only
+*permits* a smaller window — it will not pull one back down, so it stays stranded at its enlarged
+size until dragged by hand. Both windows compare `UiScale.Factor` against the last frame's and
+re-apply `Size` with `ImGuiCond.Always` when it moves. No arithmetic on the size is needed: it is
+held unscaled, and Dalamud multiplies it up.
+
+**Every window pushes `FontScope` in `PreDraw` and pops it in `PostDraw`.** Without it a plugin
+window renders at a third of the intended font size while Dalamud's own windows render correctly.
+It also goes wrong *inconsistently*: ImGui passes a window's font scale down only one level of child
+nesting ([ocornut/imgui#2701](https://github.com/ocornut/imgui/issues/2701)), so content one child
+deep stays small while content two deep springs back to full size — which looks like two different
+fonts in one window.
+
+`PreDraw`/`PostDraw` rather than `Draw`, because those bracket ImGui's `Begin`, and the title bar is
+drawn by `Begin`. Pushing inside `Draw` fixes the body and leaves the title bar small.
+
+If you add a new `Window`, it needs both.
+
 ## IPC surface used
 
 `Penumbra.Api.xml` ships next to `Penumbra.dll` in the installed plugin folder and is the

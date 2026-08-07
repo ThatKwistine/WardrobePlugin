@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
 using WardrobePlugin.Ipc;
@@ -345,7 +346,14 @@ public class WardrobeService : IDisposable
         _config.HairstyleBeforeWardrobe = null;
     }
 
-    public void UnwearItem(WardrobeItem item, bool save = true, bool redraw = true)
+    /// <returns>
+    /// True when the character still needs a redraw for this removal to be visible and none was
+    /// done — either because <paramref name="redraw"/> was false, or because there was nothing to
+    /// redraw for. Lets a caller removing several items at once redraw only if one of them actually
+    /// asked for it, instead of forcing one on a set that swapped its Glamourer items and did not
+    /// need it.
+    /// </returns>
+    public bool UnwearItem(WardrobeItem item, bool save = true, bool redraw = true)
     {
         var disabledAny = false;
 
@@ -411,10 +419,12 @@ public class WardrobeService : IDisposable
         // until something else redrew the character.
         RestoreCustomizationFor(item);
 
-        if (redraw && disabledAny && !swappedItem)
+        var needsRedraw = disabledAny && !swappedItem;
+        if (redraw && needsRedraw)
         {
             _log.Debug($"[Wardrobe] UnwearItem: redrawing for '{item.Name}' — no Glamourer item swap to force a reload");
             _penumbra.RedrawPlayer();
+            needsRedraw = false;
         }
 
         if (save)
@@ -422,10 +432,274 @@ public class WardrobeService : IDisposable
             _config.Save();
             WardrobeChanged?.Invoke();
         }
+
+        return needsRedraw;
     }
 
     public bool IsItemWorn(WardrobeItem item) =>
         _config.WornItems.TryGetValue(item.WornKey(), out var id) && id == item.Id;
+
+    // ── Linked items ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The items linked to this one that still exist, in slot order.
+    /// </summary>
+    /// <remarks>
+    /// One hop: the partners' own links are not followed. Ids left behind by deleted items are
+    /// skipped rather than repaired here — <see cref="ForgetLinksTo"/> does the tidying, and a read
+    /// during drawing must not write to the config.
+    /// </remarks>
+    public List<WardrobeItem> ResolveLinks(WardrobeItem item) =>
+        item.LinkedItemIds
+            .Select(id => _config.WardrobeItems.Find(x => x.Id == id))
+            .Where(x => x != null)
+            .Select(x => x!)
+            .OrderBy(x => (int)x.Slot)
+            .ToList();
+
+    /// <summary>Why two items cannot be linked, or null when they can.</summary>
+    /// <remarks>
+    /// Two items that occupy the same key displace each other: wearing the pair would leave whichever
+    /// was applied last on the character and the other recorded as not worn, so the link would read
+    /// as broken every time it was used. Refused at the point of linking, where it can be explained,
+    /// rather than silently misbehaving later.
+    /// </remarks>
+    public static string? LinkRefusal(WardrobeItem a, WardrobeItem b)
+    {
+        if (a.Id == b.Id) return "An item cannot be linked to itself.";
+
+        if (a.WornKey() == b.WornKey())
+            return a.Slot.IsModCategory()
+                ? $"Both replace {a.Replaces} — wearing one takes the other off, so linking them would never hold."
+                : $"Both are {a.Slot.DisplayName()} items — wearing one takes the other off, so linking them would never hold.";
+
+        return null;
+    }
+
+    public static bool AreLinked(WardrobeItem a, WardrobeItem b) =>
+        a.LinkedItemIds.Contains(b.Id);
+
+    /// <summary>
+    /// Links two items so each wears and removes the other. Returns false when they cannot be
+    /// linked, with the reason in <paramref name="refusal"/>.
+    /// </summary>
+    /// <remarks>
+    /// Writes both sides. Does not save — callers link several pairs at once and save when done.
+    /// </remarks>
+    public bool Link(WardrobeItem a, WardrobeItem b, out string? refusal)
+    {
+        refusal = LinkRefusal(a, b);
+        if (refusal != null) return false;
+
+        if (!a.LinkedItemIds.Contains(b.Id)) a.LinkedItemIds.Add(b.Id);
+        if (!b.LinkedItemIds.Contains(a.Id)) b.LinkedItemIds.Add(a.Id);
+        return true;
+    }
+
+    /// <summary>Breaks the link between two items, from both sides. Does not save.</summary>
+    public bool Unlink(WardrobeItem a, WardrobeItem b)
+    {
+        var removed  = a.LinkedItemIds.Remove(b.Id);
+        return b.LinkedItemIds.Remove(a.Id) || removed;
+    }
+
+    /// <summary>
+    /// Drops every reference to an item from the other half of its links, for use before deleting it.
+    /// </summary>
+    /// <remarks>
+    /// A dangling id is harmless to read past, but left in place it would re-attach itself if that
+    /// Guid ever came back — which re-importing an exported item does. Does not save: deletion
+    /// already writes the config once it is done removing.
+    /// </remarks>
+    public void ForgetLinksTo(Guid id)
+    {
+        foreach (var other in _config.WardrobeItems)
+            other.LinkedItemIds.Remove(id);
+    }
+
+    // ── Variant groups ────────────────────────────────────────────────────────
+
+    /// <summary>Every variant of this item that still exists, oldest first.</summary>
+    public List<WardrobeItem> ResolveVariants(WardrobeItem original) =>
+        _config.WardrobeItems
+            .Where(i => i.Id != original.Id && i.VariantOfId == original.Id)
+            .OrderBy(i => i.DateAdded)
+            .ToList();
+
+    /// <summary>The item a variant belongs to, or null when this is not a variant.</summary>
+    public WardrobeItem? ResolveOriginal(WardrobeItem item) =>
+        item.VariantOfId is { } id ? _config.WardrobeItems.Find(x => x.Id == id) : null;
+
+    /// <summary>
+    /// Keeps a variant group together when the item at its head is deleted, by promoting the oldest
+    /// remaining variant in its place. Call before removing the item. Does not save.
+    /// </summary>
+    /// <remarks>
+    /// Without this, deleting an original would scatter its variants into separate cards — they all
+    /// still hold its id, which now matches nothing. Since every member is the same mods in
+    /// different options, any of them can head the group, so the oldest takes over and the fold
+    /// state moves with it rather than the group springing open.
+    /// </remarks>
+    public void ReparentVariantsOf(WardrobeItem original)
+    {
+        var groupKey = original.Id.ToString();
+
+        // A variant being deleted heads nothing; only its own membership goes, which needs no work
+        if (original.VariantOfId.HasValue) return;
+
+        var variants = ResolveVariants(original);
+        if (variants.Count == 0)
+        {
+            _config.ExpandedVariantGroups.Remove(groupKey);
+            return;
+        }
+
+        var promoted = variants[0];
+        promoted.VariantOfId = null;
+
+        foreach (var variant in variants.Skip(1))
+            variant.VariantOfId = promoted.Id;
+
+        if (_config.ExpandedVariantGroups.Remove(groupKey))
+            _config.ExpandedVariantGroups.Add(promoted.Id.ToString());
+
+        _log.Debug($"[Wardrobe] '{original.Name}' deleted — '{promoted.Name}' now heads its " +
+                   $"{variants.Count} variant(s)");
+    }
+
+    /// <summary>
+    /// The name a new variant of this item would be given, in the configured style.
+    /// </summary>
+    /// <remarks>
+    /// Built from the group's original rather than from whatever was copied, so making a variant of
+    /// a variant gives "Silk Top (Variant-3)" and not "Silk Top (Variant-2) (Variant-2)". The number
+    /// continues from the variants the original already has, which is what makes the sequence hold
+    /// when they are created one at a time over weeks.
+    /// </remarks>
+    public string NextVariantName(WardrobeItem source)
+    {
+        var original = ResolveOriginal(source) ?? source;
+        return original.Name + VariantSuffix(_config.VariantNameStyle, ResolveVariants(original).Count + 1);
+    }
+
+    /// <param name="index">Which variant this is, counting from 1.</param>
+    public static string VariantSuffix(VariantNameStyle style, int index) => style switch
+    {
+        VariantNameStyle.Numbered  => $" (Variant-{index})",
+        VariantNameStyle.Lettered  => $" (Variant-{VariantLetter(index)})",
+
+        // Separators are quoted because bare '/' and ':' in a format string are placeholders for
+        // whatever the current culture uses, so an unquoted format would render differently
+        // depending on the machine's locale rather than matching what the settings preview showed.
+        //
+        // Minutes, so two variants made in the same minute collide. Shown in the settings preview,
+        // where picking this style displays the same name twice over.
+        VariantNameStyle.Timestamp => $" ({DateTime.Now:dd'/'MM'/'yy - HH':'mm})",
+
+        _                          => " (variant)",
+    };
+
+    /// <summary>1 → A, 26 → Z, 27 → AA, so the sequence does not run out at Z.</summary>
+    private static string VariantLetter(int index)
+    {
+        var letters = new StringBuilder();
+        while (index > 0)
+        {
+            index--;
+            letters.Insert(0, (char)('A' + index % 26));
+            index /= 26;
+        }
+        return letters.ToString();
+    }
+
+    /// <summary>
+    /// Takes an item out of its variant group, or dissolves the group when given its original.
+    /// Does not save.
+    /// </summary>
+    /// <remarks>
+    /// The way to undo a grouping that was inferred rather than recorded — items imported before
+    /// variants tracked where they came from are grouped by a rule that cannot tell a genuine
+    /// variant from two items that merely share a mod and a slot.
+    /// </remarks>
+    public void DetachFromVariantGroup(WardrobeItem item)
+    {
+        if (item.VariantOfId.HasValue)
+        {
+            item.VariantOfId = null;
+            return;
+        }
+
+        foreach (var variant in ResolveVariants(item))
+            variant.VariantOfId = null;
+
+        _config.ExpandedVariantGroups.Remove(item.Id.ToString());
+    }
+
+    /// <summary>
+    /// Wears an item together with everything linked to it.
+    /// </summary>
+    /// <remarks>
+    /// The item itself goes on first, so a partner that shares a mod finds it already enabled and
+    /// claimed, and so the thing actually clicked wins any Glamourer race against the rest.
+    /// Partners already worn are skipped rather than re-applied — re-wearing costs a Penumbra reload
+    /// and would restart the re-apply retries for something already correct.
+    /// Returns false if any of them failed, exactly as <see cref="WearItem"/> does.
+    /// </remarks>
+    public bool WearItemLinked(WardrobeItem item, OutfitDye? dye = null)
+    {
+        var success = WearItem(item, dye);
+
+        foreach (var partner in ResolveLinks(item))
+        {
+            if (IsItemWorn(partner)) continue;
+            _log.Debug($"[Wardrobe] '{item.Name}' also wears linked item '{partner.Name}'");
+            if (!WearItem(partner)) success = false;
+        }
+
+        return success;
+    }
+
+    /// <summary>
+    /// Removes an item together with any linked items currently worn.
+    /// </summary>
+    /// <remarks>
+    /// One save and at most one redraw for the whole set, as <see cref="UnwearOutfit"/> does: each
+    /// removal on its own would write the config repeatedly and could redraw the character several
+    /// times over for a single click.
+    /// </remarks>
+    public void UnwearItemLinked(WardrobeItem item)
+    {
+        var worn = ResolveLinks(item).Where(IsItemWorn).ToList();
+
+        // Nothing to batch, so hand straight over rather than redraw where the single-item path
+        // would not have. A redraw is visible on the character, and one per unequip of an ordinary
+        // unlinked item would be a change to every removal in the wardrobe.
+        if (worn.Count == 0)
+        {
+            UnwearItem(item);
+            return;
+        }
+
+        // Suppressed per item so the set comes off in one go rather than redrawing the character
+        // once for each piece. Only a removal that disabled mods without swapping a Glamourer item —
+        // hair, an animation, a texture mod — has nothing else to make it visible and asks for one;
+        // ordinary gear forces its own reload by swapping to Emperor's New, and redrawing on top of
+        // that is a visible stutter for no benefit.
+        var needsRedraw = UnwearItem(item, save: false, redraw: false);
+
+        foreach (var partner in worn)
+        {
+            _log.Debug($"[Wardrobe] '{item.Name}' also removes linked item '{partner.Name}'");
+            needsRedraw |= UnwearItem(partner, save: false, redraw: false);
+        }
+
+        if (needsRedraw) _penumbra.RedrawPlayer();
+
+        _log.Information($"[Wardrobe] Removed '{item.Name}' with {worn.Count} linked item(s)");
+
+        _config.Save();
+        WardrobeChanged?.Invoke();
+    }
 
     /// <summary>
     /// Disables the mods behind everything the character has on, then forces every equipment slot
@@ -890,13 +1164,18 @@ public class WardrobeService : IDisposable
     public void UnwearOutfit(Outfit outfit)
     {
         var items = ResolveOutfit(outfit).Where(IsItemWorn).ToList();
+
+        // One redraw at the end rather than per item — and only if one of them actually needs it.
+        // Gear forces its own reload by swapping to Emperor's New, so an outfit of nothing but
+        // equipment has no use for a redraw and visibly stutters when given one; hair, animations
+        // and texture mods have nothing else to make them disappear and do ask.
+        var needsRedraw = false;
         foreach (var item in items)
-            UnwearItem(item, save: false, redraw: false);
+            needsRedraw |= UnwearItem(item, save: false, redraw: false);
 
         if (_activeOutfitId == outfit.Id) _activeOutfitId = null;
 
-        // One redraw at the end rather than per item
-        if (items.Count > 0) _penumbra.RedrawPlayer();
+        if (needsRedraw) _penumbra.RedrawPlayer();
 
         _config.Save();
         WardrobeChanged?.Invoke();

@@ -53,6 +53,9 @@ public sealed class Plugin : IDalamudPlugin
         if (_config.MigrateOnboarding()) _config.Save();
         if (_config.MigrateModOwnership()) _config.Save();
 
+        // After MigrateDateAdded, which it uses to decide which member of a group is the original
+        if (_config.MigrateVariantGroups()) _config.Save();
+
         // Glamourer state is not persisted across sessions, so nothing is worn on load
         if (_config.WornItems.Count > 0)
         {
@@ -126,7 +129,7 @@ public sealed class Plugin : IDalamudPlugin
             var item = _config.WardrobeItems.Find(i =>
                 i.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
             if (item != null)
-                _wardrobeService.WearItem(item);
+                _wardrobeService.WearItemLinked(item);
             else
                 Log.Warning($"[Wardrobe] No item named '{name}' found.");
             return;
