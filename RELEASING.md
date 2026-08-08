@@ -56,7 +56,23 @@ changed.
 
 Then the changes, under **What's new** and, where there are any, **Fixes**.
 
-Two things to hold to in that part:
+### Shape
+
+**A flat bullet list under each heading. No sub-headings, ever.** One bullet per change: a bold
+sentence naming it, then one or two plain sentences saying what it does. That is the whole format —
+read the last two or three releases before writing and match them.
+
+The pull is always towards writing more, because the work is fresh and every part of it feels worth
+explaining. It is not. A release page is read in about twenty seconds by someone deciding whether to
+click update, and `###` headings with paragraphs beneath them turn it into a documentation page
+nobody asked for. The detail belongs in `docs/`, which is where anyone who wants it will look; the
+notes exist to say what changed.
+
+If a change needs the reader to *do* something before it takes effect — re-save a preset, press
+Update, re-run a scan — give that its own bullet rather than burying it in the one above. It has been
+its own bullet in every release where it came up, and it is the part people miss.
+
+### Two things to hold to
 
 - **Only claim what has been seen working.** A fix that is correct in code is not a user-visible
   improvement until someone has run it. Say what changed, not what it ought to feel like.
