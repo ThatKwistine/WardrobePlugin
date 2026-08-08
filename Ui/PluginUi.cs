@@ -1745,6 +1745,22 @@ public class PluginUi : Window, IDisposable
     private static float SortBoxWidth   => UiScale.S(150f);
 
     /// <summary>
+    /// Width of the styles dropdown. Narrower than the boxes beside it — its preview is one style
+    /// name and a count, not a sentence.
+    /// </summary>
+    private static float StyleBoxWidth  => UiScale.S(110f);
+
+    /// <summary>
+    /// The styles as of this frame, or empty where the dropdown is not drawn.
+    /// </summary>
+    /// <remarks>
+    /// Read once at the top of the filter row because two things need it and neither should scan
+    /// every item's tags again for it: the dropdown itself, and the width of the block it sits in —
+    /// which is what decides how many slot buttons fit before the rest go into the More dropdown.
+    /// </remarks>
+    private IReadOnlyList<TagNode> _frameStyles = Array.Empty<TagNode>();
+
+    /// <summary>
     /// Spare room a slot button needs before it is promoted out of the More dropdown, so the bar
     /// settles instead of flickering while the window is being dragged.
     /// </summary>
@@ -1776,13 +1792,24 @@ public class PluginUi : Window, IDisposable
         // More, so letting it depend on the box being empty meant typing the first character could
         // push a slot button out and reflow the whole row.
         var clearW = ClearButtonWidth() + style.ItemSpacing.X;
+        var styleW = _frameStyles.Count == 0 ? 0f : StyleBoxWidth + style.ItemSpacing.X;
 
-        return SearchBoxWidth + clearW + style.ItemSpacing.X + SortBoxWidth;
+        return styleW + SearchBoxWidth + clearW + style.ItemSpacing.X + SortBoxWidth;
     }
 
     private void DrawSlotFilter()
     {
         ImGui.Spacing();
+
+        var styles = TagTree.Styles(_config);
+
+        // Deleting the last style while filtered on it would otherwise leave the grid empty with
+        // nothing on screen to clear it — the control that held the filter is gone with it
+        if (styles.Count == 0) _styleFilter.Clear();
+
+        // Outfits are filtered by none of the tag filters, so the dropdown would visibly do nothing
+        // there. The filter itself is kept, so coming back to items restores what was showing.
+        _frameStyles = _outfitsView ? Array.Empty<TagNode>() : styles;
 
         // Outfits is a view of its own rather than a slot filter, so it sits first and apart
         var outfitsActive = _outfitsView;
@@ -1867,7 +1894,6 @@ public class PluginUi : Window, IDisposable
 
         DrawSlotButtons();
         DrawSearchAndSort();
-        DrawStyleRow();
         ImGui.Spacing();
     }
 
@@ -1880,39 +1906,27 @@ public class PluginUi : Window, IDisposable
     /// at least one style exists, so a wardrobe that does not use them is not given an empty control
     /// to wonder about, the same way the Variants button waits for a variant.
     /// </remarks>
-    private void DrawStyleRow()
+    /// <summary>
+    /// The styles dropdown, sitting in the search block on the filter row.
+    /// </summary>
+    /// <remarks>
+    /// Clearing lives inside the popup rather than as a button beside it. On a row this crowded a
+    /// control that only appears once a filter is on pushes everything left of it along as it comes
+    /// and goes, and the place you are already looking when you want to drop a style is the list of
+    /// them.
+    /// </remarks>
+    private void DrawStyleCombo()
     {
-        // Outfits are filtered by none of the tag filters, so a styles dropdown there would be a
-        // control that visibly does nothing
-        if (_outfitsView) return;
-
-        var styles = TagTree.Styles(_config);
-        if (styles.Count == 0)
-        {
-            // Deleting the last style while filtered on it would otherwise leave the grid empty with
-            // nothing on screen to clear it — the row that held the clear button is gone
-            _styleFilter.Clear();
-            return;
-        }
-
         // Chosen in the order they are shown, so the preview does not reshuffle as styles are ticked
-        var chosen = styles.Where(s => _styleFilter.Contains(s.FullPath)).ToList();
+        var chosen = _frameStyles.Where(s => _styleFilter.Contains(s.FullPath)).ToList();
         var active = chosen.Count > 0;
 
         var preview = chosen.Count switch
         {
             0 => "Styles",
             1 => chosen[0].Segment,
-            _ => $"{chosen[0].Segment}  +{chosen.Count - 1}",
+            _ => $"{chosen[0].Segment} +{chosen.Count - 1}",
         };
-
-        ImGui.TextUnformatted("Styles");
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Mood or theme, across every slot — Casual, Beach, Comfy.\n" +
-                             "Set them on an item in its edit panel, or on a whole\n" +
-                             "selection at once from Select → Edit Selected.");
-
-        ImGui.SameLine();
 
         if (active)
         {
@@ -1921,41 +1935,45 @@ public class PluginUi : Window, IDisposable
             ImGui.PushStyleColor(ImGuiCol.FrameBgActive,  new Vector4(0.52f, 0.38f, 0.74f, 1f));
         }
 
-        ImGui.SetNextItemWidth(UiScale.S(200));
+        ImGui.SetNextItemWidth(StyleBoxWidth);
         var open = ImGui.BeginCombo("##stylefilter", preview);
         if (active) ImGui.PopStyleColor(3);
 
-        if (open)
+        if (!open)
         {
-            foreach (var style in styles)
-            {
-                var on = _styleFilter.Contains(style.FullPath);
-
-                // The popup stays open on a click: picking several styles is the normal case, and
-                // reopening the dropdown between each would make it the tedious one
-                if (ImGui.Selectable(style.Segment, on, ImGuiSelectableFlags.DontClosePopups))
-                {
-                    if (!_styleFilter.Remove(style.FullPath))
-                        _styleFilter.Add(style.FullPath);
-                }
-
-                if (!style.InUse && ImGui.IsItemHovered())
-                    ImGui.SetTooltip("No items have this style yet.");
-            }
-
-            ImGui.EndCombo();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(active
+                    ? $"Showing {string.Join(", ", chosen.Select(c => c.Segment))}."
+                    : "Filter by mood or theme — Casual, Beach, Comfy.\n" +
+                      "Set them on an item in its edit panel, or on a\n" +
+                      "whole selection from Select → Edit Selected.");
+            return;
         }
 
-        if (!active) return;
+        if (active)
+        {
+            if (ImGui.Selectable("Clear", false, ImGuiSelectableFlags.DontClosePopups))
+                _styleFilter.Clear();
+            ImGui.Separator();
+        }
 
-        ImGui.SameLine();
-        if (ImGui.SmallButton("×##clearstyles")) _styleFilter.Clear();
-        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Clear the style filter.");
+        foreach (var style in _frameStyles)
+        {
+            var on = _styleFilter.Contains(style.FullPath);
 
-        ImGui.SameLine();
-        ImGui.TextDisabled(chosen.Count == 1
-            ? "Showing one style."
-            : $"Showing anything in {chosen.Count} of these styles.");
+            // The popup stays open on a click: picking several styles is the normal case, and
+            // reopening the dropdown between each would make it the tedious one
+            if (ImGui.Selectable(style.Segment, on, ImGuiSelectableFlags.DontClosePopups))
+            {
+                if (!_styleFilter.Remove(style.FullPath))
+                    _styleFilter.Add(style.FullPath);
+            }
+
+            if (!style.InUse && ImGui.IsItemHovered())
+                ImGui.SetTooltip("No items have this style yet.");
+        }
+
+        ImGui.EndCombo();
     }
 
     /// <summary>
@@ -2177,6 +2195,15 @@ public class PluginUi : Window, IDisposable
         // in the middle of the row when the box is empty.
         var hasSearch = !string.IsNullOrEmpty(_search);
         var clearW    = ClearButtonWidth() + style.ItemSpacing.X;
+
+        // Beside the search box rather than on a row of its own: it narrows the grid the same way
+        // search does, and a whole line with a label for one dropdown was more furniture than the
+        // control is worth
+        if (_frameStyles.Count > 0)
+        {
+            DrawStyleCombo();
+            ImGui.SameLine();
+        }
 
         ImGui.SetNextItemWidth(hasSearch ? SearchBoxWidth : SearchBoxWidth + clearW);
         ImGui.InputTextWithHint("##search", "Search name, tag, mod, note…", ref _search, 128);

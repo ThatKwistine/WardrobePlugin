@@ -9,9 +9,9 @@ A **style** is the mood or theme of a piece rather than what it is — Casual, B
 Where a tag says a thing is a pair of boots, a style says what it is *for*, which is the question
 you are actually asking when a hundred chest pieces are in front of you.
 
-Styles get their own dropdown on the row under the slot filters, so narrowing to everything comfy is
-one click and never involves opening a panel. The row appears once you have at least one style, and
-stays out of the way until then.
+Styles get their own dropdown beside the search box, so narrowing to everything comfy is one click
+and never involves opening a panel. It appears once you have at least one style, and stays out of the
+way until then.
 
 Underneath they are ordinary tags filed under `Style/` — `Style/Casual`, `Style/Beach` — so
 everything tags can do they can do too: made ahead of use, applied to a whole selection at once,

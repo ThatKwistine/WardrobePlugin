@@ -2300,7 +2300,7 @@ public class ItemImportPanel : IDisposable
             }
         }
 
-        ImGui.TextDisabled("Mood or theme. Filter by these from the row under the slot buttons.");
+        ImGui.TextDisabled("Mood or theme. Filter by these from the dropdown beside the search box.");
         ImGui.Spacing();
 
         return paths;
