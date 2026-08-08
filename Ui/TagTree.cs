@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 
@@ -32,22 +33,100 @@ public sealed class TagNode
 public static class TagTree
 {
     /// <summary>
+    /// Tag path segment reserved for styles — the mood or theme of a piece rather than what it is.
+    /// </summary>
+    /// <remarks>
+    /// Styles are ordinary tags under this root, so everything tags already do — pre-making them,
+    /// bulk applying, search, backup — works on them without a second system to keep in step. What
+    /// makes them styles is only where they are shown: their own row under the filters rather than
+    /// somewhere in the tag tree, which is the whole of what was asked for.
+    /// </remarks>
+    public const string StyleRoot = "Style";
+
+    /// <summary>Whether a tag is a style. A bare "Style" with nothing under it is an ordinary tag.</summary>
+    public static bool IsStyle(string tag) =>
+        tag.StartsWith(StyleRoot + "/", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The tag a style name is stored as.</summary>
+    public static string StylePath(string name) => $"{StyleRoot}/{name}";
+
+    /// <summary>
     /// Builds the tree from tags on items plus tags made ahead of use.
     /// </summary>
-    public static TagNode Build(Configuration config)
+    /// <param name="includeStyles">
+    /// Whether the reserved <see cref="StyleRoot"/> branch is part of the tree. False wherever
+    /// styles have a control of their own and would otherwise be offered twice; true where the tree
+    /// is the only way to reach a tag, so that bulk-applying a style to a selection stays possible.
+    /// </param>
+    public static TagNode Build(Configuration config, bool includeStyles)
     {
         var root = new TagNode();
 
         foreach (var item in config.WardrobeItems)
         foreach (var tag in item.Tags)
+        {
+            if (!includeStyles && IsStyle(tag)) continue;
             AddPath(root, tag, inUse: true);
+        }
 
         // After the items, so a pre-made tag that has since been used is already marked in use and
         // is not dimmed back down again
         foreach (var tag in config.DefinedTags)
+        {
+            if (!includeStyles && IsStyle(tag)) continue;
             AddPath(root, tag, inUse: false);
+        }
 
         return root;
+    }
+
+    /// <summary>
+    /// The styles: the direct children of the reserved root, in name order, each carrying whether
+    /// any item has it.
+    /// </summary>
+    /// <remarks>
+    /// Only one level deep. A style nested further — <c>Style/Beach/Tropical</c> — is reported as
+    /// its top style and still matched by it, since filtering on a tag has always included the tags
+    /// below it. That keeps the row a row rather than a second tree, which is the point of it.
+    /// </remarks>
+    /// <remarks>
+    /// <para>
+    /// Scanned straight out of the tags rather than read off <see cref="Build"/>, because the row
+    /// this feeds is drawn every frame of the main window and building the whole tree to look at one
+    /// branch of it would allocate the other branches for nothing.
+    /// </para>
+    /// </remarks>
+    public static IReadOnlyList<TagNode> Styles(Configuration config)
+    {
+        var styles = new SortedDictionary<string, TagNode>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(string tag, bool inUse)
+        {
+            if (!IsStyle(tag)) return;
+
+            // Only the segment below the root: a style filed deeper is reported as the style it is
+            // under, which prefix matching then filters correctly anyway
+            var rest = tag[(StyleRoot.Length + 1)..];
+            var cut  = rest.IndexOf('/');
+            var name = (cut < 0 ? rest : rest[..cut]).Trim();
+            if (name.Length == 0) return;
+
+            if (!styles.TryGetValue(name, out var node))
+                styles[name] = node = new TagNode { Segment = name, FullPath = StylePath(name) };
+
+            if (inUse) node.InUse = true;
+        }
+
+        foreach (var item in config.WardrobeItems)
+        foreach (var tag in item.Tags)
+            Add(tag, inUse: true);
+
+        // After the items, so a style made ahead of use that something has since taken is already
+        // marked in use and is not dimmed back down again
+        foreach (var tag in config.DefinedTags)
+            Add(tag, inUse: false);
+
+        return styles.Values.ToList();
     }
 
     /// <summary>

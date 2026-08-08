@@ -765,7 +765,9 @@ public class MassImportPanel : Window, IDisposable
             ImGui.Spacing();
             var height = ImGui.GetTextLineHeightWithSpacing() * 8;
             if (ImGui.BeginChild("##batchTagTree", new Vector2(UiScale.S(320f), height), true))
-                TagTree.DrawPicker(TagTree.Build(_config), "batchpick",
+                // Styles included, as in the single-item import: a batch brought in together is
+                // usually of a piece, and styling it here saves doing it item by item afterwards
+                TagTree.DrawPicker(TagTree.Build(_config, includeStyles: true), "batchpick",
                     path => _batchTags.Contains(path, StringComparer.OrdinalIgnoreCase),
                     AddBatchTag);
             ImGui.EndChild();

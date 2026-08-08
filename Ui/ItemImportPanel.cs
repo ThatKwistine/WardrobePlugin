@@ -1172,13 +1172,14 @@ public class ItemImportPanel : IDisposable
         if (ImGui.Button("Add") || entered) AddImportTag(_importTagInput);
 
         // The same tree the wardrobe's other tag pickers use, so a tag scheme laid out in the Tags
-        // panel is reachable here without retyping any of it
+        // panel is reachable here without retyping any of it. Styles included: a batch imported
+        // together is usually of a piece, and styling it here saves doing it item by item after.
         if (_config.AllTags().Count > 0)
         {
             ImGui.Spacing();
             var height = ImGui.GetTextLineHeightWithSpacing() * 8;
             if (ImGui.BeginChild("##importTagTree", new Vector2(-1, height), true))
-                TagTree.DrawPicker(TagTree.Build(_config), "importpick",
+                TagTree.DrawPicker(TagTree.Build(_config, includeStyles: true), "importpick",
                     path => _importTags.Contains(path, StringComparer.OrdinalIgnoreCase),
                     AddImportTag);
             ImGui.EndChild();
@@ -2176,14 +2177,23 @@ public class ItemImportPanel : IDisposable
 
     private void DrawTagEditor()
     {
+        var styles = DrawStylePicker();
+
         // Existing tags as chips with remove button.
         // Only call SameLine *between* chips — never after the last one — so the
         // next widget always starts on a fresh line without needing NewLine() to
         // cancel a dangling SameLine. A chip that would not fit starts a new row.
+        //
+        // A style the picker above already shows is not repeated as a chip. Matched exactly rather
+        // than on the prefix, so a style filed deeper than the picker goes — Style/Beach/Tropical —
+        // still gets a chip and can still be taken off, instead of becoming unreachable.
         var removeIdx = -1;
+        var drawn     = 0;
         for (var i = 0; i < _editTags.Count; i++)
         {
-            if (i > 0) UiLayout.SameLineIfRoom(ChipWidth(_editTags[i]));
+            if (styles.Contains(_editTags[i])) continue;
+
+            if (drawn++ > 0) UiLayout.SameLineIfRoom(ChipWidth(_editTags[i]));
             ImGui.PushID($"tag_{i}");
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.35f, 0.2f, 0.55f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.45f, 0.28f, 0.68f, 1f));
@@ -2209,6 +2219,7 @@ public class ItemImportPanel : IDisposable
         // otherwise a pre-made tag would have to be retyped from memory to be used
         var suggestions = _config.AllTags()
             .Where(t => !_editTags.Contains(t, StringComparer.OrdinalIgnoreCase)
+                     && !styles.Contains(t)
                      && (string.IsNullOrEmpty(_editTagInput)
                          || t.Contains(_editTagInput, StringComparison.OrdinalIgnoreCase)))
             .ToList();
@@ -2240,6 +2251,59 @@ public class ItemImportPanel : IDisposable
                         : "Click to add · right-click to edit first");
             }
         }
+    }
+
+    /// <summary>
+    /// The wardrobe's styles as a row of toggles, for setting an item's mood or theme.
+    /// </summary>
+    /// <remarks>
+    /// Styles are stored as tags, but they are a fixed short list rather than free text, so they get
+    /// toggles instead of the type-and-add box below: the whole point of a style is that everything
+    /// in one is spelled the same, which typing it each time does not deliver.
+    /// </remarks>
+    /// <returns>
+    /// The style paths the row covers, so the tag chips and suggestions below can leave out what is
+    /// already shown here.
+    /// </returns>
+    private HashSet<string> DrawStylePicker()
+    {
+        var styles = TagTree.Styles(_config);
+        var paths  = styles.Select(s => s.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Nothing to pick from until some style exists. Made in the Tags panel rather than here,
+        // since a style invented while editing one item is exactly the typo-per-item problem tags
+        // already have.
+        if (styles.Count == 0) return paths;
+
+        ImGui.TextDisabled("Styles");
+
+        for (var i = 0; i < styles.Count; i++)
+        {
+            var style = styles[i];
+            var on    = _editTags.Contains(style.FullPath, StringComparer.OrdinalIgnoreCase);
+
+            if (i > 0) UiLayout.SameLineIfRoomForButton(style.Segment);
+
+            if (on)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.42f, 0.3f, 0.62f, 1f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.52f, 0.38f, 0.74f, 1f));
+            }
+
+            var clicked = ImGui.SmallButton($"{style.Segment}##editstyle_{style.FullPath}");
+            if (on) ImGui.PopStyleColor(2);
+
+            if (clicked)
+            {
+                if (on) _editTags.RemoveAll(t => t.Equals(style.FullPath, StringComparison.OrdinalIgnoreCase));
+                else    _editTags.Add(style.FullPath);
+            }
+        }
+
+        ImGui.TextDisabled("Mood or theme. Filter by these from the row under the slot buttons.");
+        ImGui.Spacing();
+
+        return paths;
     }
 
     /// <summary>

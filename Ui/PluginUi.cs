@@ -45,9 +45,32 @@ public class PluginUi : Window, IDisposable
     // Tag filter: empty = show all
     private readonly HashSet<string> _tagFilter = new();
 
+    /// <summary>
+    /// Style filter — full tag paths, empty meaning show all.
+    /// </summary>
+    /// <remarks>
+    /// Kept apart from <see cref="_tagFilter"/> rather than folded into it because the two have to
+    /// combine differently: several tags, or several styles, widen what is shown, but a tag and a
+    /// style together narrow it. Sharing one set would answer "casual boots" with everything that is
+    /// either, which is not the question anyone is asking of the row.
+    /// </remarks>
+    private readonly HashSet<string> _styleFilter = new(StringComparer.OrdinalIgnoreCase);
+
     // Make-a-tag box in the Tags panel, and what the last attempt did
     private string _newTag       = string.Empty;
     private string _newTagStatus = string.Empty;
+
+    // Make-a-style box in the Tags panel, and what the last attempt did
+    private string _newStyle       = string.Empty;
+    private string _newStyleStatus = string.Empty;
+
+    // Name box for saving a camera preset, and the preset currently being renamed. The slot is part
+    // of the rename state so that switching to an item in another slot mid-rename does not leave the
+    // box open over an unrelated slot's list.
+    private string _newPresetName   = string.Empty;
+    private string _renamePresetSlot = string.Empty;
+    private int    _renamePresetIdx  = -1;
+    private string _renamePresetBuf  = string.Empty;
 
     // Per original item: how many of its variants the grid is showing, and how many it folded away.
     // Rebuilt every frame by FoldVariants from what the filters left, so it always describes what is
@@ -1611,8 +1634,10 @@ public class PluginUi : Window, IDisposable
         var height = ImGui.GetTextLineHeightWithSpacing() * 12;
 
         // EndChild unconditionally — it is required even when BeginChild returns false
+        // Styles included here, unlike the filter tree: this is the only place a style can be put on
+        // a whole selection at once, which is most of the reason to have one
         if (ImGui.BeginChild("##bulkTagTree", new Vector2(-1, height), true))
-            TagTree.DrawPicker(TagTree.Build(_config), "bulkpick",
+            TagTree.DrawPicker(TagTree.Build(_config, includeStyles: true), "bulkpick",
                 path => _bulkTag.Trim().Equals(path, StringComparison.OrdinalIgnoreCase),
                 path =>
                 {
@@ -1682,7 +1707,8 @@ public class PluginUi : Window, IDisposable
         UiLayout.PopWrap();
 
         if (_visibleCount != total && ImGui.IsItemHovered())
-            ImGui.SetTooltip("Filtered by the current search, slot, tag, worn or favourites selection.");
+            ImGui.SetTooltip("Filtered by the current search, slot, style, tag, worn or favourites " +
+                             "selection.");
     }
 
     private void ToggleButton(string label, ref bool state, Action? onActivate = null)
@@ -1734,12 +1760,22 @@ public class PluginUi : Window, IDisposable
     /// Width of the search and sort controls together, as they are drawn at the end of the filter
     /// row. Shared so the bar can reserve exactly what they will take.
     /// </summary>
+    /// <summary>
+    /// Width of the search box's clear button. Read by both the layout maths and the button itself,
+    /// so the space reserved and the space filled cannot drift apart.
+    /// </summary>
+    private static float ClearButtonWidth() =>
+        ImGui.CalcTextSize("×").X + ImGui.GetStyle().FramePadding.X * 2;
+
     private float SearchBlockWidth()
     {
-        var style  = ImGui.GetStyle();
-        var clearW = string.IsNullOrEmpty(_search)
-            ? 0f
-            : ImGui.CalcTextSize("×").X + style.FramePadding.X * 2 + style.ItemSpacing.X;
+        var style = ImGui.GetStyle();
+
+        // The clear button's width counts whether or not it is drawn — an empty search box holds its
+        // place with a Dummy. This width decides how many slot buttons fit before the rest go into
+        // More, so letting it depend on the box being empty meant typing the first character could
+        // push a slot button out and reflow the whole row.
+        var clearW = ClearButtonWidth() + style.ItemSpacing.X;
 
         return SearchBoxWidth + clearW + style.ItemSpacing.X + SortBoxWidth;
     }
@@ -1831,7 +1867,95 @@ public class PluginUi : Window, IDisposable
 
         DrawSlotButtons();
         DrawSearchAndSort();
+        DrawStyleRow();
         ImGui.Spacing();
+    }
+
+    /// <summary>
+    /// The styles row: one dropdown under the slot filters for narrowing by mood or theme.
+    /// </summary>
+    /// <remarks>
+    /// A row of its own rather than another button on the filter row, because styles are a scheme
+    /// that grows — ten of them would push the slot buttons into the More dropdown. Drawn only once
+    /// at least one style exists, so a wardrobe that does not use them is not given an empty control
+    /// to wonder about, the same way the Variants button waits for a variant.
+    /// </remarks>
+    private void DrawStyleRow()
+    {
+        // Outfits are filtered by none of the tag filters, so a styles dropdown there would be a
+        // control that visibly does nothing
+        if (_outfitsView) return;
+
+        var styles = TagTree.Styles(_config);
+        if (styles.Count == 0)
+        {
+            // Deleting the last style while filtered on it would otherwise leave the grid empty with
+            // nothing on screen to clear it — the row that held the clear button is gone
+            _styleFilter.Clear();
+            return;
+        }
+
+        // Chosen in the order they are shown, so the preview does not reshuffle as styles are ticked
+        var chosen = styles.Where(s => _styleFilter.Contains(s.FullPath)).ToList();
+        var active = chosen.Count > 0;
+
+        var preview = chosen.Count switch
+        {
+            0 => "Styles",
+            1 => chosen[0].Segment,
+            _ => $"{chosen[0].Segment}  +{chosen.Count - 1}",
+        };
+
+        ImGui.TextUnformatted("Styles");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Mood or theme, across every slot — Casual, Beach, Comfy.\n" +
+                             "Set them on an item in its edit panel, or on a whole\n" +
+                             "selection at once from Select → Edit Selected.");
+
+        ImGui.SameLine();
+
+        if (active)
+        {
+            ImGui.PushStyleColor(ImGuiCol.FrameBg,        new Vector4(0.42f, 0.3f, 0.62f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.FrameBgHovered, new Vector4(0.52f, 0.38f, 0.74f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.FrameBgActive,  new Vector4(0.52f, 0.38f, 0.74f, 1f));
+        }
+
+        ImGui.SetNextItemWidth(UiScale.S(200));
+        var open = ImGui.BeginCombo("##stylefilter", preview);
+        if (active) ImGui.PopStyleColor(3);
+
+        if (open)
+        {
+            foreach (var style in styles)
+            {
+                var on = _styleFilter.Contains(style.FullPath);
+
+                // The popup stays open on a click: picking several styles is the normal case, and
+                // reopening the dropdown between each would make it the tedious one
+                if (ImGui.Selectable(style.Segment, on, ImGuiSelectableFlags.DontClosePopups))
+                {
+                    if (!_styleFilter.Remove(style.FullPath))
+                        _styleFilter.Add(style.FullPath);
+                }
+
+                if (!style.InUse && ImGui.IsItemHovered())
+                    ImGui.SetTooltip("No items have this style yet.");
+            }
+
+            ImGui.EndCombo();
+        }
+
+        if (!active) return;
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("×##clearstyles")) _styleFilter.Clear();
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Clear the style filter.");
+
+        ImGui.SameLine();
+        ImGui.TextDisabled(chosen.Count == 1
+            ? "Showing one style."
+            : $"Showing anything in {chosen.Count} of these styles.");
     }
 
     /// <summary>
@@ -2011,7 +2135,8 @@ public class PluginUi : Window, IDisposable
     private static float FilterButtonWidth(EquipSlot slot)
     {
         if (Plugin.SlotIcons.Enabled &&
-            (Plugin.SlotIcons.TryGetGameIcon(slot, out _) || Plugin.SlotIcons.TryGetFontIcon(slot, out _)))
+            (Plugin.SlotIcons.HasCustomIcon(slot) ||
+             Plugin.SlotIcons.TryGetGameIcon(slot, out _) || Plugin.SlotIcons.TryGetFontIcon(slot, out _)))
             return Plugin.SlotIcons.ScaledRowSize + ImGui.GetStyle().FramePadding.X * 2;
 
         return UiLayout.ButtonWidth(slot.DisplayName());
@@ -2046,13 +2171,25 @@ public class PluginUi : Window, IDisposable
             ImGui.PushStyleVar(ImGuiStyleVar.FramePadding,
                 new Vector2(style.FramePadding.X, style.FramePadding.Y + extraY));
 
-        ImGui.SetNextItemWidth(SearchBoxWidth);
+        // The block is a fixed width, and the search box takes whatever the clear button is not
+        // using. So the box gives up exactly the button's width as it appears and takes it back as
+        // it goes: the sort box never moves, the row never reflows, and there is no gap left sitting
+        // in the middle of the row when the box is empty.
+        var hasSearch = !string.IsNullOrEmpty(_search);
+        var clearW    = ClearButtonWidth() + style.ItemSpacing.X;
+
+        ImGui.SetNextItemWidth(hasSearch ? SearchBoxWidth : SearchBoxWidth + clearW);
         ImGui.InputTextWithHint("##search", "Search name, tag, mod, note…", ref _search, 128);
 
-        if (!string.IsNullOrEmpty(_search))
+        if (hasSearch)
         {
             ImGui.SameLine();
-            if (ImGui.Button("×##clearsearch", new Vector2(0, FilterRowHeight))) _search = string.Empty;
+
+            // Deliberately unsized. While this row is shared, FramePadding is already pushed to make
+            // plain widgets match the icon buttons, so an auto-sized button is exactly the right
+            // height — whereas asking for FilterRowHeight here would add that padding a second time
+            // and draw a button taller than the boxes either side of it.
+            if (ImGui.Button("×##clearsearch")) _search = string.Empty;
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Clear search.");
         }
 
@@ -2075,6 +2212,18 @@ public class PluginUi : Window, IDisposable
             _config.Save();
         }
     }
+
+    /// <summary>
+    /// Whether an item carries any of a set of tags, counting a tag nested under one of them.
+    /// </summary>
+    /// <remarks>
+    /// Filtering on <c>Shoes</c> has always included <c>Shoes/Boots</c>, and the same rule is what
+    /// lets a style stay one entry on the row while anything filed below it still answers to it.
+    /// </remarks>
+    private static bool HasAnyTag(WardrobeItem item, HashSet<string> filter) =>
+        item.Tags.Any(t => filter.Any(f =>
+            string.Equals(t, f, StringComparison.OrdinalIgnoreCase) ||
+            t.StartsWith(f + "/", StringComparison.OrdinalIgnoreCase)));
 
     private void DrawFilterButton(string label, EquipSlot? slot)
     {
@@ -2124,7 +2273,12 @@ public class PluginUi : Window, IDisposable
         ImGui.PushID((int)slot);
 
         bool clicked;
-        if (Plugin.SlotIcons.TryGetGameIcon(slot, out var handle))
+        if (Plugin.SlotIcons.TryGetCustomIcon(slot, out var custom) && custom != null)
+        {
+            // Centre-cropped rather than stretched — a supplied image will not always be square
+            clicked = ImageDraw.SquareButton("customslot", custom, size);
+        }
+        else if (Plugin.SlotIcons.TryGetGameIcon(slot, out var handle))
         {
             // ImageButton centres the image in the frame itself — no overlay needed.
             // Uniqueness comes from the PushID above, since this overload takes no string id.
@@ -2229,6 +2383,12 @@ public class PluginUi : Window, IDisposable
             f.Equals(path, StringComparison.OrdinalIgnoreCase) ||
             f.StartsWith($"{path}/", StringComparison.OrdinalIgnoreCase));
 
+        // Styles are deleted through here too, and a filter left pointing at one that no longer
+        // exists would quietly empty the grid
+        _styleFilter.RemoveWhere(f =>
+            f.Equals(path, StringComparison.OrdinalIgnoreCase) ||
+            f.StartsWith($"{path}/", StringComparison.OrdinalIgnoreCase));
+
         _config.Save();
         _log.Information($"[Wardrobe] Deleted {removed} pre-made tag(s) under '{path}'");
     }
@@ -2245,7 +2405,12 @@ public class PluginUi : Window, IDisposable
         ImGui.Spacing();
         DrawNewTagRow();
 
-        if (_config.AllTags().Count == 0)
+        ImGui.Spacing();
+        DrawStylesSection();
+
+        // Styles are tags, so the panel is never truly empty once one exists — but the tag tree
+        // below it can still be, and says so rather than showing a bare header
+        if (TagTree.Build(_config, includeStyles: false).Children.Count == 0)
         {
             ImGui.Spacing();
             ImGui.TextDisabled("No tags yet. Make one above, or add them when editing an item.");
@@ -2265,10 +2430,190 @@ public class PluginUi : Window, IDisposable
                 if (ImGui.SmallButton("× Clear")) _tagFilter.Clear();
                 ImGui.Separator();
             }
-            DrawTagTree(TagTree.Build(_config));
+            DrawTagTree(TagTree.Build(_config, includeStyles: false));
             ImGui.Spacing();
         }
         ImGui.Spacing();
+    }
+
+    /// <summary>
+    /// A starter scheme, offered once to a wardrobe that has no styles of its own yet.
+    /// </summary>
+    /// <remarks>
+    /// Broad and few on purpose: enough that the row has something in it and the idea explains
+    /// itself, not so many that anyone taking the offer inherits a scheme they then have to prune.
+    /// </remarks>
+    private static readonly string[] StarterStyles =
+    {
+        "Casual", "Comfy", "Cute", "Elegant", "Formal",
+        "Beach", "Sleepy", "Tech", "Fantasy", "Modern",
+    };
+
+    /// <summary>
+    /// Where styles are made, deleted and filtered on from the Tags panel.
+    /// </summary>
+    /// <remarks>
+    /// Above the tag tree rather than inside it: the tree no longer contains them, and a style is
+    /// the coarser cut of the two — what mood something is, before what kind of thing it is.
+    /// </remarks>
+    private void DrawStylesSection()
+    {
+        var styles = TagTree.Styles(_config);
+
+        var header = _styleFilter.Count > 0
+            ? $"Styles  ·  {_styleFilter.Count} active###StylesHeader"
+            : "Styles###StylesHeader";
+
+        if (!ImGui.CollapsingHeader(header, ImGuiTreeNodeFlags.DefaultOpen)) return;
+
+        ImGui.Spacing();
+        ImGui.SetNextItemWidth(-UiLayout.ButtonWidth(" Make Style ") - ImGui.GetStyle().ItemSpacing.X);
+        var entered = ImGui.InputTextWithHint("##newstyle", "new style", ref _newStyle, 64,
+            ImGuiInputTextFlags.EnterReturnsTrue);
+
+        ImGui.SameLine();
+        var name  = NormaliseStyle(_newStyle);
+        var empty = name.Length == 0;
+
+        if (empty) ImGui.BeginDisabled();
+        if (ImGui.Button(" Make Style ") || (entered && !empty)) MakeStyle(name);
+        if (empty) ImGui.EndDisabled();
+
+        ImGui.TextDisabled("A mood or theme that cuts across slots — Casual, Beach, Comfy. Shown as " +
+                           "a dropdown\nunder the filters, and set on an item in its edit panel.");
+
+        if (!string.IsNullOrEmpty(_newStyleStatus))
+            ImGui.TextColored(new Vector4(0.5f, 0.85f, 0.6f, 1f), _newStyleStatus);
+
+        DrawStarterStylesOffer(styles.Count);
+
+        if (styles.Count == 0)
+        {
+            ImGui.Spacing();
+            return;
+        }
+
+        ImGui.Spacing();
+        if (_styleFilter.Count > 0)
+        {
+            if (ImGui.SmallButton("× Clear##clearstylefilter")) _styleFilter.Clear();
+            ImGui.Separator();
+        }
+
+        // Deleting mutates DefinedTags, which the list being walked was built from
+        string? deleted = null;
+
+        for (var i = 0; i < styles.Count; i++)
+        {
+            var style  = styles[i];
+            var active = _styleFilter.Contains(style.FullPath);
+
+            if (i > 0) UiLayout.SameLineIfRoomForButton(style.Segment);
+
+            if (active)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.42f, 0.3f, 0.62f, 1f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.52f, 0.38f, 0.74f, 1f));
+            }
+            else if (!style.InUse)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.45f, 0.45f, 0.52f, 1f));
+            }
+
+            var clicked = ImGui.SmallButton($"{style.Segment}##style_{style.FullPath}");
+
+            if (active)             ImGui.PopStyleColor(2);
+            else if (!style.InUse)  ImGui.PopStyleColor();
+
+            if (clicked && !_styleFilter.Remove(style.FullPath))
+                _styleFilter.Add(style.FullPath);
+
+            // Same rule as the tag tree: only a style nothing carries can be deleted, so removing
+            // one can never take a style off an item behind the user's back
+            if (!style.InUse)
+            {
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("No items have this style yet.\nRight-click to delete it.");
+
+                if (ImGui.BeginPopupContextItem($"##stylectx_{style.FullPath}"))
+                {
+                    if (ImGui.MenuItem($"Delete '{style.Segment}'")) deleted = style.FullPath;
+                    ImGui.EndPopup();
+                }
+            }
+        }
+
+        if (deleted != null) DeleteDefinedTag(deleted);
+        ImGui.Spacing();
+    }
+
+    /// <summary>
+    /// The one-time offer of <see cref="StarterStyles"/>.
+    /// </summary>
+    /// <remarks>
+    /// Only while the wardrobe has no styles at all, and only until it is answered either way, so
+    /// anyone with a scheme of their own can say no once and never see it again. Declining records
+    /// the same flag as accepting: the point is that the question is asked once, not that it is
+    /// asked until it gets the answer it wants.
+    /// </remarks>
+    private void DrawStarterStylesOffer(int existingStyles)
+    {
+        if (_config.StarterStylesOffered || existingStyles > 0) return;
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Nothing here yet. Start from a ready-made set, or make your own above:");
+        ImGui.TextDisabled($"  {string.Join(", ", StarterStyles)}");
+
+        if (ImGui.SmallButton("Add these"))
+        {
+            foreach (var style in StarterStyles)
+                _config.DefinedTags.Add(TagTree.StylePath(style));
+
+            _config.StarterStylesOffered = true;
+            _config.Save();
+            _log.Information($"[Wardrobe] Added {StarterStyles.Length} starter styles");
+            _newStyleStatus = $"Added {StarterStyles.Length} styles. Delete any you do not want.";
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("No thanks"))
+        {
+            _config.StarterStylesOffered = true;
+            _config.Save();
+        }
+    }
+
+    /// <summary>
+    /// Puts a typed style name into the tag it is stored as.
+    /// </summary>
+    /// <remarks>
+    /// Tolerates the prefix being typed in as well as left off, so someone who has noticed how
+    /// styles are stored does not end up with <c>Style/Style/Casual</c> for using that knowledge.
+    /// </remarks>
+    private static string NormaliseStyle(string raw)
+    {
+        var name = NormaliseTag(raw);
+        if (TagTree.IsStyle(name))
+            name = NormaliseTag(name[(TagTree.StyleRoot.Length + 1)..]);
+
+        return name.Length == 0 ? string.Empty : TagTree.StylePath(name);
+    }
+
+    private void MakeStyle(string path)
+    {
+        // Against every known tag, as with tags: a style some item already carries needs no entry
+        if (_config.AllTags().Any(t => t.Equals(path, StringComparison.OrdinalIgnoreCase)))
+        {
+            _newStyleStatus = $"'{path[(TagTree.StyleRoot.Length + 1)..]}' already exists.";
+            return;
+        }
+
+        _config.DefinedTags.Add(path);
+        _config.Save();
+        _log.Information($"[Wardrobe] Made style '{path}'");
+
+        _newStyle       = string.Empty;
+        _newStyleStatus = $"Made '{path[(TagTree.StyleRoot.Length + 1)..]}'.";
     }
 
     /// <summary>
@@ -2370,10 +2715,12 @@ public class PluginUi : Window, IDisposable
         if (_slotFilter != null)
             query = query.Where(x => x.Slot == _slotFilter);
         if (_tagFilter.Count > 0)
-            query = query.Where(x => x.Tags.Any(t =>
-                _tagFilter.Any(f =>
-                    string.Equals(t, f, StringComparison.OrdinalIgnoreCase) ||
-                    t.StartsWith(f + "/", StringComparison.OrdinalIgnoreCase))));
+            query = query.Where(x => HasAnyTag(x, _tagFilter));
+
+        // A second clause rather than more of the first: within either set the matches widen what is
+        // shown, but a style and a tag together narrow it — "boots" and "casual" means casual boots
+        if (_styleFilter.Count > 0)
+            query = query.Where(x => HasAnyTag(x, _styleFilter));
 
         if (!string.IsNullOrWhiteSpace(_search))
         {
@@ -2601,8 +2948,13 @@ public class PluginUi : Window, IDisposable
         if (hasBadge) ImGui.TextUnformatted(badge);
         ImGui.PopStyleColor();
 
+        // Styles first and without the root they are filed under — on a card it is the name that
+        // means something, and "#Style/Casual" reads as a tag scheme leaking out
         if (item.Tags.Count > 0 && ImGui.IsItemHovered())
-            ImGui.SetTooltip(string.Join("  ", item.Tags.Select(t => $"#{t}")));
+            ImGui.SetTooltip(string.Join("  ",
+                item.Tags.Where(TagTree.IsStyle)
+                    .Select(t => t[(TagTree.StyleRoot.Length + 1)..])
+                    .Concat(item.Tags.Where(t => !TagTree.IsStyle(t)).Select(t => $"#{t}"))));
 
         // The badge line is kept even when it is empty, so every card stays the same height —
         // whichever of the two filled it, or an empty line when neither did
@@ -3257,74 +3609,230 @@ public class PluginUi : Window, IDisposable
 
     // ── Camera preset controls (used inside session HUD) ──────────────────────
 
+    /// <summary>
+    /// The camera presets for an item's slot: apply, overwrite, rename, reorder and delete, plus a
+    /// box for saving the current camera as a new one.
+    /// </summary>
+    /// <remarks>
+    /// Presets belong to the slot rather than the item, so every pair of boots shares them — which
+    /// is the point, since the angle that frames one pair frames them all. Several per slot because
+    /// one angle is rarely enough: a full-body shot and a close-up are different pictures of the
+    /// same piece, and before this you had to re-aim the camera by hand between them.
+    /// </remarks>
     private void DrawCameraPresetControls(WardrobeItem? item)
     {
         if (item == null) return;
 
-        var slotKey  = item.Slot.ToString();
-        var hasPreset = _config.SlotCameraPresets.ContainsKey(slotKey);
+        var slotKey = item.Slot.ToString();
+        var presets = _config.PresetsFor(slotKey);
 
-        ImGui.TextDisabled($"Camera preset — {item.Slot.DisplayName()}");
+        ImGui.TextDisabled($"Camera presets — {item.Slot.DisplayName()}");
 
-        if (hasPreset)
-        {
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.4f, 1f, 0.4f, 1f));
-            ImGui.TextUnformatted("Saved");
-            ImGui.PopStyleColor();
-
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Apply"))
-                Plugin.Camera.Apply(_config.SlotCameraPresets[slotKey]);
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Snap the camera to the saved preset now.\nCamera control returns to you after about half a second.");
-
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Update"))
-            {
-                var captured = Plugin.Camera.Capture();
-                if (captured != null)
-                {
-                    _config.SlotCameraPresets[slotKey] = captured;
-                    _config.Save();
-                    _config.SavePresets();
-                }
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Overwrite the saved preset with the current camera position.");
-
-            ImGui.SameLine();
-            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
-            if (ImGui.SmallButton("Clear"))
-            {
-                _config.SlotCameraPresets.Remove(slotKey);
-                _config.Save();
-                _config.SavePresets();
-            }
-            ImGui.PopStyleColor(2);
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Remove the camera preset for this slot.");
-        }
-        else
+        if (presets.Count == 0)
         {
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.6f, 0.6f, 0.6f, 1f));
             ImGui.TextUnformatted("None saved");
             ImGui.PopStyleColor();
+        }
+
+        if (presets.Count > 1)
+            ImGui.TextDisabled("The ticked one loads during screenshot sessions.");
+
+        // Deferred so the list is not mutated while it is being walked
+        var applyIdx   = -1;
+        var updateIdx  = -1;
+        var deleteIdx  = -1;
+        var defaultIdx = -1;
+
+        // Which row draws as the default. Read once rather than per row, so a slot with nothing
+        // marked shows the fallback ticked instead of showing nothing ticked while still loading one
+        var defaultPreset = _config.DefaultPresetFor(slotKey);
+
+        for (var i = 0; i < presets.Count; i++)
+        {
+            var preset = presets[i];
+
+            ImGui.PushID($"campreset_{i}");
+
+            if (_renamePresetSlot == slotKey && _renamePresetIdx == i)
+            {
+                DrawPresetRenameRow(slotKey, i);
+                ImGui.PopID();
+                continue;
+            }
+
+            // A radio rather than a menu item: picking one of several is exactly what the control
+            // means, and it shows which is picked without anyone having to open anything
+            if (ImGui.RadioButton("##default", ReferenceEquals(preset, defaultPreset)))
+                defaultIdx = i;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Load this one automatically during screenshot sessions.");
 
             ImGui.SameLine();
-            if (ImGui.SmallButton("Save Current Camera"))
-            {
-                var captured = Plugin.Camera.Capture();
-                if (captured != null)
-                {
-                    _config.SlotCameraPresets[slotKey] = captured;
-                    _config.Save();
-                    _config.SavePresets();
-                }
-            }
+
+            var label = string.IsNullOrWhiteSpace(preset.Name) ? "(unnamed)" : preset.Name;
+            if (ImGui.SmallButton(label)) applyIdx = i;
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip($"Save the current GPose camera position as the preset\nfor all {item.Slot.DisplayName()} items.");
+                ImGui.SetTooltip("Snap the camera to this preset now.\n" +
+                                 "Camera control returns to you after about half a second.\n\n" +
+                                 "Right-click to rename.");
+
+            if (ImGui.BeginPopupContextItem("##presetctx"))
+            {
+                if (ImGui.MenuItem("Rename"))
+                {
+                    _renamePresetSlot = slotKey;
+                    _renamePresetIdx  = i;
+                    _renamePresetBuf  = preset.Name;
+                }
+
+                ImGui.Separator();
+                if (ImGui.MenuItem("Delete")) deleteIdx = i;
+                ImGui.EndPopup();
+            }
+
+            // A button rather than only a menu item: re-aiming a preset is the thing you do most
+            // after making one, and it is worth nothing if it is hidden behind a right-click
+            UiLayout.SameLineIfRoomForButton("Update");
+            if (ImGui.SmallButton("Update")) updateIdx = i;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"Replace '{label}' with the camera as it is now.\n" +
+                                 "Keeps the name.");
+
+            UiLayout.SameLineIfRoomForButton("×");
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
+            if (ImGui.SmallButton("×")) deleteIdx = i;
+            ImGui.PopStyleColor(2);
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip($"Delete '{label}'.");
+
+            ImGui.PopID();
         }
+
+        if (applyIdx >= 0) Plugin.Camera.Apply(presets[applyIdx]);
+        if (updateIdx >= 0) OverwritePreset(slotKey, updateIdx);
+        if (defaultIdx >= 0) SetPresetDefault(slotKey, defaultIdx);
+        if (deleteIdx >= 0) DeletePreset(slotKey, deleteIdx);
+
+        // Saving a new one. The name is optional — an unnamed save is numbered, so the camera can be
+        // caught quickly in GPose without stopping to think of a word for it.
+        ImGui.SetNextItemWidth(-UiLayout.ButtonWidth("Save Camera") - ImGui.GetStyle().ItemSpacing.X);
+        var entered = ImGui.InputTextWithHint("##newpreset", "preset name (optional)",
+            ref _newPresetName, 48, ImGuiInputTextFlags.EnterReturnsTrue);
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Save Camera") || entered) SavePresetFromCamera(slotKey);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip($"Save the current GPose camera as a new preset\n" +
+                             $"for all {item.Slot.DisplayName()} items.");
+    }
+
+    /// <summary>The rename box, drawn in place of a preset's row while it is being renamed.</summary>
+    private void DrawPresetRenameRow(string slotKey, int index)
+    {
+        ImGui.SetNextItemWidth(-UiLayout.ButtonWidth("Save") - ImGui.GetStyle().ItemSpacing.X);
+
+        var entered = ImGui.InputText("##renamepreset", ref _renamePresetBuf, 48,
+            ImGuiInputTextFlags.EnterReturnsTrue);
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Save") || entered)
+        {
+            var list = _config.SlotCameraPresetLists[slotKey];
+            list[index].Name = _renamePresetBuf.Trim();
+            _config.Save();
+            _config.SavePresets();
+            CancelPresetRename();
+        }
+
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Rename this preset.");
+
+        UiLayout.SameLineIfRoomForButton("Cancel");
+        if (ImGui.SmallButton("Cancel")) CancelPresetRename();
+    }
+
+    private void CancelPresetRename()
+    {
+        _renamePresetSlot = string.Empty;
+        _renamePresetIdx  = -1;
+        _renamePresetBuf  = string.Empty;
+    }
+
+    private void SavePresetFromCamera(string slotKey)
+    {
+        var captured = Plugin.Camera.Capture();
+        if (captured == null)
+        {
+            _log.Warning("[Wardrobe] Save preset: no camera to capture.");
+            return;
+        }
+
+        if (!_config.SlotCameraPresetLists.TryGetValue(slotKey, out var list))
+            _config.SlotCameraPresetLists[slotKey] = list = new List<CameraPreset>();
+
+        var name = _newPresetName.Trim();
+        captured.Name = name.Length > 0 ? name : $"Preset {list.Count + 1}";
+        list.Add(captured);
+
+        _config.Save();
+        _config.SavePresets();
+        _log.Information($"[Wardrobe] Saved camera preset '{captured.Name}' for {slotKey}");
+        _newPresetName = string.Empty;
+    }
+
+    private void OverwritePreset(string slotKey, int index)
+    {
+        var captured = Plugin.Camera.Capture();
+        if (captured == null) return;
+
+        var list = _config.SlotCameraPresetLists[slotKey];
+
+        // The name is the one thing an overwrite must not take with it — the point of overwriting is
+        // that this angle is still "Close-up", just a better one
+        captured.Name = list[index].Name;
+        list[index]   = captured;
+
+        _config.Save();
+        _config.SavePresets();
+    }
+
+    /// <summary>
+    /// Marks one preset as its slot's default, clearing the mark from the rest.
+    /// </summary>
+    /// <remarks>
+    /// Order is left alone. Choosing which angle a session loads and choosing where it sits in the
+    /// list are separate decisions, and folding them together would mean the list could not be
+    /// arranged to taste without changing behaviour.
+    /// </remarks>
+    private void SetPresetDefault(string slotKey, int index)
+    {
+        var list = _config.SlotCameraPresetLists[slotKey];
+        for (var i = 0; i < list.Count; i++)
+            list[i].IsDefault = i == index;
+
+        _config.Save();
+        _config.SavePresets();
+    }
+
+    private void DeletePreset(string slotKey, int index)
+    {
+        var list      = _config.SlotCameraPresetLists[slotKey];
+        var wasDefault = list[index].IsDefault;
+        list.RemoveAt(index);
+
+        // Deleting the default hands the mark to whatever is now first, so the radio shows the
+        // preset that would actually load rather than nothing at all
+        if (wasDefault && list.Count > 0) list[0].IsDefault = true;
+
+        // The slot's entry goes with its last preset, so a slot with none is absent rather than
+        // holding an empty list that every later read has to allow for
+        if (list.Count == 0) _config.SlotCameraPresetLists.Remove(slotKey);
+
+        // A rename in progress now points at the wrong preset, or at none
+        CancelPresetRename();
+
+        _config.Save();
+        _config.SavePresets();
     }
 
     // ── Outfits grid ──────────────────────────────────────────────────────────
@@ -4518,9 +5026,20 @@ public class PluginUi : Window, IDisposable
                 (confirmed, path) =>
                 {
                     if (!confirmed) return;
+
+                    // Only write when the file is new. Pointing at one that already exists is how a
+                    // presets file gets imported — from a backup, or from someone who shared theirs
+                    // — and writing over it here destroyed the very thing Load from File was about
+                    // to read, a second before it could be read.
+                    var isNew = !File.Exists(path);
+
                     _config.CameraPresetsPath = path;
                     _config.Save();
-                    _config.SavePresets();
+                    if (isNew) _config.SavePresets();
+
+                    _cameraLoadStatus = isNew
+                        ? "Presets file created."
+                        : "Existing file — press Load from File to read it.";
                 }, startDir);
         }
 
@@ -4753,9 +5272,115 @@ public class PluginUi : Window, IDisposable
         ImGui.Spacing();
         DrawSlotIconSizes();
 
+        ImGui.Spacing();
+        DrawCustomIconSettings();
+
         // Live preview — also the quickest way to spot a wrong game-icon ID
         ImGui.Spacing();
         DrawSlotIconPreview();
+    }
+
+    /// <summary>
+    /// Folder of user-supplied slot icons, layered over whichever set is selected.
+    /// </summary>
+    /// <remarks>
+    /// The weakness of naming files after slots is that getting a name wrong does nothing visible,
+    /// so the coverage list is not decoration — it is the only way to tell "I have not added that
+    /// one yet" from "I spelled it wrong". It names the file each missing slot is looking for.
+    /// </remarks>
+    private void DrawCustomIconSettings()
+    {
+        ImGui.TextDisabled("Your own icons");
+        ImGui.TextDisabled("A folder of images named after their slots — Head.png, Body.png, " +
+                           "RingRight.png. Any slot you supply uses your image; the rest stay on " +
+                           "the set chosen above.");
+        ImGui.Spacing();
+
+        var folder = _config.CustomIconFolder;
+
+        if (string.IsNullOrEmpty(folder))
+        {
+            ImGui.TextDisabled("No folder selected.");
+        }
+        else
+        {
+            ImGui.TextUnformatted(folder);
+            if (!Directory.Exists(folder))
+            {
+                ImGui.Spacing();
+                ImGui.TextColored(new Vector4(1f, 0.5f, 0.3f, 1f), "Folder does not exist.");
+            }
+        }
+
+        ImGui.Spacing();
+        if (ImGui.Button(" Browse…##customIcons "))
+        {
+            var startDir = Directory.Exists(folder)
+                ? folder
+                : Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
+
+            _fileDialog.OpenFolderDialog("Select Custom Icon Folder", (confirmed, path) =>
+            {
+                if (!confirmed) return;
+                _config.CustomIconFolder = path;
+                _config.Save();
+                Plugin.SlotIcons.Rescan();
+            }, startDir);
+        }
+
+        if (string.IsNullOrEmpty(folder)) return;
+
+        // Files are added to the folder outside the game, so there has to be a way to pick them up
+        // without changing the setting or restarting
+        ImGui.SameLine();
+        if (ImGui.Button(" Rescan ")) Plugin.SlotIcons.Rescan();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Re-reads the folder. Use after adding or renaming a file.");
+
+        ImGui.SameLine();
+        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
+        if (ImGui.Button(" Clear##customIcons "))
+        {
+            _config.CustomIconFolder = string.Empty;
+            _config.Save();
+            Plugin.SlotIcons.Rescan();
+        }
+        ImGui.PopStyleColor(2);
+
+        DrawCustomIconCoverage();
+    }
+
+    private void DrawCustomIconCoverage()
+    {
+        var slots = SlotIconService.IconSlots
+            .Where(s => _config.ModCategoriesEnabled || !s.IsModCategory())
+            .ToList();
+
+        var found = slots.Count(Plugin.SlotIcons.HasCustomIcon);
+
+        ImGui.Spacing();
+        ImGui.TextColored(found > 0 ? new Vector4(0.5f, 0.85f, 0.6f, 1f) : new Vector4(1f, 0.75f, 0.3f, 1f),
+            $"{found} of {slots.Count} slots have your icon.");
+
+        if (!ImGui.CollapsingHeader("Which slots###customIconCoverage")) return;
+
+        ImGui.TextDisabled("Either name works — the slot's own name, or its label without spaces.");
+        ImGui.Spacing();
+
+        foreach (var slot in slots)
+        {
+            if (Plugin.SlotIcons.HasCustomIcon(slot))
+            {
+                ImGui.TextColored(new Vector4(0.5f, 0.85f, 0.6f, 1f), $"  {slot.DisplayName()}");
+            }
+            else
+            {
+                ImGui.TextDisabled($"  {slot.DisplayName()}");
+                UiLayout.SameLineIfRoomForText($"— add {SlotIconService.ExpectedFileName(slot)}");
+                ImGui.TextDisabled($"— add {SlotIconService.ExpectedFileName(slot)}");
+            }
+        }
     }
 
     /// <summary>

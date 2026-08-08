@@ -46,6 +46,17 @@ public class Configuration : IPluginConfiguration
     public List<string> DefinedTags { get; set; } = new();
 
     /// <summary>
+    /// Whether the offer of a starter set of styles has been answered, either by taking it or by
+    /// turning it down.
+    /// </summary>
+    /// <remarks>
+    /// Styles are only worth as much as the scheme behind them, and anyone who already has one in
+    /// mind should not have to delete ten guesses first. So the set is offered rather than seeded,
+    /// once, and never asked about again — declining is as final as accepting.
+    /// </remarks>
+    public bool StarterStylesOffered { get; set; }
+
+    /// <summary>
     /// Variant groups the user has expanded, keyed on the original item's id. Everything else is
     /// drawn folded.
     /// </summary>
@@ -106,8 +117,49 @@ public class Configuration : IPluginConfiguration
     /// </summary>
     public string DefaultCollection { get; set; } = string.Empty;
 
-    /// <summary>Per-slot camera presets applied automatically during screenshot sessions. Key = EquipSlot.ToString().</summary>
+    /// <summary>
+    /// Camera presets per slot, in the order they are shown. Key = EquipSlot.ToString().
+    /// </summary>
+    /// <remarks>
+    /// Which one a screenshot session loads is marked on the preset itself
+    /// (<see cref="CameraPreset.IsDefault"/>), not decided by its position, so the list can be kept
+    /// in whatever order suits and the default chosen independently of it.
+    /// </remarks>
+    public Dictionary<string, List<CameraPreset>> SlotCameraPresetLists { get; set; } = new();
+
+    /// <summary>
+    /// The single preset per slot that presets used to be, kept only so it can be migrated.
+    /// </summary>
+    /// <remarks>
+    /// Left in place rather than renamed away because the property name is the JSON key: an existing
+    /// config still holds its presets under this name, and dropping it would silently lose them on
+    /// the first launch after updating. Emptied by <see cref="MigrateCameraPresets"/>, which being
+    /// empty is then what stops the migration running twice.
+    /// </remarks>
     public Dictionary<string, CameraPreset> SlotCameraPresets { get; set; } = new();
+
+    /// <summary>The presets saved for a slot, or an empty list. Read-only — mutate the dictionary.</summary>
+    public IReadOnlyList<CameraPreset> PresetsFor(string slotKey) =>
+        SlotCameraPresetLists.TryGetValue(slotKey, out var list)
+            ? list
+            : Array.Empty<CameraPreset>();
+
+    /// <summary>The preset a screenshot session applies for a slot, if it has one.</summary>
+    /// <remarks>
+    /// Falls back to the first in the list when nothing is marked, so a slot whose default was
+    /// deleted, or one migrated from before defaults could be chosen, still loads an angle instead
+    /// of silently loading none.
+    /// </remarks>
+    public CameraPreset? DefaultPresetFor(string slotKey)
+    {
+        var list = PresetsFor(slotKey);
+        if (list.Count == 0) return null;
+
+        foreach (var preset in list)
+            if (preset.IsDefault) return preset;
+
+        return list[0];
+    }
 
     /// <summary>Path to the JSON file used for exporting/importing camera presets.</summary>
     public string CameraPresetsPath { get; set; } = string.Empty;
@@ -127,6 +179,15 @@ public class Configuration : IPluginConfiguration
 
     /// <summary>Which icon set to use when <see cref="SlotIconsEnabled"/> is on.</summary>
     public SlotIconStyle SlotIconStyle { get; set; } = SlotIconStyle.GameIcons;
+
+    /// <summary>Folder holding user-supplied slot icons, each named after the slot it replaces.</summary>
+    /// <remarks>
+    /// Layered over whichever <see cref="SlotIconStyle"/> is selected rather than replacing it, so a
+    /// folder holding two files replaces two icons and leaves the rest alone. Empty means off —
+    /// there is no separate toggle, matching <see cref="ImagesFolder"/> and the other folder
+    /// settings, which are a path plus a Clear button.
+    /// </remarks>
+    public string CustomIconFolder { get; set; } = string.Empty;
 
     /// <summary>Size multiplier for slot icons on item cards. 1 is the original fixed size.</summary>
     /// <remarks>
@@ -330,6 +391,39 @@ public class Configuration : IPluginConfiguration
         return changed;
     }
 
+    /// <summary>
+    /// Moves presets from the one-per-slot dictionary into the per-slot lists. Returns true if
+    /// anything moved.
+    /// </summary>
+    /// <remarks>
+    /// Becomes "Preset 1", ticked as its slot's default, so a screenshot session goes on using
+    /// exactly the angle it always did. Nothing is lost in the move and nothing has to be decided —
+    /// anyone happy with one preset per slot simply never saves a second.
+    /// </remarks>
+    public bool MigrateCameraPresets()
+    {
+        if (SlotCameraPresets.Count == 0) return false;
+
+        foreach (var (slot, preset) in SlotCameraPresets)
+        {
+            // Never into a slot that already holds something. A slot with presets has either been
+            // through this before or has been saved to since, and either way what would go in is a
+            // second copy of an angle already on the list — indistinguishable from the first, and
+            // sitting right next to it. Emptying the dictionary below is meant to prevent that on
+            // its own; this is the guard that does not depend on the write afterwards succeeding.
+            if (SlotCameraPresetLists.TryGetValue(slot, out var existing) && existing.Count > 0)
+                continue;
+
+            if (string.IsNullOrWhiteSpace(preset.Name)) preset.Name = "Preset 1";
+            preset.IsDefault = true;
+
+            SlotCameraPresetLists[slot] = new List<CameraPreset> { preset };
+        }
+
+        SlotCameraPresets.Clear();
+        return true;
+    }
+
     private static readonly JsonSerializerOptions JsonOpts = new() { WriteIndented = true };
 
     public void SavePresets()
@@ -337,24 +431,56 @@ public class Configuration : IPluginConfiguration
         if (string.IsNullOrEmpty(CameraPresetsPath)) return;
         try
         {
-            var json = JsonSerializer.Serialize(SlotCameraPresets, JsonOpts);
+            var json = JsonSerializer.Serialize(SlotCameraPresetLists, JsonOpts);
             File.WriteAllText(CameraPresetsPath, json);
         }
         catch { }
     }
 
+    /// <summary>
+    /// Reads the presets file, accepting both the current per-slot lists and the single-preset-per-
+    /// slot shape files exported before slots could hold more than one.
+    /// </summary>
+    /// <remarks>
+    /// This file is the share and backup format, so an older one has to keep working — someone
+    /// restoring a backup from last month should not silently get nothing. The two shapes cannot be
+    /// confused for each other: a slot's value is an array in one and an object in the other, so
+    /// each parse fails cleanly against the wrong file rather than half-reading it.
+    /// </remarks>
     public bool LoadPresets()
     {
         if (string.IsNullOrEmpty(CameraPresetsPath) || !File.Exists(CameraPresetsPath))
             return false;
+
+        string json;
+        try { json = File.ReadAllText(CameraPresetsPath); }
+        catch { return false; }
+
         try
         {
-            var json   = File.ReadAllText(CameraPresetsPath);
-            var loaded = JsonSerializer.Deserialize<Dictionary<string, CameraPreset>>(json);
-            if (loaded == null) return false;
-            SlotCameraPresets.Clear();
-            foreach (var (k, v) in loaded)
-                SlotCameraPresets[k] = v;
+            var loaded = JsonSerializer.Deserialize<Dictionary<string, List<CameraPreset>>>(json);
+            if (loaded != null)
+            {
+                SlotCameraPresetLists.Clear();
+                foreach (var (k, v) in loaded)
+                    SlotCameraPresetLists[k] = v ?? new List<CameraPreset>();
+                return true;
+            }
+        }
+        catch (JsonException) { /* not the current shape — try the old one below */ }
+
+        try
+        {
+            var legacy = JsonSerializer.Deserialize<Dictionary<string, CameraPreset>>(json);
+            if (legacy == null) return false;
+
+            SlotCameraPresetLists.Clear();
+            foreach (var (k, v) in legacy)
+            {
+                if (string.IsNullOrWhiteSpace(v.Name)) v.Name = "Preset 1";
+                v.IsDefault = true;
+                SlotCameraPresetLists[k] = new List<CameraPreset> { v };
+            }
             return true;
         }
         catch { return false; }

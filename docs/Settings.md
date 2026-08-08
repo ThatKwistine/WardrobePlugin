@@ -110,6 +110,23 @@ square so switching never reflows the layout.
 Hair, face, tail, Viera ears and skin have no game icon and always use Font Awesome. Every icon
 carries a tooltip with the slot name, which is the only way to tell the two ring slots apart.
 
+**Your own icons** points at a folder of images named after their slots — `Head.png`, `Body.png`,
+`RingRight.png`. Any slot you supply uses your image; every other slot stays on the set chosen above,
+so replacing two icons is as valid as supplying a full set and nothing ever renders blank.
+
+- Either name works: the slot's own name (`RingRight`) or its label without spaces (`RightRing`),
+  in any case. `.png`, `.webp`, `.jpg`, `.jpeg`, `.bmp` and `.tga` are accepted, and `.png` wins if a
+  slot has more than one.
+- Images are centre-cropped to a square rather than squashed, so they need not be square to start
+  with.
+- **Which slots** lists what was matched and, for each slot still missing, the file name it is
+  looking for. Worth opening if an icon does not appear — a misnamed file is otherwise invisible.
+- **Rescan** re-reads the folder, for after adding or renaming a file while the game is running.
+- **Clear** drops the folder and every icon reverts.
+
+Custom icons are sized by the same sliders below and scale with Dalamud's Global Font Scale like
+everything else.
+
 **Icon size** has two sliders, both showing the resulting size in pixels. Drag them, or ctrl-click to
 type a value. A **Reset** button appears once either is off the default.
 

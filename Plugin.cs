@@ -56,6 +56,8 @@ public sealed class Plugin : IDalamudPlugin
         // After MigrateDateAdded, which it uses to decide which member of a group is the original
         if (_config.MigrateVariantGroups()) _config.Save();
 
+        if (_config.MigrateCameraPresets()) _config.Save();
+
         // Glamourer state is not persisted across sessions, so nothing is worn on load
         if (_config.WornItems.Count > 0)
         {
@@ -76,7 +78,7 @@ public sealed class Plugin : IDalamudPlugin
 
         _windowSystem = new WindowSystem("WardrobePlugin");
         _italicFont = new ItalicFontService(Log);
-        SlotIcons   = new SlotIconService(_config, Textures, _itemLookup);
+        SlotIcons   = new SlotIconService(_config, Textures, _itemLookup, Log);
 
         var panel = new ItemImportPanel(_config, _wardrobeService, Penumbra, Glamourer, _analysisService, _itemLookup, _screenshotSession, Log, _italicFont);
         _massImport = new MassImportPanel(_config, Penumbra, _analysisService, _itemLookup, Log, _italicFont);

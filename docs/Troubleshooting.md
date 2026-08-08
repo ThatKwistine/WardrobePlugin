@@ -70,6 +70,16 @@ If a mod was updated and its file paths changed, click **Re-detect** instead.
 They only work with the native GPose camera. If BRIO's free camera is active it drives the camera
 independently. Turn BRIO's camera off and try again.
 
+## A screenshot session used the wrong camera preset
+
+A slot can hold several, and a session applies whichever one has its **radio button ticked**. Tick
+the one you want in the item's edit panel.
+
+## Applying a preset does not restore the pan
+
+Presets saved before pan was supported did not record one, and they deliberately leave the camera's
+pan alone rather than guessing at a centred value. Press **Update** on the preset to capture it.
+
 ## Mod names show as boxes or missing glyphs
 
 Some characters are missing from Dalamud's default font. The plugin substitutes replacements where it

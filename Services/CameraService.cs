@@ -37,6 +37,20 @@ public unsafe class CameraService : IDisposable
     private static float* GPoseFoV(Camera* cam) =>
         (float*)((byte*)cam + GPoseFoVOffsetOffset);
 
+    /// <summary>
+    /// Camera pan, at <c>Camera+0x160</c> and <c>+0x164</c>. Not named in FFXIVClientStructs.
+    /// </summary>
+    /// <remarks>
+    /// Found the same way as the field above: the only pair of floats to change across a pan that
+    /// was neither a copy of another field nor part of the transform matrix. See
+    /// <see cref="CameraPreset.PanH"/> for why they are stored nullable.
+    /// </remarks>
+    private const int PanHOffset = 0x160;
+    private const int PanVOffset = 0x164;
+
+    private static float* PanH(Camera* cam) => (float*)((byte*)cam + PanHOffset);
+    private static float* PanV(Camera* cam) => (float*)((byte*)cam + PanVOffset);
+
     public CameraPreset? Capture()
     {
         var mgr = CameraManager.Instance();
@@ -50,6 +64,8 @@ public unsafe class CameraService : IDisposable
             DirV        = cam->DirV,
             TiltOffset  = cam->TiltOffset,
             GPoseFoVOffset = *GPoseFoV(cam),
+            PanH        = *PanH(cam),
+            PanV        = *PanV(cam),
         };
     }
 
@@ -114,6 +130,13 @@ public unsafe class CameraService : IDisposable
         cam->DirV           = Math.Clamp(preset.DirV, cam->DirVMin, cam->DirVMax);
         cam->TiltOffset     = preset.TiltOffset;
         *GPoseFoV(cam)      = preset.GPoseFoVOffset;
+
+        // Only when the preset actually recorded a pan. A preset saved before pan existed leaves the
+        // camera's own pan untouched, rather than writing a zero that may not be the centred value.
+        // Not clamped: unlike distance and pitch, the camera exposes no limits for these.
+        if (preset.PanH is { } panH) *PanH(cam) = panH;
+        if (preset.PanV is { } panV) *PanV(cam) = panV;
+
         return true;
     }
 

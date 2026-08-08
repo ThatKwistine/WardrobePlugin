@@ -12,7 +12,7 @@ screenshots from a watched folder automatically.
 
 Options during a session:
 
-- **per-slot GPose camera presets** — a saved camera position per equipment slot
+- **per-slot GPose camera presets** — saved camera positions per equipment slot, as many as you want
 - **strip other items** — persisted between sessions
 - **compact window mode** — keeps the plugin UI out of the shot
 
@@ -30,8 +30,11 @@ stretched.
 
 ## Camera presets
 
-A preset stores the camera angle, tilt, both kinds of zoom, and the field of view, so a session can
-frame each slot the same way every time.
+A preset stores the camera angle, tilt, pan, both kinds of zoom, and the field of view, so a session
+can frame each slot the same way every time.
+
+Presets belong to the **slot**, not the item — the angle that frames one pair of boots frames them
+all.
 
 FFXIV has **two separate zooms** and a preset captures both:
 
@@ -45,5 +48,36 @@ single write is overwritten by the game's own per-frame camera update.
 They only work with the **native GPose camera**. If BRIO's free camera is active it drives the camera
 independently and presets will have no visible effect.
 
-> Presets saved before the Group Pose camera distance was supported store a neutral value for it, so
-> they keep working unchanged. Hit **Update** on a slot to capture it.
+### Several per slot
+
+A slot can hold as many presets as you like, because one angle is rarely enough — a full-body shot
+and a close-up are different pictures of the same piece.
+
+Frame the camera in GPose, optionally type a name, and press **Save Camera**. Leaving the name blank
+numbers it, so you can catch a good angle without stopping to think of a word for it.
+
+Each preset is a row with three controls:
+
+- **Click the name** to snap the camera to it
+- **Update** replaces it with the camera as it is now, keeping the name
+- **×** deletes it
+
+Right-click the name to **Rename**.
+
+### Choosing which one loads
+
+Each preset has a radio button beside it. The ticked one is what a **screenshot session applies
+automatically**; everything else in the list is there for you to reach by hand.
+
+Ticking one changes nothing about the order, so you can arrange the list however you like and pick
+the session default independently.
+
+> Presets saved before pan was supported don't store one, and applying them leaves the camera's pan
+> untouched rather than guessing at a centred value. Press **Update** to capture it.
+
+### Coming from a single preset per slot
+
+Slots used to hold exactly one preset. Yours becomes **Preset 1**, ticked as its slot's default, and
+that is the whole of it — sessions carry on using the same angle and nothing needs doing.
+
+If one preset per slot is all you want, just never save a second.

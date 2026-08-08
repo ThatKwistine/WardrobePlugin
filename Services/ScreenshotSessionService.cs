@@ -204,9 +204,10 @@ public class ScreenshotSessionService : IDisposable
         HideWeaponIfNeeded();
         Plugin.Penumbra.RedrawPlayer();
 
-        // Camera presets are per slot, so they only apply to single items
+        // Camera presets are per slot, so they only apply to single items. A slot can hold several;
+        // the one it uses is whichever the edit panel has ticked.
         if (target.Item != null &&
-            _config.SlotCameraPresets.TryGetValue(target.Item.Slot.ToString(), out var preset))
+            _config.DefaultPresetFor(target.Item.Slot.ToString()) is { } preset)
             _camera.Apply(preset);
 
         _watchFrom = DateTime.UtcNow;
