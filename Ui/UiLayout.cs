@@ -13,6 +13,59 @@ namespace WardrobePlugin.Ui;
 /// </remarks>
 public static class UiLayout
 {
+    // ── Removal guard ─────────────────────────────────────────────────────────
+
+    /// <summary>Whether a removal control is currently armed.</summary>
+    public static bool DeleteArmed => ImGui.GetIO().KeyCtrl;
+
+    /// <summary>
+    /// A button that removes something, inert and greyed until Ctrl is held.
+    /// </summary>
+    /// <param name="label">Button text, including any <c>##id</c> suffix.</param>
+    /// <param name="tooltip">What this removes, shown under the Ctrl hint. No trailing newline.</param>
+    /// <param name="size">Size for a full-height button. Null draws a small one.</param>
+    /// <remarks>
+    /// Every control that takes something away goes through here — deleting an item, an outfit, a
+    /// preset or a pack, and equally taking a piece out of an outfit or a tag off an item. The line
+    /// is not how hard a thing is to get back: these sit inches from the buttons people press
+    /// constantly, and a rule with exceptions is one nobody can predict.
+    /// <para>
+    /// Disabled rather than merely inert while Ctrl is up, so the reason is visible before the
+    /// click. The tooltip shows either way — a disabled control that also refuses to say why is a
+    /// dead end.
+    /// </para>
+    /// </remarks>
+    public static bool DeleteButton(string label, string tooltip, System.Numerics.Vector2? size = null)
+    {
+        var armed = DeleteArmed;
+
+        ImGui.PushStyleColor(ImGuiCol.Button,        new System.Numerics.Vector4(0.3f, 0.08f, 0.08f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new System.Numerics.Vector4(0.5f, 0.1f, 0.1f, 1f));
+
+        if (!armed) ImGui.BeginDisabled();
+
+        var clicked = size is { } s ? ImGui.Button(label, s) : ImGui.SmallButton(label);
+
+        if (!armed) ImGui.EndDisabled();
+        ImGui.PopStyleColor(2);
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(armed ? tooltip : $"Hold Ctrl to remove.\n\n{tooltip}");
+
+        return clicked;
+    }
+
+    /// <summary>
+    /// The same guard as a context-menu entry, with Ctrl shown where a shortcut would be.
+    /// </summary>
+    /// <remarks>
+    /// ImGui greys a disabled menu item and ignores clicks on it by itself, so the guard is the
+    /// enabled flag; the shortcut column is what says why, since a menu item has no room for a
+    /// tooltip anyone would wait for.
+    /// </remarks>
+    public static bool DeleteMenuItem(string label) =>
+        ImGui.MenuItem(label, "Ctrl", false, DeleteArmed);
+
     /// <summary>
     /// Wraps every Text call in the current window at its right edge, until <see cref="PopWrap"/>.
     /// </summary>

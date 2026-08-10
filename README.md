@@ -120,6 +120,7 @@ so it is worth being liberal here and tidying up later. See
 | [Tags](docs/Tags.md) | Sub-tags, making tags ahead of use, tagging a batch, filtering |
 | [Images and screenshots](docs/Images-and-Screenshots.md) | Previews, automated sessions, camera presets |
 | [Settings and backups](docs/Settings.md) | Every setting, and how backups work |
+| [Custom slot icons](docs/Custom-Icons.md) | Naming icons, installing icon packs, building one to share |
 | [**Troubleshooting**](docs/Troubleshooting.md) | When something doesn't show up |
 | [Developing](docs/Developing.md) | Building from source and the IPC surface used |
 

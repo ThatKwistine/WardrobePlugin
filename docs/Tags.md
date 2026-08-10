@@ -21,7 +21,8 @@ shown. You never have to type the `Style/` part; the plugin adds it.
 ### Making styles
 
 The **Styles** section at the top of the Tags panel has a **new style** box. Type a name and press
-**Make Style**.
+**Make Style**. Each of the panel's two sections works the same way: the box that makes a thing sits
+at the top of the section that lists them.
 
 If you have no styles at all, that section also offers a ready-made set — Casual, Comfy, Cute,
 Elegant, Formal, Beach, Sleepy, Tech, Fantasy and Modern — behind an **Add these** button. It is
@@ -43,6 +44,45 @@ deleted out from under it.
 - **While importing.** Both import panels show them in the same place, under `Style` in the tag
   tree, so a batch that hangs together can be styled as it arrives.
 
+## Renaming
+
+Right-click any tag or style and choose **Rename**. A box takes its place in the list; type the new
+name and press Enter or **Save**. It works on tags in use as well as unused ones — fixing a typo no
+longer means re-tagging everything by hand.
+
+The rename reaches everywhere the tag exists at once: every item carrying it, the pre-made list, any
+filter currently on, and its colour. Renaming a parent takes its sub-tags with it, so renaming
+`Shoes` to `Footwear` turns `Shoes/Boots` into `Footwear/Boots`.
+
+Only the last part of the path changes, so a style stays a style and a sub-tag keeps its parent. A
+name already taken is refused rather than merged into the existing tag — merging two tags is a
+bigger thing than fixing a typo, and it cannot be undone. Rename to a free name instead.
+
+## Colours
+
+Right-click any tag or style in the Tags panel to open a colour picker, with the usual 0–255 R, G
+and B boxes beside it. The colour applies as you drag, and **Reset colour** puts it back to the
+default. It works on tags in use as well as unused ones — deleting is still limited to tags nothing
+carries, but colouring is not.
+
+A colour survives every state the tag can be in. The hue stays put and only the brightness moves, so
+a green tag looks green whether it is filtering (brighter), idle, or has nothing carrying it yet
+(dimmer). Colour says what the tag is; brightness says what it is doing.
+
+**An item card takes the colour of its style.** Colour a style Beach and everything in it tints the
+same way, which sorts a grid by mood at a glance before you read a single name. It is styles rather
+than tags because a style describes a whole piece, and an item wears at most a couple — a card tinted
+by whichever of eight tags happened to sort first would be colour without meaning. If an item does
+carry two coloured styles, the first alphabetically wins, so the grid does not reshuffle its colours
+when a tag list is reordered.
+
+A **worn** item keeps its gold card whatever its style: that has to stay unmistakable, and two
+things competing to colour one card says neither clearly.
+
+All of this is behind Settings → **Tag Colours** → **Colour tags and styles**, on by default —
+nothing changes until you pick a colour. Turning it off keeps every colour you have chosen and only
+stops them being used, so it is a switch rather than a purge.
+
 ## Sub-tags
 
 A `/` makes a tag nested: `Shoes/Boots/Ankle Boots` is one tag, drawn in the panel as three levels
@@ -56,9 +96,10 @@ Spacing around the slashes does not matter — `Shoes / Boots` and `Shoes/Boots`
 Tags normally come into existence by being typed onto an item, which means the list can only be
 built one item at a time and a typo silently becomes a second tag rather than an error.
 
-The **new tag** box at the top of the Tags panel makes one before anything has it. Type a name —
-`/` for sub-tags, same as anywhere else — and press **Make Tag**. This is worth doing when you know
-the scheme you want: lay the whole thing out first, then apply it.
+The **new tag** box at the top of the panel's **Tags** section — directly above the tree it fills —
+makes one before anything has it. Type a name, `/` for sub-tags as anywhere else, and press **Make
+Tag**. This is worth doing when you know the scheme you want: lay the whole thing out first, then
+apply it.
 
 A tag with no items yet is shown **greyed out** in the tree. It behaves like any other tag — it
 appears in every tag picker, ready to be applied — but filtering on it shows nothing, because

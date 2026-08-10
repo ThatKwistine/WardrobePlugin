@@ -18,7 +18,40 @@ public class OutfitDye
     public byte Stain1 { get; set; }
     public byte Stain2 { get; set; }
 
-    public bool IsUndyed => Stain1 == 0 && Stain2 == 0;
+    /// <summary>
+    /// Glamourer advanced dye rows for this piece: packed key to the row exactly as Glamourer wrote it.
+    /// </summary>
+    /// <remarks>
+    /// Stored as opaque text on purpose. A row describes a material's colour table — diffuse,
+    /// specular, gloss and the rest — and none of that has to be understood to keep it and hand it
+    /// back. Glamourer owns the format and the editor; the wardrobe owns only the fact that these
+    /// rows belong to this piece in this outfit. The key encodes the slot, so the rows kept here are
+    /// filtered to this item's slot when they are captured.
+    /// </remarks>
+    public Dictionary<string, string> Advanced { get; set; } = new();
+
+    /// <summary>True when this carries nothing at all — neither channel, nor an advanced row.</summary>
+    public bool IsUndyed => Stain1 == 0 && Stain2 == 0 && Advanced.Count == 0;
+}
+
+/// <summary>
+/// A game item worn in a slot the wardrobe has nothing in — plain gear, no mod behind it.
+/// </summary>
+/// <remarks>
+/// Stored by item ID rather than as a wardrobe item because there is nothing to manage: no mod to
+/// enable, no options to apply, nothing to detect. Wearing one is a single Glamourer call. Keeping
+/// them on the outfit is what lets a look be saved when only some of it — or none of it — is modded.
+/// </remarks>
+[Serializable]
+public class VanillaPiece
+{
+    public ulong ItemId { get; set; }
+
+    /// <summary>The item's name at the time it was saved, for showing the outfit without a lookup.</summary>
+    public string Name { get; set; } = string.Empty;
+
+    public byte Stain1 { get; set; }
+    public byte Stain2 { get; set; }
 }
 
 [Serializable]
@@ -39,6 +72,17 @@ public class Outfit
     /// different outfits, which is the point of saving a look.
     /// </remarks>
     public Dictionary<string, OutfitDye> Dyes { get; set; } = new();
+
+    /// <summary>
+    /// Plain game items in the slots this outfit's own items do not fill, keyed by slot name.
+    /// </summary>
+    /// <remarks>
+    /// Captured from Glamourer when the outfit is saved or updated from what is worn, so a look made
+    /// of two mods and six vanilla pieces saves as the look it actually is. Only slots no item in the
+    /// outfit covers are stored: a wardrobe item is the better record wherever there is one, since it
+    /// carries the mod and its options as well as the game item.
+    /// </remarks>
+    public Dictionary<string, VanillaPiece> VanillaItems { get; set; } = new();
 
     public List<string> Tags { get; set; } = new();
 

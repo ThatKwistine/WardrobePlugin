@@ -48,6 +48,11 @@ public class WardrobeService : IDisposable
             ? _config.Outfits.Find(o => o.Id == activeId)
             : null;
 
+        // Advanced dye rows are gathered rather than applied per item: each apply is a whole state
+        // round trip, so one for the character beats one for every piece it is wearing
+        var advanced = new Dictionary<string, string>();
+        var keepAdvanced = _config.AdvancedDyesEnabled;
+
         foreach (var itemId in _config.WornItems.Values.ToList())
         {
             var item = _config.WardrobeItems.Find(x => x.Id == itemId);
@@ -55,7 +60,16 @@ public class WardrobeService : IDisposable
 
             var dye = outfit != null ? GetDye(outfit, item.Id) : null;
             _glamourer.SetItem(item.Slot, glamId, dye?.Stain1 ?? 0, dye?.Stain2 ?? 0);
+
+            if (dye == null || !keepAdvanced) continue;
+            foreach (var (key, row) in dye.Advanced)
+                advanced[key] = row;
         }
+
+        // A redraw resets the colour tables along with everything else, so these need putting back
+        // for the same reason the stains above do
+        if (advanced.Count > 0)
+            _glamourer.ApplyAdvancedDyes(advanced);
     }
 
     /// <summary>
@@ -64,7 +78,7 @@ public class WardrobeService : IDisposable
     /// Stops early if the item is unequipped between retries.
     /// </summary>
     private void ScheduleGlamourerReapply(EquipSlot slot, string wornKey, ulong glamId, Guid itemId,
-        byte stain1, byte stain2)
+        byte stain1, byte stain2, IReadOnlyDictionary<string, string>? advanced = null)
     {
         _ = Task.Run(async () =>
         {
@@ -75,7 +89,16 @@ public class WardrobeService : IDisposable
                 await Task.Delay(delayMs);
                 if (!_config.WornItems.TryGetValue(wornKey, out var curId) || curId != itemId)
                     return; // item was unequipped in the meantime
-                await _framework.RunOnFrameworkThread(() => _glamourer.SetItem(slot, glamId, stain1, stain2));
+
+                await _framework.RunOnFrameworkThread(() =>
+                {
+                    _glamourer.SetItem(slot, glamId, stain1, stain2);
+
+                    // After the item, always: a colour row describes the material of whatever is in
+                    // the slot, so applying it before the reload lands would dye the outgoing piece
+                    if (advanced is { Count: > 0 })
+                        _glamourer.ApplyAdvancedDyes(advanced);
+                });
             }
         });
     }
@@ -196,7 +219,13 @@ public class WardrobeService : IDisposable
             // up the correct options from the start.
             if (mod.Options.Count > 0)
                 _penumbra.ApplyModSettings(mod.Collection, mod.ModDirectory, mod.ModName, mod.Options);
-            if (mod.MultiOptions.Count > 0)
+
+            // Tri-states win where an item has them, and the whole-selection field is the fallback
+            // for items saved before they existed — never both, or the fallback would re-flatten
+            // exactly the groups the tri-states were asked to leave alone
+            if (mod.OptionStates.Count > 0)
+                _penumbra.ApplyModOptionStates(mod.Collection, mod.ModDirectory, mod.ModName, mod.OptionStates);
+            else if (mod.MultiOptions.Count > 0)
                 _penumbra.ApplyMultiModSettings(mod.Collection, mod.ModDirectory, mod.ModName, mod.MultiOptions);
         }
 
@@ -227,11 +256,18 @@ public class WardrobeService : IDisposable
 
         ApplyHairstyleFor(item);
 
+        // Advanced dyes go on after the piece, never before: the rows address the material of
+        // whatever occupies the slot, so applying them to the outgoing item would colour that
+        var advanced = _config.AdvancedDyesEnabled ? dye?.Advanced : null;
+        if (advanced is { Count: > 0 })
+            _glamourer.ApplyAdvancedDyes(advanced);
+
         // Penumbra's async resource reload (triggered by SetModEnabled) completes 300ms-4s later
         // and causes Glamourer to re-apply its prior design state, undoing our SetItem call.
         // Schedule repeated re-applies on the framework thread to win that race.
         if (anyNewlyEnabled && item.GlamourerItemId.HasValue)
-            ScheduleGlamourerReapply(item.Slot, slotKey, item.GlamourerItemId.Value, item.Id, stain1, stain2);
+            ScheduleGlamourerReapply(item.Slot, slotKey, item.GlamourerItemId.Value, item.Id, stain1, stain2,
+                advanced);
 
         _config.Save();
         WardrobeChanged?.Invoke();
@@ -388,6 +424,16 @@ public class WardrobeService : IDisposable
         var slotKey = item.WornKey();
         if (_config.WornItems.TryGetValue(slotKey, out var curId) && curId == item.Id)
             _config.WornItems.Remove(slotKey);
+
+        // Advanced dyes are keyed by slot, not by item, so leaving them behind would hand this
+        // piece's colours to whatever is worn here next. Put them back before the slot is emptied.
+        var activeOutfit = _activeOutfitId is { } outfitId
+            ? _config.Outfits.Find(o => o.Id == outfitId)
+            : null;
+
+        if (_config.AdvancedDyesEnabled && activeOutfit != null &&
+            GetDye(activeOutfit, item.Id)?.Advanced is { Count: > 0 } worn)
+            _glamourer.RevertAdvancedDyes(worn);
 
         // Set the slot to the Emperor's New item so it appears empty in Glamourer.
         //
@@ -806,7 +852,8 @@ public class WardrobeService : IDisposable
         // not an inherent limitation. Now that the apply path is correct, matching on
         // multi-select again rules out items that share a mod but want different checkboxes.
         var failedMods = item.Mods
-            .Where(m => !_penumbra.ActiveOptionsMatch(m.Collection, m.ModDirectory, m.ModName, m.Options, m.MultiOptions))
+            .Where(m => !_penumbra.ActiveOptionsMatch(m.Collection, m.ModDirectory, m.ModName, m.Options,
+                m.MultiOptions, m.OptionStates))
             .Select(m => m.ModName)
             .ToList();
         if (failedMods.Count > 0)
@@ -971,13 +1018,66 @@ public class WardrobeService : IDisposable
         outfit.Dyes.TryGetValue(itemId.ToString(), out var dye) && !dye.IsUndyed ? dye : null;
 
     /// <summary>Sets or clears an item's dye within an outfit.</summary>
+    /// <remarks>
+    /// Advanced dye rows are carried across rather than replaced. They are set from a different
+    /// control and mean something different — clearing both channels back to undyed is not a
+    /// statement about the colour table, and throwing the rows away here would make a dye picker
+    /// quietly destroy work done in Glamourer.
+    /// </remarks>
     public void SetDye(Outfit outfit, Guid itemId, byte stain1, byte stain2)
     {
-        var key = itemId.ToString();
-        if (stain1 == 0 && stain2 == 0)
+        var key      = itemId.ToString();
+        var existing = outfit.Dyes.TryGetValue(key, out var prev) ? prev.Advanced : new();
+
+        if (stain1 == 0 && stain2 == 0 && existing.Count == 0)
             outfit.Dyes.Remove(key);
         else
-            outfit.Dyes[key] = new OutfitDye { Stain1 = stain1, Stain2 = stain2 };
+            outfit.Dyes[key] = new OutfitDye { Stain1 = stain1, Stain2 = stain2, Advanced = existing };
+
+        _config.Save();
+    }
+
+    /// <summary>
+    /// Stores the advanced dye rows Glamourer currently has for this item's slot.
+    /// </summary>
+    /// <returns>How many rows were captured. Zero means nothing was advanced dyed on that slot.</returns>
+    public int CaptureAdvancedDyes(Outfit outfit, WardrobeItem item)
+    {
+        var rows = _glamourer.CaptureAdvancedDyes(item.Slot);
+        var key  = item.Id.ToString();
+
+        if (rows.Count == 0)
+        {
+            _log.Debug($"[Wardrobe] No advanced dyes on {item.Slot.DisplayName()} to capture for '{item.Name}'");
+            return 0;
+        }
+
+        var dye = outfit.Dyes.TryGetValue(key, out var prev) ? prev : new OutfitDye();
+        dye.Advanced       = rows;
+        outfit.Dyes[key]   = dye;
+
+        _config.Save();
+        _log.Debug($"[Wardrobe] Captured {rows.Count} advanced dye row(s) for '{item.Name}' in '{outfit.Name}'");
+        return rows.Count;
+    }
+
+    /// <summary>
+    /// Drops an item's stored advanced dyes, putting the character's own back to game values.
+    /// </summary>
+    public void ClearAdvancedDyes(Outfit outfit, WardrobeItem item)
+    {
+        var key = item.Id.ToString();
+        if (!outfit.Dyes.TryGetValue(key, out var dye) || dye.Advanced.Count == 0) return;
+
+        // While it is on, forgetting the rows would leave them applied with nothing left to
+        // describe them — so the character is put back first, then the record is dropped
+        if (IsItemWorn(item))
+            _glamourer.RevertAdvancedDyes(dye.Advanced);
+
+        dye.Advanced = new();
+
+        if (dye.IsUndyed)
+            outfit.Dyes.Remove(key);
 
         _config.Save();
     }
@@ -1001,11 +1101,15 @@ public class WardrobeService : IDisposable
             var s2  = channel == 2 ? stain : dye?.Stain2 ?? 0;
             var key = item.Id.ToString();
 
+            // Kept for the same reason SetDye keeps them: dyeing a whole outfit one colour says
+            // nothing about anyone's colour tables
+            var advanced = dye?.Advanced ?? new();
+
             // Written here rather than through SetDye so the whole outfit is one save, not one per item
-            if (s1 == 0 && s2 == 0)
+            if (s1 == 0 && s2 == 0 && advanced.Count == 0)
                 outfit.Dyes.Remove(key);
             else
-                outfit.Dyes[key] = new OutfitDye { Stain1 = s1, Stain2 = s2 };
+                outfit.Dyes[key] = new OutfitDye { Stain1 = s1, Stain2 = s2, Advanced = advanced };
         }
 
         _config.Save();
@@ -1036,11 +1140,6 @@ public class WardrobeService : IDisposable
     public Outfit? SaveCurrentAsOutfit(string name)
     {
         var wornIds = _config.WornItems.Values.Distinct().ToList();
-        if (wornIds.Count == 0)
-        {
-            _log.Warning("[Wardrobe] Nothing is currently worn — no outfit saved.");
-            return null;
-        }
 
         var outfit = new Outfit
         {
@@ -1048,11 +1147,23 @@ public class WardrobeService : IDisposable
             ItemIds = wornIds,
         };
 
+        // After ItemIds, since what counts as vanilla is whatever the outfit's own items leave over
+        var vanilla = CaptureVanillaItems(outfit);
+
+        // An outfit of nothing but plain gear is a real outfit — the wardrobe having no part in it
+        // is not a reason to refuse to remember it
+        if (wornIds.Count == 0 && vanilla == 0)
+        {
+            _log.Warning("[Wardrobe] Nothing is currently worn — no outfit saved.");
+            return null;
+        }
+
         _config.Outfits.Add(outfit);
         _config.Save();
         WardrobeChanged?.Invoke();
 
-        _log.Information($"[Wardrobe] Saved outfit '{outfit.Name}' with {wornIds.Count} item(s)");
+        _log.Information($"[Wardrobe] Saved outfit '{outfit.Name}' with {wornIds.Count} item(s) " +
+                         $"and {outfit.VanillaItems.Count} vanilla piece(s)");
         return outfit;
     }
 
@@ -1071,7 +1182,7 @@ public class WardrobeService : IDisposable
     public int? UpdateOutfitFromWorn(Outfit outfit)
     {
         var wornIds = _config.WornItems.Values.Distinct().ToList();
-        if (wornIds.Count == 0)
+        if (wornIds.Count == 0 && _glamourer.GetEquippedPieces().Count == 0)
         {
             _log.Warning($"[Wardrobe] Nothing is worn — outfit '{outfit.Name}' left as it was.");
             return null;
@@ -1104,6 +1215,9 @@ public class WardrobeService : IDisposable
         outfit.ItemIds = wornIds;
         outfit.Dyes    = dyes;
 
+        // After ItemIds, so the slots the new contents cover are the ones excluded from the capture
+        CaptureVanillaItems(outfit);
+
         // What is on the character is now exactly this outfit, so redraws should re-apply its dyes
         _activeOutfitId = outfit.Id;
 
@@ -1112,6 +1226,75 @@ public class WardrobeService : IDisposable
 
         _log.Information($"[Wardrobe] Updated outfit '{outfit.Name}' from what is worn ({wornIds.Count} item(s))");
         return wornIds.Count;
+    }
+
+    /// <summary>
+    /// Records the plain game items filling the slots this outfit's own items do not.
+    /// </summary>
+    /// <remarks>
+    /// A look is rarely all mods. Without this, saving an outfit kept the two modded pieces and
+    /// silently forgot the six vanilla ones, so wearing it back gave a half-dressed character and
+    /// the rest of the look had to be rebuilt by hand every time (issue #11).
+    /// <para>
+    /// Slots the outfit already covers are skipped, and skipped again at wear time: a wardrobe item
+    /// carries its mod and options as well as the game item, so it is always the better record and
+    /// must never be shadowed by a plain copy of the same slot.
+    /// </para>
+    /// </remarks>
+    public int CaptureVanillaItems(Outfit outfit)
+    {
+        var covered = ResolveOutfit(outfit).Select(i => i.Slot).ToHashSet();
+        var live    = _glamourer.GetEquippedPieces();
+        var vanilla = new Dictionary<string, VanillaPiece>();
+
+        foreach (var (slot, piece) in live)
+        {
+            if (covered.Contains(slot)) continue;
+
+            // An Emperor's New piece is how an empty slot is spelled, not something to put back on
+            if (ItemLookupService.FindEmperorsNewItem(slot) is { } empty && piece.ItemId == empty) continue;
+
+            vanilla[slot.ToString()] = new VanillaPiece
+            {
+                ItemId = piece.ItemId,
+                Name   = Plugin.ItemLookup.GetItemName(piece.ItemId),
+                Stain1 = piece.Stain1,
+                Stain2 = piece.Stain2,
+            };
+        }
+
+        outfit.VanillaItems = vanilla;
+
+        // Information rather than Debug: this is the button people press when an outfit came back
+        // wrong, and "what did it actually find" is the first question afterwards
+        _log.Information($"[Wardrobe] Outfit '{outfit.Name}': captured {vanilla.Count} vanilla piece(s) " +
+                         $"from {live.Count} equipped, {covered.Count} slot(s) covered by its own items");
+        return vanilla.Count;
+    }
+
+    /// <summary>
+    /// Equips an outfit's vanilla pieces, in the slots its own items do not fill.
+    /// </summary>
+    /// <remarks>
+    /// After the items, and only where they left a gap. Checked against the outfit as it stands
+    /// rather than as it was saved, so adding a wardrobe item to a slot that used to hold a vanilla
+    /// piece leaves the stored piece harmlessly unused rather than fighting the new item for the slot.
+    /// </remarks>
+    private void WearVanillaItems(Outfit outfit)
+    {
+        if (outfit.VanillaItems.Count == 0) return;
+
+        var covered = ResolveOutfit(outfit).Select(i => i.Slot).ToHashSet();
+
+        foreach (var (slotName, piece) in outfit.VanillaItems)
+        {
+            if (!Enum.TryParse<EquipSlot>(slotName, out var slot)) continue;
+            if (covered.Contains(slot)) continue;
+
+            _glamourer.SetItem(slot, piece.ItemId, piece.Stain1, piece.Stain2);
+        }
+
+        _log.Debug($"[Wardrobe] Outfit '{outfit.Name}': applied {outfit.VanillaItems.Count} vanilla piece(s)");
     }
 
     /// <summary>Items in an outfit that still exist, in slot order.</summary>
@@ -1152,12 +1335,17 @@ public class WardrobeService : IDisposable
         foreach (var item in items)
             WearItem(item, GetDye(outfit, item.Id));
 
+        // After the items: a vanilla piece only ever fills a gap they left, and equipping it first
+        // would put plain gear in a slot a mod is about to take anyway
+        WearVanillaItems(outfit);
+
         // Remembered so redraws re-apply the dyes too, not just the items
         _activeOutfitId = outfit.Id;
 
         _config.Save();
         WardrobeChanged?.Invoke();
-        _log.Information($"[Wardrobe] Wore outfit '{outfit.Name}' ({items.Count} item(s))");
+        _log.Information($"[Wardrobe] Wore outfit '{outfit.Name}' ({items.Count} item(s), " +
+                         $"{outfit.VanillaItems.Count} vanilla piece(s))");
     }
 
     /// <summary>Removes every item in an outfit that is currently worn.</summary>

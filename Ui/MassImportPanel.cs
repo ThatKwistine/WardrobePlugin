@@ -570,10 +570,8 @@ public class MassImportPanel : Window, IDisposable
         // Undo has to be reachable from here: with the list left unsorted the parent can be well
         // off-screen, and hunting for it to detach one row is worse than the row moving was.
         ImGui.SameLine();
-        if (ImGui.SmallButton("x"))
+        if (UiLayout.DeleteButton("x", $"Stop being a supplemental mod for {parent.Name}."))
             ClearSupplement(row);
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip($"Stop being a supplemental mod for {parent.Name}");
 
         ImGui.PopID();
     }
@@ -747,7 +745,7 @@ public class MassImportPanel : Window, IDisposable
             ImGui.SmallButton(_batchTags[i]);
             ImGui.PopStyleColor(2);
             ImGui.SameLine();
-            if (ImGui.SmallButton("×")) removeIdx = i;
+            if (UiLayout.DeleteButton("×", $"Do not put '{_batchTags[i]}' on this batch.")) removeIdx = i;
             ImGui.PopID();
         }
         if (removeIdx >= 0) _batchTags.RemoveAt(removeIdx);
@@ -906,8 +904,11 @@ public class MassImportPanel : Window, IDisposable
                     Collection   = collection,
                     ModDirectory = row.Dir,
                     ModName      = row.Name,
-                    Options      = primaryOptions,
-                    MultiOptions = primaryMulti,
+                    // Per slot, and a fresh dictionary per item: a mod covering body and legs makes
+                    // two items, and each asserting the other's groups is what sets them fighting
+                    // once either has a variant (#12)
+                    Options      = ModOptionSets.ForSlot(primaryOptions, analysis.OptionGroups, slot),
+                    MultiOptions = ModOptionSets.ForSlot(primaryMulti,   analysis.OptionGroups, slot),
                 });
                 item.Mods.AddRange(extraRefs);
 
@@ -980,8 +981,13 @@ public class MassImportPanel : Window, IDisposable
         var result = new Dictionary<string, string>();
         if (groups == null) return result;
         foreach (var g in groups.Where(g => g.GroupType == ModGroupType.Single))
-            if (selections.TryGetValue(g.GroupName, out var i) && g.OptionNames.Count > 0)
-                result[g.GroupName] = i < g.OptionNames.Count ? g.OptionNames[i] : g.OptionNames[0];
+        {
+            // Leave alone is stored by leaving the group out, so nothing writes it on wear
+            if (!selections.TryGetValue(g.GroupName, out var i) ||
+                i == ModOptionPicker.Ignore || g.OptionNames.Count == 0) continue;
+
+            result[g.GroupName] = i >= 0 && i < g.OptionNames.Count ? g.OptionNames[i] : g.OptionNames[0];
+        }
         return result;
     }
 

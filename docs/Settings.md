@@ -110,19 +110,29 @@ square so switching never reflows the layout.
 Hair, face, tail, Viera ears and skin have no game icon and always use Font Awesome. Every icon
 carries a tooltip with the slot name, which is the only way to tell the two ring slots apart.
 
-**Your own icons** points at a folder of images named after their slots — `Head.png`, `Body.png`,
-`RingRight.png`. Any slot you supply uses your image; every other slot stays on the set chosen above,
-so replacing two icons is as valid as supplying a full set and nothing ever renders blank.
+**Your own icons** takes images named after their slots — `Head.png`, `Body.png`, `RingRight.png` —
+from either an installed pack or a folder of your own. Any slot you supply uses your image; every
+other slot stays on the set chosen above, so replacing two icons is as valid as supplying a full set
+and nothing ever renders blank.
 
-- Either name works: the slot's own name (`RingRight`) or its label without spaces (`RightRing`),
-  in any case. `.png`, `.webp`, `.jpg`, `.jpeg`, `.bmp` and `.tga` are accepted, and `.png` wins if a
-  slot has more than one.
+- **Icon pack** is the dropdown of installed packs. **Import zip…** unpacks a zipped set into the
+  plugin's own folder and switches to it, **None** goes back to the built-in set without
+  uninstalling anything, and the **x** beside a pack in the dropdown deletes it after a
+  confirmation. **Copy path** puts the packs folder on the clipboard for editing or re-zipping one.
+- **Your own folder** points at any folder and is layered *over* the pack, so a file there replaces
+  that one slot and leaves the rest of the pack alone.
+- Case does not matter, and most slots answer to more than one name. `.png`, `.webp`, `.jpg`,
+  `.jpeg`, `.bmp` and `.tga` are accepted, and `.png` wins if a slot has more than one.
 - Images are centre-cropped to a square rather than squashed, so they need not be square to start
   with.
 - **Which slots** lists what was matched and, for each slot still missing, the file name it is
-  looking for. Worth opening if an icon does not appear — a misnamed file is otherwise invisible.
-- **Rescan** re-reads the folder, for after adding or renaming a file while the game is running.
-- **Clear** drops the folder and every icon reverts.
+  looking for. Hovering a slot shows every name it will answer to. Worth opening if an icon does not
+  appear — a misnamed file is otherwise invisible.
+- **Rescan** re-reads both, for after adding or renaming a file while the game is running.
+- **Clear** drops the folder and leaves any pack in place.
+
+[Custom slot icons and icon packs](Custom-Icons.md) has the full name list, the image rules and how
+to build a pack to share.
 
 Custom icons are sized by the same sliders below and scale with Dalamud's Global Font Scale like
 everything else.
@@ -139,6 +149,41 @@ type a value. A **Reset** button appears once either is off the default.
 
 They are separate because they trade against different things: the row is about how many slots fit,
 the cards are only about legibility. The preview underneath shows the card size.
+
+---
+
+## Card Size
+
+Two sliders, **Items** and **Outfits**, each from 0.7× to 2.5× and showing the resulting card size in
+pixels. Ctrl-click to type a value; a **Reset** appears on either once it is off the default.
+
+Separate because the two grids are looked at differently: an outfit preview is usually a full-body
+shot and wants the room, while more item cards on screen is the point of the item grid. One slider
+for both traded them against each other.
+
+Both are also behind the magnifying glass on the toolbar, beside **Strip**, **Refresh** and **Scan** —
+card size is judged by looking at the grid while dragging, which a settings panel four clicks away
+cannot show you.
+
+It scales the cards in **both** grids — items and outfits — so a wardrobe browsed by picture can have
+big previews everywhere rather than only where a toggle exists. Larger cards mean fewer per row, and
+names are cut to fit the card, so a bigger card shows more of the name rather than the same amount in
+more space.
+
+This is on top of Dalamud's Global Font Scale, not instead of it: cards still grow with your text
+size, and this says how much larger than that you want them.
+
+---
+
+## Tag Colours
+
+**Colour tags and styles** is on by default and changes nothing until you pick a colour. Right-click
+a tag or style in the Tags panel for a colour picker with 0–255 R, G and B boxes; an item card then
+takes the colour of its style. A worn item keeps its gold card whatever its style.
+
+Turning it off keeps every colour already chosen and only stops them being used — including the
+right-click picker itself, so the tag menu goes back to just **Delete**. See
+[Tags](Tags.md#colours).
 
 ---
 
@@ -172,6 +217,33 @@ path is set. Anything past the keep-count is deleted oldest-first.
 
 These are plain copies of the live config. Restoring means closing the game and putting the file
 back over `%AppData%\XIVLauncher\pluginConfigs\WardrobePlugin.json`.
+
+---
+
+## Experimental
+
+Finished enough to try, not proven in the game yet. Everything here is off by default, and either
+graduates into a section of its own or goes.
+
+### Advanced dyes
+
+**Keep advanced dyes with outfits** adds an **Advanced dyes** tick box to each item's dyes in an
+outfit's edit panel, which stores Glamourer's colour-row edits for that piece and puts them back
+whenever the outfit is worn. Glamourer stays the editor; the wardrobe only remembers. See
+[Outfits and dyes](Outfits.md#advanced-dyes).
+
+It is experimental because Glamourer has no API for advanced dyes at all — they are carried inside
+its state data, so this is the setting most likely to break when Glamourer updates, and the least
+tested.
+
+Turning it back off keeps everything already captured — the rows stay on their outfits and return
+when it is switched on again — but the wardrobe stops applying them, so those looks go back to plain
+dyes. Nothing already on your character is undone at that moment: switching it off says stop touching
+advanced dyes, and reverting them would be one more touch. Use Glamourer to clear those.
+
+**Log advanced dyes** writes whatever Glamourer currently has on your character to the Dalamud log.
+It is for when a captured row does not come back the way it went in, and is only shown while the
+setting is on.
 
 ---
 

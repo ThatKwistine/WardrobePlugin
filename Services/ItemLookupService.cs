@@ -48,6 +48,23 @@ public class ItemLookupService
         return results;
     }
 
+    /// <summary>The display name of a game item, or empty when the ID is not a real item.</summary>
+    /// <remarks>
+    /// For showing a vanilla piece saved into an outfit without storing anything but its ID. Names
+    /// are cached because an outfit panel asks for the same handful every frame it draws.
+    /// </remarks>
+    public string GetItemName(ulong itemId)
+    {
+        if (_items == null || itemId == 0 || itemId > uint.MaxValue) return string.Empty;
+        if (_itemNames.TryGetValue(itemId, out var cached)) return cached;
+
+        var name = _items.GetRowOrDefault((uint)itemId)?.Name.ExtractText() ?? string.Empty;
+        _itemNames[itemId] = name;
+        return name;
+    }
+
+    private readonly Dictionary<ulong, string> _itemNames = new();
+
     private string _lastSearchKey = string.Empty;
     private IList<(ulong ItemId, string ItemName)> _lastSearchResults = Array.Empty<(ulong, string)>();
 

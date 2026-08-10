@@ -26,6 +26,7 @@ public sealed class Plugin : IDalamudPlugin
     public static GlamourerIpc      Glamourer  { get; private set; } = null!;
     public static CameraService     Camera     { get; private set; } = null!;
     public static SlotIconService   SlotIcons  { get; private set; } = null!;
+    public static IconPackService   IconPacks  { get; private set; } = null!;
     public static ItemLookupService ItemLookup { get; private set; } = null!;
 
     private readonly Configuration            _config;
@@ -78,7 +79,8 @@ public sealed class Plugin : IDalamudPlugin
 
         _windowSystem = new WindowSystem("WardrobePlugin");
         _italicFont = new ItalicFontService(Log);
-        SlotIcons   = new SlotIconService(_config, Textures, _itemLookup, Log);
+        IconPacks   = new IconPackService(_config, Log);
+        SlotIcons   = new SlotIconService(_config, Textures, _itemLookup, IconPacks, Log);
 
         var panel = new ItemImportPanel(_config, _wardrobeService, Penumbra, Glamourer, _analysisService, _itemLookup, _screenshotSession, Log, _italicFont);
         _massImport = new MassImportPanel(_config, Penumbra, _analysisService, _itemLookup, Log, _italicFont);

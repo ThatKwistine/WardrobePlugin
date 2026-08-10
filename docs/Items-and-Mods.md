@@ -11,6 +11,32 @@
 - **Date added** — set on import, used for date sorting; hover an item's name to see it
 - **Favourite flag** — toggled from the card, filterable from the ♥ button on the slot filter row
 
+## Quick view
+
+**Right-click a card's picture** to see it full size, over the whole window — sized to your screen
+rather than to the wardrobe window, which is usually the narrower of the two. It shows the item's
+name, slot and tags, with **Wear**, **Edit** and **Close**; Escape closes it too. The picture's
+tooltip says so, and the same right-click works on the preview in an item's edit panel, which also
+has a **View full size** button.
+
+Right-click rather than a button on the card: at small card sizes anything drawn over the thumbnail
+covers the very thing it exists to show you.
+
+## Deleting things
+
+**Every control that takes something away needs Ctrl held.** They are greyed out until you hold it,
+and their tooltip says so; hold Ctrl and they light up and work as normal. That covers deleting an
+item, an outfit, a camera preset, a tag, a style or an icon pack, and equally the smaller removals —
+taking an item out of an outfit, a tag off an item, a supplementary mod off an import. In context
+menus the entry is greyed with **Ctrl** shown where a shortcut would be.
+
+One rule with no exceptions, deliberately. These sit beside buttons you press constantly, and a rule
+that applies to some of them is one nobody can predict. The bulk **Delete n item(s)** and removing an
+icon pack keep their confirmation dialog *as well*.
+
+Deleting a wardrobe item never touches the Penumbra mod behind it, and deleting an outfit never
+touches the items in it.
+
 ## Importing
 
 Mods you have already imported appear greyed out in the mod list, annotated with the slots they
@@ -214,6 +240,41 @@ are ticked — a mod whose toggles you want wholesale, or want to clear before p
 need clicking through one at a time. They act on that group only, never the mod as a whole, and are
 hidden on a group with a single option. The same picker is used everywhere options are shown: the
 import panel, an item's **Mod Options** section, and Mass Import.
+
+### On, off, or leave it alone
+
+In an item's **Mod Options** section, every checkbox option has three states rather than two:
+
+| | Meaning |
+| --- | --- |
+| **✓** | Make sure this option is on when the item is worn |
+| **•** | Leave it however it already is |
+| **✕** | Make sure this option is off |
+
+The middle state is what lets two items from the same mod be worn together without one undoing the
+other. Penumbra holds one set of options per mod, so when a mod covers body and legs, both items
+used to write the whole mod's settings and whichever was worn last won — which is why a body variant
+would lose its options to the legs beside it. An item that leaves those options alone contributes
+only what it cares about, and the two compound.
+
+Bulk buttons match: **All on** and **Ignore all**, with a count reading `n on · n ignored · n off`.
+**Ignore all** is the quick way to say a whole group belongs to some other slot's item.
+
+Wardrobe now works this out for itself where it can. Each option group is checked against the files
+it actually changes, so importing a mod that covers body and legs gives the body item the body's
+groups and the legs item the legs'. A group that names no slot — meta edits, materials, shared
+textures — is kept by both, since there is no honest way to attribute it. Groups belonging elsewhere
+are labelled in the edit panel, so it is clear why they are being left alone.
+
+Dropdown groups get the middle state too, as a **• Leave alone** entry at the top of the list. They
+hold one option at a time, so there is no per-option cross — "not this one" names nothing for
+Penumbra to switch to — but the group as a whole can still be left out, which is the same idea one
+level up. A dropdown set to leave alone is not written at all when the item is worn.
+
+**Items saved before this existed keep their old behaviour** — their checkbox lists are still the
+exact selection, turning off anything not listed. They gain the third state when you edit their
+options and save, which is also what re-files the groups by slot. If two items from one mod are
+fighting over a variant, editing and saving either one settles it.
 
 ## Customisation mods
 

@@ -130,6 +130,32 @@ public class ScreenshotSessionService : IDisposable
         BeginSession();
     }
 
+    /// <summary>
+    /// Photographs exactly the items given, in the order given. Returns false if there was nothing
+    /// to do or the folders are not set up.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately does not apply <see cref="Photographable"/>. That filter answers "what is worth
+    /// queueing when the user asked for everything" — it skips items that already have a preview,
+    /// and mod categories whose shots would all look identical. Neither applies to a set the user
+    /// picked by hand: re-shooting a preview you are unhappy with is a reason to select it, and an
+    /// animation chosen deliberately is the same considered act as photographing one from its edit
+    /// panel. A selection is an instruction, not a suggestion to be filtered.
+    /// </remarks>
+    public bool StartMany(IEnumerable<WardrobeItem> items)
+    {
+        if (!FoldersReady) return false;
+
+        _queue.Clear();
+        foreach (var item in items)
+            _queue.Enqueue(new SessionTarget(item, null));
+
+        if (_queue.Count == 0) return false;
+
+        BeginSession();
+        return true;
+    }
+
     public void StartSingleOutfit(Outfit outfit)
     {
         _queue.Clear();
@@ -236,7 +262,7 @@ public class ScreenshotSessionService : IDisposable
                 WaitForFile(e.FullPath);
 
                 var dest = UniquePath(_config.ImagesFolder, Sanitize(name) + ".jpg");
-                CropAndConvert(e.FullPath, dest);
+                CropAndConvert(e.FullPath, dest, _config.CapturedImageSize);
 
                 _framework.RunOnFrameworkThread(() =>
                 {
@@ -289,25 +315,46 @@ public class ScreenshotSessionService : IDisposable
         _weaponVisibleBefore = null;
     }
 
-    private static void CropAndConvert(string sourcePath, string destPath)
+    /// <summary>
+    /// Sizes offered for a captured image, in pixels square.
+    /// </summary>
+    /// <remarks>
+    /// One per common screen height above the small default: 1024 for 1080p, 1440 for 1440p, 2048
+    /// for 4K. A square crop can only be as tall as the game window, so these are the sizes at which
+    /// each of those actually has the pixels to fill the image.
+    /// </remarks>
+    public static readonly int[] ImageSizes = { 512, 1024, 1440, 2048 };
+
+    /// <summary>
+    /// Centre-crops a screenshot to a square and writes it at the chosen size.
+    /// </summary>
+    /// <remarks>
+    /// Never upscales. The crop is as tall as the game window, so a 1080p screenshot has about 1080
+    /// square pixels to give and asking for 2048 would only produce a larger, softer file — the
+    /// requested size is a ceiling rather than a promise. Quality rises with the size because a
+    /// bigger image is usually wanted for looking at closely, which is exactly when JPEG artefacts
+    /// start to show.
+    /// </remarks>
+    private static void CropAndConvert(string sourcePath, string destPath, int requested)
     {
         using var img  = Image.FromFile(sourcePath);
         var size = Math.Min(img.Width, img.Height);
         var x    = (img.Width  - size) / 2;
         var y    = (img.Height - size) / 2;
 
-        const int Target = 512;
-        using var bmp = new Bitmap(Target, Target);
+        var target = Math.Min(requested <= 0 ? ImageSizes[0] : requested, size);
+
+        using var bmp = new Bitmap(target, target);
         using var g   = Graphics.FromImage(bmp);
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.DrawImage(img,
-            new Rectangle(0, 0, Target, Target),
+            new Rectangle(0, 0, target, target),
             new Rectangle(x, y, size, size),
             GraphicsUnit.Pixel);
 
         var codec  = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
         var encParams = new EncoderParameters(1);
-        encParams.Param[0] = new EncoderParameter(Encoder.Quality, 85L);
+        encParams.Param[0] = new EncoderParameter(Encoder.Quality, target >= 1024 ? 92L : 85L);
         bmp.Save(destPath, codec, encParams);
     }
 

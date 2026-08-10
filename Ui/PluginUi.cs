@@ -6,12 +6,14 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using Dalamud.Interface.ImGuiFileDialog;
 using Dalamud.Interface.Textures;
 using Dalamud.Interface.Textures.TextureWraps;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 using WardrobePlugin;
+using WardrobePlugin.Ipc;
 using WardrobePlugin.Models;
 using WardrobePlugin.Services;
 
@@ -71,6 +73,21 @@ public class PluginUi : Window, IDisposable
     private string _renamePresetSlot = string.Empty;
     private int    _renamePresetIdx  = -1;
     private string _renamePresetBuf  = string.Empty;
+
+    /// <summary>
+    /// The preset last snapped to in the compact session view, and the slot it belongs to.
+    /// </summary>
+    /// <remarks>
+    /// Update there corrects this rather than the one the session loads. Those are the same until
+    /// you click another preset, and after that the one you are looking at is the one you mean —
+    /// clicking Preset 3, framing it and pressing Update has to change Preset 3.
+    /// <para>
+    /// Held by reference rather than index so it cannot come to mean a different preset, and dropped
+    /// when the session moves to another slot, where it would mean nothing at all.
+    /// </para>
+    /// </remarks>
+    private CameraPreset? _compactPreset;
+    private string        _compactPresetSlot = string.Empty;
 
     // Per original item: how many of its variants the grid is showing, and how many it folded away.
     // Rebuilt every frame by FoldVariants from what the filters left, so it always describes what is
@@ -138,6 +155,36 @@ public class PluginUi : Window, IDisposable
     /// is not — somewhere the user has to read before agreeing.
     /// </summary>
     private const string BulkDeletePopup = "Delete selected items?###bulkDelete";
+
+    /// <summary>Confirmation for removing an installed icon pack, which deletes its folder.</summary>
+    private const string IconPackRemovePopup = "Remove icon pack?###iconPackRemove";
+
+    /// <summary>Pack the x was clicked on, waiting for the confirmation to open. Null when idle.</summary>
+    private string? _iconPackPendingRemoval;
+
+    /// <summary>Result of the last import or removal, shown under the dropdown until the next one.</summary>
+    private string _iconPackStatus = string.Empty;
+
+    /// <summary>Rows found by the last advanced dye probe. Null until it has been run.</summary>
+    private int? _advancedDyeCount;
+
+    /// <summary>
+    /// The item the last Capture was pressed on, and what it found.
+    /// </summary>
+    /// <remarks>
+    /// Carries the item so the result cannot appear under a different row: capturing nothing on the
+    /// hat must not read as a verdict on the boots. Null until one has been pressed.
+    /// </remarks>
+    private (Guid Item, int Rows)? _advancedDyeCaptured;
+
+    /// <summary>What the last vanilla capture found, so pressing the button always shows a result.</summary>
+    private string _vanillaStatus = string.Empty;
+
+    /// <summary>Tag being typed into the outfit editor.</summary>
+    private string _outfitTagInput = string.Empty;
+
+    /// <summary>Parsed swatch colours per item, so the rows are not re-read every frame.</summary>
+    private readonly Dictionary<Guid, (int Fingerprint, List<uint> Colours)> _advancedDyeSwatches = new();
 
     // Set when the user expands out of compact mode mid-session; cleared when the session ends,
     // so it overrides the setting for this session only rather than turning it off permanently.
@@ -208,9 +255,33 @@ public class PluginUi : Window, IDisposable
     private const float BaseCardPad    = 10f;
     private const float BaseCardHeight = 280f;
 
-    private static float CardWidth => UiScale.S(BaseCardWidth);
-    private static float CardPad   => UiScale.S(BaseCardPad);
-    private static float ThumbSize => CardWidth - CardPad * 2; // square thumbnail
+    /// <summary>Bounds on the card size multiplier, so a stored value cannot make a grid unusable.</summary>
+    /// <remarks>
+    /// The lower bound is where a card still has room for its name and buttons; the upper is about
+    /// three cards across a default-width window, past which the grid stops being a grid.
+    /// </remarks>
+    public const float MinCardScale = 0.7f;
+    public const float MaxCardScale = 2.5f;
+
+    /// <summary>
+    /// The user's card size multiplier, applied on top of the layout scale.
+    /// </summary>
+    /// <remarks>
+    /// Clamped on read rather than on write, as the slot icon scales are, so a value hand-edited
+    /// into the config file cannot produce a grid with no way back to the slider that fixes it.
+    /// </remarks>
+    private float CardScale => Math.Clamp(_config.CardScale, MinCardScale, MaxCardScale);
+
+    /// <summary>The outfit grid's own multiplier, on the same bounds as the item grid's.</summary>
+    private float OutfitScale => Math.Clamp(_config.OutfitCardScale, MinCardScale, MaxCardScale);
+
+    private float CardWidth => UiScale.S(BaseCardWidth) * CardScale;
+    private float CardPad   => UiScale.S(BaseCardPad);
+    private float ThumbSize => CardWidth - CardPad * 2; // square thumbnail
+
+    // The outfit grid starts from the same card and scales it separately — see OutfitCardScale
+    private float OutfitCardWidth  => UiScale.S(BaseCardWidth)  * OutfitScale;
+    private float OutfitCardHeight => UiScale.S(BaseCardHeight) * OutfitScale;
 
     /// <summary>
     /// Card height, grown to fit a slot icon larger than the size the card was designed around.
@@ -220,19 +291,18 @@ public class PluginUi : Window, IDisposable
     /// edge — and past it, since a card clips rather than scrolls. Everything that lays the grid out
     /// reads this, so the rows grow with it and nothing overlaps.
     /// </remarks>
-    private static float CardHeight =>
-        UiScale.S(BaseCardHeight) + (Plugin.SlotIcons.Enabled
+    private float CardHeight =>
+        UiScale.S(BaseCardHeight) * CardScale + (Plugin.SlotIcons.Enabled
             ? Math.Max(0f, Plugin.SlotIcons.ScaledSize - SlotIconService.BaseScaledSize)
             : 0f);
 
-    // Outfit previews are full-body shots rather than close-ups, so they get more room by default
-    private static float OutfitCardWidth  => UiScale.S(280f);
-    private static float OutfitCardHeight => UiScale.S(400f);
 
     // Window.Size and Window.SizeConstraints are scaled by Dalamud itself — see IWindow's docs — so
     // these stay in unscaled units. Putting them through UiScale would scale them twice.
     private static readonly Vector2 DefaultSize = new(1000, 700);
-    private static readonly Vector2 CompactSize = new(360, 200);
+    // Tall enough for the camera preset block under the progress lines. The window has no scrollbar,
+    // so anything that does not fit is simply not reachable.
+    private static readonly Vector2 CompactSize = new(360, 275);
     private static readonly Vector2 Unbounded   = new(float.MaxValue, float.MaxValue);
 
     public PluginUi(Configuration config, WardrobeService wardrobe,
@@ -249,6 +319,10 @@ public class PluginUi : Window, IDisposable
         _session  = session;
         _backup   = backup;
         _massImport = massImport;
+
+        // The edit panel has the item and the picture, but the popup that shows it full size lives
+        // here, over the whole window rather than inside a panel that is 360px wide
+        _panel.QuickViewRequested = item => _quickViewItem = item.Id;
 
 
         // Size and constraints are set in PreDraw rather than here, because both scale with
@@ -417,6 +491,10 @@ public class PluginUi : Window, IDisposable
 
         // Must be drawn outside child windows so the dialog isn't clipped
         _fileDialog.Draw();
+
+        // Same reason: the popup is opened from a button inside the grid's child window, and a modal
+        // begun in there would be clipped to it
+        DrawQuickView();
 
         DrawSessionHud();
     }
@@ -1017,6 +1095,9 @@ public class PluginUi : Window, IDisposable
             UiLayout.SameLineIfRoomForText(_scanStatus);
             ImGui.TextDisabled(_scanStatus);
         }
+
+        // Last, so it takes the right-hand end of the row rather than a place in the queue
+        DrawCardSizeButton();
     }
 
     /// <summary>
@@ -1357,14 +1438,14 @@ public class PluginUi : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
-        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.55f, 0.08f, 0.08f, 1f));
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.75f, 0.15f, 0.15f, 1f));
-        if (ImGui.Button($" Delete {items.Count} ", UiScale.S(140, 0)))
+        // Guarded as well as confirmed. The dialog says what is about to happen, but this is the
+        // largest delete in the plugin and the rule is the rule everywhere.
+        if (DeleteButton($" Delete {items.Count} ",
+                $"Deletes {items.Count} item(s) from the wardrobe.", UiScale.S(140, 0)))
         {
             ApplyBulkDelete(items);
             ImGui.CloseCurrentPopup();
         }
-        ImGui.PopStyleColor(2);
 
         ImGui.SameLine();
         if (ImGui.Button(" Cancel ", UiScale.S(120, 0)))
@@ -1445,6 +1526,12 @@ public class PluginUi : Window, IDisposable
         ImGui.SameLine();
         if (ImGui.Button("Unfavourite", new Vector2(favW, 0)))   ApplyBulkFavourite(false);
 
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        DrawBulkScreenshotAction();
+
         if (!string.IsNullOrEmpty(_bulkStatus))
         {
             ImGui.Spacing();
@@ -1466,6 +1553,58 @@ public class PluginUi : Window, IDisposable
         ImGui.PopStyleColor(2);
 
         DrawBulkDeleteConfirm();
+    }
+
+    /// <summary>
+    /// Starts a screenshot session over the selection.
+    /// </summary>
+    /// <remarks>
+    /// The session over everything only queues items with no preview yet, which is right when the
+    /// answer to "what should I photograph" is "whatever is missing". It is the wrong rule for a set
+    /// picked by hand — re-shooting previews you are unhappy with is most of why you would select a
+    /// batch — so this runs exactly what is ticked, and says so rather than quietly dropping the
+    /// ones that already have an image.
+    /// </remarks>
+    private void DrawBulkScreenshotAction()
+    {
+        var items    = SelectedItems();
+        var withShot = items.Count(i => !string.IsNullOrEmpty(i.ImagePath));
+
+        ImGui.TextUnformatted("Screenshots");
+
+        if (!_session.FoldersReady)
+        {
+            ImGui.TextDisabled("Set the images and screenshots folders in Settings first.");
+            return;
+        }
+
+        if (_session.State != SessionState.Idle)
+        {
+            ImGui.TextDisabled("A screenshot session is already running.");
+            return;
+        }
+
+        ImGui.TextDisabled(withShot == 0
+            ? $"Photographs all {items.Count} selected item(s)."
+            : $"Photographs all {items.Count} selected item(s), including the {withShot} that " +
+              "already\nhave a preview — those will be replaced.");
+
+        ImGui.Spacing();
+
+        if (ImGui.Button($"Photograph {items.Count} item(s)", new Vector2(-1, 0)))
+        {
+            // The selection is kept: a session that misfires should be re-runnable without ticking
+            // everything again, and the panel it was started from is where you would go back to
+            if (_session.StartMany(items))
+            {
+                _bulkPanelOpen = false;
+                _log.Information($"[Wardrobe] Screenshot session started for {items.Count} selected item(s)");
+            }
+            else
+            {
+                _bulkStatus = "Could not start the session.";
+            }
+        }
     }
 
     /// <summary>
@@ -1682,6 +1821,55 @@ public class PluginUi : Window, IDisposable
     }
 
     /// <summary>
+    /// The card size slider, behind an icon under the item count.
+    /// </summary>
+    /// <remarks>
+    /// The same setting as the one in Settings, put where it is used. Card size is judged by looking
+    /// at the grid and dragging until it looks right, and a slider four panels away from the thing
+    /// it resizes cannot be judged at all — you set it, close Settings, look, and go back.
+    /// </remarks>
+    private void DrawCardSizeButton()
+    {
+        var text = FontAwesomeIcon.Search.ToIconString();
+
+        float width;
+        using (Plugin.PluginInterface.UiBuilder.IconFontHandle?.Push())
+            width = ImGui.CalcTextSize(text).X + ImGui.GetStyle().FramePadding.X * 2;
+
+        // Against the right edge of the actions row. Placed rather than queued: it is a view control
+        // among wardrobe actions, so it belongs at the far end rather than in the run of buttons that
+        // change what is worn.
+        ImGui.SameLine();
+
+        var rightX = ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - width;
+        if (rightX > ImGui.GetCursorPosX()) ImGui.SetCursorPosX(rightX);
+
+        bool clicked;
+        using (Plugin.PluginInterface.UiBuilder.IconFontHandle?.Push())
+            clicked = ImGui.Button($"{text}##cardsizepop");
+
+        if (clicked) ImGui.OpenPopup(CardSizePopup);
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip($"Card size — items {_config.CardScale:0.00}x, " +
+                             $"outfits {_config.OutfitCardScale:0.00}x\nClick to change them.");
+
+        if (!ImGui.BeginPopup(CardSizePopup)) return;
+
+        ImGui.TextDisabled("Card size");
+        ImGui.Spacing();
+
+        // Both grids, since the popup is reachable from either and the two are set against each other
+        DrawCardScaleSlider("Items", UiScale.S(220));
+        ImGui.Spacing();
+        DrawCardScaleSlider("Outfits", UiScale.S(220));
+
+        ImGui.EndPopup();
+    }
+
+    private const string CardSizePopup = "##cardsizeslider";
+
+    /// <summary>
     /// Wardrobe item count, right-aligned on the toolbar's first row. Shows how many of the total
     /// are currently visible whenever a filter or search is narrowing the grid.
     /// </summary>
@@ -1807,9 +1995,9 @@ public class PluginUi : Window, IDisposable
         // nothing on screen to clear it — the control that held the filter is gone with it
         if (styles.Count == 0) _styleFilter.Clear();
 
-        // Outfits are filtered by none of the tag filters, so the dropdown would visibly do nothing
-        // there. The filter itself is kept, so coming back to items restores what was showing.
-        _frameStyles = _outfitsView ? Array.Empty<TagNode>() : styles;
+        // Shown in both views: outfits carry styles of their own and are filtered by them, so the
+        // dropdown means the same thing on either side and the filter survives switching between them
+        _frameStyles = styles;
 
         // Outfits is a view of its own rather than a slot filter, so it sits first and apart
         var outfitsActive = _outfitsView;
@@ -2248,9 +2436,24 @@ public class PluginUi : Window, IDisposable
     /// lets a style stay one entry on the row while anything filed below it still answers to it.
     /// </remarks>
     private static bool HasAnyTag(WardrobeItem item, HashSet<string> filter) =>
-        item.Tags.Any(t => filter.Any(f =>
+        HasAnyTag(item.Tags, filter);
+
+    private static bool HasAnyTag(List<string> tags, HashSet<string> filter) =>
+        tags.Any(t => filter.Any(f =>
             string.Equals(t, f, StringComparison.OrdinalIgnoreCase) ||
             t.StartsWith(f + "/", StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>
+    /// Whether an outfit passes the tag and style filters, which it does when nothing is filtered.
+    /// </summary>
+    /// <remarks>
+    /// The same rules the item grid uses, so a tag scheme means one thing across the plugin. Tags
+    /// and styles are separate conditions rather than one pool: ticking a style and a tag asks for
+    /// outfits that are both, which is what picking two different kinds of label reads as.
+    /// </remarks>
+    private bool OutfitMatchesTagFilters(Outfit outfit) =>
+        (_tagFilter.Count   == 0 || HasAnyTag(outfit.Tags, _tagFilter)) &&
+        (_styleFilter.Count == 0 || HasAnyTag(outfit.Tags, _styleFilter));
 
     private void DrawFilterButton(string label, EquipSlot? slot)
     {
@@ -2338,8 +2541,21 @@ public class PluginUi : Window, IDisposable
 
         foreach (var (_, child) in node.Children)
         {
+            // The box takes the row while it is open, so the tag stays where it is in the tree
+            if (_renameTagPath == child.FullPath)
+            {
+                DrawTagRenameRow(child.FullPath);
+                continue;
+            }
+
             var active = _tagFilter.Contains(child.FullPath);
-            if (active)            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.78f, 0.58f, 1f, 1f));
+            var custom = _config.TagColoursEnabled ? TagTree.Colour(_config, child.FullPath) : null;
+            var tinted = custom.HasValue;
+
+            // A chosen colour replaces both defaults, shaded for the state so filtering and
+            // unused still read at a glance
+            if (tinted)            ImGui.PushStyleColor(ImGuiCol.Text, TagTree.Shade(custom!.Value, active, child.InUse));
+            else if (active)       ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.78f, 0.58f, 1f, 1f));
             else if (!child.InUse) ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.45f, 0.45f, 0.52f, 1f));
 
             var isLeaf = child.Children.Count == 0;
@@ -2350,20 +2566,43 @@ public class PluginUi : Window, IDisposable
                 flags |= ImGuiTreeNodeFlags.OpenOnArrow; // expand/collapse only via the arrow
 
             var open = ImGui.TreeNodeEx($"##{child.FullPath}", flags, child.Segment);
-            if (active || !child.InUse) ImGui.PopStyleColor();
+            if (tinted || active || !child.InUse) ImGui.PopStyleColor();
 
-            if (!child.InUse)
+            var colourable = _config.TagColoursEnabled;
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(child.InUse
+                    ? $"{child.FullPath}\n\nRight-click to rename{(colourable ? " or colour" : "")} it."
+                    : $"{child.FullPath}\n\nNo items have this tag yet.\n" +
+                      $"Right-click to rename{(colourable ? ", colour" : "")} or delete it.");
+
+            // Every tag, not only the unused ones: renaming and colouring are the reasons to
+            // right-click a tag something is actually wearing, and renaming is the whole point —
+            // a typo used to mean re-tagging everything by hand. Deleting stays limited to tags
+            // nothing carries, so it can never take a tag off an item.
+            if (ImGui.BeginPopupContextItem($"##tagctx_{child.FullPath}"))
             {
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip($"{child.FullPath}\n\nNo items have this tag yet.\n" +
-                                     "Right-click to delete it.");
-
-                if (ImGui.BeginPopupContextItem($"##tagctx_{child.FullPath}"))
+                if (ImGui.MenuItem($"Rename '{child.Segment}'"))
                 {
-                    if (ImGui.MenuItem($"Delete '{child.Segment}'"))
-                        deleted = child.FullPath;
-                    ImGui.EndPopup();
+                    _renameTagPath  = child.FullPath;
+                    _renameTagBuf   = child.Segment;
+                    _renameTagError = string.Empty;
                 }
+
+                if (colourable)
+                {
+                    ImGui.Separator();
+                    DrawTagColourMenu(child.FullPath, "tag");
+                }
+
+                if (!child.InUse)
+                {
+                    ImGui.Separator();
+                    if (UiLayout.DeleteMenuItem($"Delete '{child.Segment}'"))
+                        deleted = child.FullPath;
+                }
+
+                ImGui.EndPopup();
             }
 
             if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
@@ -2387,6 +2626,189 @@ public class PluginUi : Window, IDisposable
         }
 
         if (deleted != null) DeleteDefinedTag(deleted);
+    }
+
+    /// <summary>
+    /// The colour picker shown when a tag or style is right-clicked.
+    /// </summary>
+    /// <remarks>
+    /// Behind a submenu rather than laid out in the context menu itself: the picker is several
+    /// times the height of the menu items around it, and a right-click aimed at Rename or Delete
+    /// should not have to scroll past a colour square to reach them.
+    /// <para>
+    /// It stays a submenu rather than a window of its own so choosing a colour is still one gesture
+    /// from the thing being coloured. The picker is fine inside a popup — only <c>MenuItem</c>
+    /// closes one on click, so dragging around the square keeps the menu up and the tag underneath
+    /// recolours as it goes.
+    /// </para>
+    /// <para>
+    /// Shown in 0-255 rather than ImGui's default 0-1 floats: this is a colour someone is matching
+    /// to something they already have, and the numbers people have for colours are the ones on the
+    /// side of every other colour picker.
+    /// </para>
+    /// </remarks>
+    private void DrawTagColourMenu(string path, string noun)
+    {
+        var existing = TagTree.Colour(_config, path);
+
+        if (!ImGui.BeginMenu($"Set {noun} colour"))
+        {
+            // Shown on the closed entry, so a colour can be seen without opening anything
+            if (existing is { } set)
+            {
+                ImGui.SameLine();
+                var pos  = ImGui.GetCursorScreenPos();
+                var size = ImGui.GetTextLineHeight();
+                ImGui.GetWindowDrawList().AddRectFilled(pos, new Vector2(pos.X + size, pos.Y + size),
+                    ImGui.ColorConvertFloat4ToU32(set));
+                ImGui.Dummy(new Vector2(size, size));
+            }
+            return;
+        }
+
+        var rgb = existing is { } c
+            ? new Vector3(c.X, c.Y, c.Z)
+            : new Vector3(0.78f, 0.58f, 1f); // the colour tags already filter in, as a starting point
+
+        ImGui.SetNextItemWidth(UiScale.S(180));
+        if (ImGui.ColorPicker3($"##tagcolour_{path}", ref rgb,
+                ImGuiColorEditFlags.DisplayRgb | ImGuiColorEditFlags.Uint8 |
+                ImGuiColorEditFlags.NoSidePreview | ImGuiColorEditFlags.NoSmallPreview))
+            TagTree.SetColour(_config, path, rgb);
+
+        if (existing != null)
+        {
+            ImGui.Spacing();
+            if (ImGui.MenuItem("Reset colour"))
+                TagTree.ClearColour(_config, path);
+        }
+
+        ImGui.EndMenu();
+    }
+
+    /// <summary>Tag or style being renamed, with its edit buffer and any complaint about it.</summary>
+    private string _renameTagPath  = string.Empty;
+    private string _renameTagBuf   = string.Empty;
+    private string _renameTagError = string.Empty;
+
+    /// <summary>
+    /// The rename box, drawn in place of a tag or style while it is being renamed.
+    /// </summary>
+    /// <remarks>
+    /// In place rather than in a dialog, matching how a camera preset renames, so the thing being
+    /// renamed stays where it is and the list does not jump about under a modal.
+    /// </remarks>
+    private void DrawTagRenameRow(string path)
+    {
+        ImGui.SetNextItemWidth(UiScale.S(160));
+
+        var entered = ImGui.InputText($"##renametag_{path}", ref _renameTagBuf, 64,
+            ImGuiInputTextFlags.EnterReturnsTrue | ImGuiInputTextFlags.AutoSelectAll);
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton($"Save##renametag_{path}") || entered)
+            RenameTag(path, _renameTagBuf);
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton($"Cancel##renametag_{path}")) CancelTagRename();
+
+        if (!string.IsNullOrEmpty(_renameTagError))
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0.35f, 1f), _renameTagError);
+    }
+
+    private void CancelTagRename()
+    {
+        _renameTagPath  = string.Empty;
+        _renameTagBuf   = string.Empty;
+        _renameTagError = string.Empty;
+    }
+
+    /// <summary>
+    /// Renames a tag or style everywhere it appears, taking anything nested under it along.
+    /// </summary>
+    /// <remarks>
+    /// A tag is not an object anywhere — it is the same string repeated on every item that carries
+    /// it, in the pre-made list, in the filters and in the colour map — so renaming one means
+    /// rewriting all of those in step. Only the last segment changes; the parent is kept, which is
+    /// what makes the same code rename a style, since a style is a tag under <c>Style/</c>.
+    /// <para>
+    /// A name already in use is refused rather than merged. Merging two tags is a bigger thing than
+    /// a typo fix, it cannot be undone, and someone who wanted it can rename to a free name and
+    /// re-tag deliberately.
+    /// </para>
+    /// </remarks>
+    private void RenameTag(string oldPath, string typed)
+    {
+        var segment = NormaliseTag(typed);
+        if (segment.Length == 0)
+        {
+            _renameTagError = "Give it a name.";
+            return;
+        }
+
+        var cut     = oldPath.LastIndexOf('/');
+        var parent  = cut < 0 ? string.Empty : oldPath[..cut];
+        var newPath = parent.Length == 0 ? segment : $"{parent}/{segment}";
+
+        if (newPath.Equals(oldPath, StringComparison.Ordinal))
+        {
+            CancelTagRename();
+            return;
+        }
+
+        // A pure change of case is a rename of itself, not a collision with itself
+        var renamingCaseOnly = newPath.Equals(oldPath, StringComparison.OrdinalIgnoreCase);
+        if (!renamingCaseOnly &&
+            _config.AllTags().Any(t => t.Equals(newPath, StringComparison.OrdinalIgnoreCase)))
+        {
+            _renameTagError = $"'{segment}' already exists.";
+            return;
+        }
+
+        bool Matches(string tag) =>
+            tag.Equals(oldPath, StringComparison.OrdinalIgnoreCase) ||
+            tag.StartsWith($"{oldPath}/", StringComparison.OrdinalIgnoreCase);
+
+        string Rewrite(string tag) => newPath + tag[oldPath.Length..];
+
+        var touched = 0;
+
+        foreach (var item in _config.WardrobeItems)
+            for (var i = 0; i < item.Tags.Count; i++)
+                if (Matches(item.Tags[i]))
+                {
+                    item.Tags[i] = Rewrite(item.Tags[i]);
+                    touched++;
+                }
+
+        for (var i = 0; i < _config.DefinedTags.Count; i++)
+            if (Matches(_config.DefinedTags[i]))
+                _config.DefinedTags[i] = Rewrite(_config.DefinedTags[i]);
+
+        // Filters and colours are keyed by the old path and would otherwise point at nothing
+        RewriteSet(_tagFilter);
+        RewriteSet(_styleFilter);
+
+        foreach (var key in _config.TagColours.Keys.Where(Matches).ToList())
+        {
+            var colour = _config.TagColours[key];
+            _config.TagColours.Remove(key);
+            _config.TagColours[Rewrite(key)] = colour;
+        }
+
+        _config.Save();
+        _log.Information($"[Wardrobe] Renamed tag '{oldPath}' to '{newPath}' on {touched} item tag(s)");
+        CancelTagRename();
+        return;
+
+        void RewriteSet(HashSet<string> filters)
+        {
+            foreach (var f in filters.Where(Matches).ToList())
+            {
+                filters.Remove(f);
+                filters.Add(Rewrite(f));
+            }
+        }
     }
 
     /// <summary>
@@ -2416,6 +2838,8 @@ public class PluginUi : Window, IDisposable
             f.Equals(path, StringComparison.OrdinalIgnoreCase) ||
             f.StartsWith($"{path}/", StringComparison.OrdinalIgnoreCase));
 
+        TagTree.ClearColours(_config, path);
+
         _config.Save();
         _log.Information($"[Wardrobe] Deleted {removed} pre-made tag(s) under '{path}'");
     }
@@ -2430,36 +2854,56 @@ public class PluginUi : Window, IDisposable
         }
 
         ImGui.Spacing();
-        DrawNewTagRow();
-
-        ImGui.Spacing();
         DrawStylesSection();
 
-        // Styles are tags, so the panel is never truly empty once one exists — but the tag tree
-        // below it can still be, and says so rather than showing a bare header
-        if (TagTree.Build(_config, includeStyles: false).Children.Count == 0)
-        {
-            ImGui.Spacing();
-            ImGui.TextDisabled("No tags yet. Make one above, or add them when editing an item.");
-            return;
-        }
+        ImGui.Spacing();
+        DrawTagsSection();
 
         ImGui.Spacing();
+    }
+
+    /// <summary>
+    /// Where tags are made, deleted and filtered on.
+    /// </summary>
+    /// <remarks>
+    /// Making a tag lives inside this header rather than above it, so the box that makes tags and
+    /// the list they appear in are one thing. Loose at the top of the panel it read as unrelated to
+    /// either group — the whole Styles section sat between typing a tag and seeing where it went.
+    /// Styles have always worked this way; this is tags matching them.
+    /// </remarks>
+    private void DrawTagsSection()
+    {
+        // Built once and reused: the tree decides both whether there is anything to show and what
+        // gets drawn, and building it twice to answer the same question was wasted work
+        var tree = TagTree.Build(_config, includeStyles: false);
+
         var header = _tagFilter.Count > 0
             ? $"Tags  ·  {_tagFilter.Count} active###TagsHeader"
             : "Tags###TagsHeader";
 
-        if (ImGui.CollapsingHeader(header, ImGuiTreeNodeFlags.DefaultOpen))
+        if (!ImGui.CollapsingHeader(header, ImGuiTreeNodeFlags.DefaultOpen)) return;
+
+        ImGui.Spacing();
+        DrawNewTagRow();
+
+        // Styles are tags, so the panel is never truly empty once one exists — but this tree can
+        // still be, and says so rather than leaving a gap under the box that fills it
+        if (tree.Children.Count == 0)
         {
-            if (_tagFilter.Count > 0)
-            {
-                ImGui.Spacing();
-                if (ImGui.SmallButton("× Clear")) _tagFilter.Clear();
-                ImGui.Separator();
-            }
-            DrawTagTree(TagTree.Build(_config, includeStyles: false));
             ImGui.Spacing();
+            ImGui.TextDisabled("Nothing here yet. Make one above, or add them while editing an item.");
+            ImGui.Spacing();
+            return;
         }
+
+        ImGui.Spacing();
+        if (_tagFilter.Count > 0)
+        {
+            if (ImGui.SmallButton("× Clear")) _tagFilter.Clear();
+            ImGui.Separator();
+        }
+
+        DrawTagTree(tree);
         ImGui.Spacing();
     }
 
@@ -2535,38 +2979,77 @@ public class PluginUi : Window, IDisposable
             var style  = styles[i];
             var active = _styleFilter.Contains(style.FullPath);
 
+            if (_renameTagPath == style.FullPath)
+            {
+                // On its own line: the box plus its two buttons will not sit in a row of chips
+                DrawTagRenameRow(style.FullPath);
+                continue;
+            }
+
             if (i > 0) UiLayout.SameLineIfRoomForButton(style.Segment);
 
-            if (active)
+            var custom = _config.TagColoursEnabled ? TagTree.Colour(_config, style.FullPath) : null;
+            var pushed = 0;
+
+            if (custom is { } c)
+            {
+                // The chip is its own colour whatever its state, brightened while filtering and
+                // dimmed while nothing carries it, so the colour survives every state it can be in
+                var fill = TagTree.Shade(c, active, style.InUse);
+                ImGui.PushStyleColor(ImGuiCol.Button,        fill);
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, TagTree.Shade(c, true, style.InUse));
+                ImGui.PushStyleColor(ImGuiCol.Text,          TagTree.ReadableOn(fill));
+                pushed = 3;
+            }
+            else if (active)
             {
                 ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.42f, 0.3f, 0.62f, 1f));
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.52f, 0.38f, 0.74f, 1f));
+                pushed = 2;
             }
             else if (!style.InUse)
             {
                 ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.45f, 0.45f, 0.52f, 1f));
+                pushed = 1;
             }
 
             var clicked = ImGui.SmallButton($"{style.Segment}##style_{style.FullPath}");
 
-            if (active)             ImGui.PopStyleColor(2);
-            else if (!style.InUse)  ImGui.PopStyleColor();
+            if (pushed > 0) ImGui.PopStyleColor(pushed);
 
             if (clicked && !_styleFilter.Remove(style.FullPath))
                 _styleFilter.Add(style.FullPath);
 
-            // Same rule as the tag tree: only a style nothing carries can be deleted, so removing
-            // one can never take a style off an item behind the user's back
-            if (!style.InUse)
-            {
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("No items have this style yet.\nRight-click to delete it.");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(style.InUse
+                    ? $"Right-click to rename{(_config.TagColoursEnabled ? " or colour" : "")} it."
+                    : "No items have this style yet.\n" +
+                      $"Right-click to rename{(_config.TagColoursEnabled ? ", colour" : "")} or delete it.");
 
-                if (ImGui.BeginPopupContextItem($"##stylectx_{style.FullPath}"))
+            // Same rules as the tag tree: renaming and colouring are open to any style, but only one
+            // nothing carries can be deleted, so removing one can never take a style off an item
+            if (ImGui.BeginPopupContextItem($"##stylectx_{style.FullPath}"))
+            {
+                if (ImGui.MenuItem($"Rename '{style.Segment}'"))
                 {
-                    if (ImGui.MenuItem($"Delete '{style.Segment}'")) deleted = style.FullPath;
-                    ImGui.EndPopup();
+                    _renameTagPath  = style.FullPath;
+                    _renameTagBuf   = style.Segment;
+                    _renameTagError = string.Empty;
                 }
+
+                if (_config.TagColoursEnabled)
+                {
+                    ImGui.Separator();
+                    DrawTagColourMenu(style.FullPath, "style");
+                }
+
+                if (!style.InUse)
+                {
+                    ImGui.Separator();
+                    if (UiLayout.DeleteMenuItem($"Delete '{style.Segment}'")) deleted = style.FullPath;
+                }
+
+                ImGui.EndPopup();
             }
         }
 
@@ -2649,8 +3132,10 @@ public class PluginUi : Window, IDisposable
     /// <remarks>
     /// Tags otherwise only exist as a side effect of typing one into an item, which means the tag
     /// list can only be built one item at a time and a typo becomes a second tag rather than an
-    /// error. Made here, they show up dimmed in the tree below and in every tag picker, ready to be
-    /// applied — most usefully from Select → Edit Selected, which can tag a whole batch at once.
+    /// error. Made here, they show up dimmed in the tree directly below and in every tag picker,
+    /// ready to be applied — most usefully from Select → Edit Selected, which tags a whole batch at
+    /// once. Drawn inside the Tags header by <see cref="DrawTagsSection"/>, which is what makes
+    /// "directly below" true.
     /// </remarks>
     private void DrawNewTagRow()
     {
@@ -2902,17 +3387,64 @@ public class PluginUi : Window, IDisposable
             ImGui.SetTooltip(item.IsFavorite ? "Remove from favourites" : "Add to favourites");
     }
 
+    /// <summary>
+    /// The colour of the coloured style an item carries, or null if it has none.
+    /// </summary>
+    /// <remarks>
+    /// A style rather than any tag: a style is already the one label an item wears at most a couple
+    /// of, and is meant to describe the whole piece — which is what a whole card can stand for. Tags
+    /// are many and specific, and a card tinted by whichever of eight tags happened to sort first
+    /// would be colour without meaning.
+    /// <para>
+    /// Alphabetical when an item carries more than one coloured style, so the grid does not reshuffle
+    /// its colours when a tag list is reordered. Runs per card per frame, hence the early exit before
+    /// any string work.
+    /// </para>
+    /// </remarks>
+    private Vector4? StyleTint(WardrobeItem item) => StyleTint(item.Tags);
+
+    /// <param name="tags">An item's or an outfit's tags — both are tinted by the same rule.</param>
+    private Vector4? StyleTint(List<string> tags)
+    {
+        if (!_config.TagColoursEnabled || _config.TagColours.Count == 0) return null;
+
+        Vector4? colour = null;
+        string?  best   = null;
+
+        foreach (var tag in tags)
+        {
+            if (!TagTree.IsStyle(tag)) continue;
+            if (TagTree.Colour(_config, tag) is not { } c) continue;
+            if (best != null && string.CompareOrdinal(tag, best) >= 0) continue;
+
+            best   = tag;
+            colour = c;
+        }
+
+        return colour;
+    }
+
     private void DrawCard(WardrobeItem item, ref Guid? pendingDelete)
     {
         var worn = _wardrobe.IsItemWorn(item);
 
+        var background = new Vector4(0.11f, 0.11f, 0.13f, 1f);
+        var border     = new Vector4(0.28f, 0.28f, 0.33f, 1f);
+
+        // A style's colour tints the card it is on, mixed into the usual card colour rather than
+        // replacing it. Worn keeps its gold untouched — that has to stay unmistakable, and a card
+        // that is both worn and styled would otherwise have two things competing to say so.
+        if (!worn && StyleTint(item) is { } tint)
+        {
+            background = TagTree.Blend(background, tint, 0.3f);
+            border     = TagTree.Blend(border,     tint, 0.75f);
+        }
+
         ImGui.PushID(item.Id.ToString());
         ImGui.PushStyleColor(ImGuiCol.ChildBg,
-            worn ? new Vector4(0.22f, 0.18f, 0.04f, 1f)
-                 : new Vector4(0.11f, 0.11f, 0.13f, 1f));
+            worn ? new Vector4(0.22f, 0.18f, 0.04f, 1f) : background);
         ImGui.PushStyleColor(ImGuiCol.Border,
-            worn ? new Vector4(1f, 0.85f, 0.25f, 1f)
-                 : new Vector4(0.28f, 0.28f, 0.33f, 1f));
+            worn ? new Vector4(1f, 0.85f, 0.25f, 1f) : border);
 
         ImGui.BeginChild($"##card_{item.Id}", new Vector2(CardWidth, CardHeight),
             true, ImGuiWindowFlags.NoScrollbar);
@@ -2920,7 +3452,7 @@ public class PluginUi : Window, IDisposable
         DrawItemImage(item);
 
         // Name + worn star / detected indicator
-        var dispName = item.Name.Length > 20 ? item.Name[..18] + "…" : item.Name;
+        var dispName = CardName(item.Name);
         ImGui.TextUnformatted(dispName);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip($"{item.Name}\n{DateAddedLabel(item)}");
@@ -3044,19 +3576,31 @@ public class PluginUi : Window, IDisposable
         // is the first thing to go when a card runs short of room, and this cannot be crowded out.
         DrawSoloContextMenu(item, worn, links);
 
+        // Scaled down far enough, "Edit" no longer fits its button and ImGui clips it to "Edi".
+        // A pencil says the same thing in the room that is left rather than most of a word.
         ImGui.SameLine();
-        if (ImGui.Button("Edit", new Vector2(btnW - editGap, 0)))
+        var editW = btnW - editGap;
+
+        if (ImGui.CalcTextSize("Edit").X + ImGui.GetStyle().FramePadding.X * 2 <= editW)
         {
-            _imageCache.Remove(item.Id);
-            _panel.OpenEdit(item);
+            if (ImGui.Button("Edit", new Vector2(editW, 0)))
+                OpenItemEditor(item);
+        }
+        else
+        {
+            bool editClicked;
+            using (Plugin.PluginInterface.UiBuilder.IconFontHandle?.Push())
+                editClicked = ImGui.Button($"{FontAwesomeIcon.Pen.ToIconString()}##edit_{item.Id}",
+                    new Vector2(editW, 0));
+
+            if (editClicked) OpenItemEditor(item);
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip("Edit this item.");
         }
 
         ImGui.SameLine();
-        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
-        if (ImGui.Button("X", new Vector2(deleteW, 0)))
+        if (DeleteButton("X", $"Deletes '{item.Name}' from the wardrobe.\n" +
+                              "The Penumbra mod itself is not touched.", new Vector2(deleteW, 0)))
             pendingDelete = item.Id;
-        ImGui.PopStyleColor(2);
 
         DrawSoloRow(item, worn, links);
 
@@ -3297,10 +3841,13 @@ public class PluginUi : Window, IDisposable
             _imageCache[item.Id] = entry;
         }
 
+        var top = ImGui.GetCursorPos();
+
         if (entry.Texture?.GetWrapOrDefault() is { } wrap)
         {
             ImageDraw.Square(wrap, ThumbSize);
             AcceptImageDrop(item);
+            DrawQuickViewOverlay(item, top, hasImage: true);
             return;
         }
 
@@ -3308,7 +3855,136 @@ public class PluginUi : Window, IDisposable
         ImGui.Button(item.Slot.DisplayName(), size);
         ImGui.PopStyleColor();
         AcceptImageDrop(item);
+        DrawQuickViewOverlay(item, top, hasImage: false);
     }
+
+    /// <summary>
+    /// The magnifier in the corner of a card's picture, and the click on the picture itself.
+    /// </summary>
+    /// <remarks>
+    /// A right-click on the picture rather than a button on it: the card is small at the sizes where
+    /// this matters most, and anything drawn over the thumbnail is covering the very thing it exists
+    /// to show you. The tooltip is what makes it findable, so the picture carries one whether or not
+    /// there is anything else to say about it.
+    /// <para>
+    /// Only on a real picture. A card with no image has the slot name as its placeholder, and there
+    /// is nothing to view any larger.
+    /// </para>
+    /// </remarks>
+    private void DrawQuickViewOverlay(WardrobeItem item, Vector2 thumbTop, bool hasImage)
+    {
+        if (!hasImage) return;
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Right-click to view full size.");
+
+        if (ImGui.IsItemClicked(ImGuiMouseButton.Right))
+            _quickViewItem = item.Id;
+    }
+
+    /// <summary>Item being shown full size, or null. Cleared by closing the popup.</summary>
+    private Guid? _quickViewItem;
+
+    /// <summary>
+    /// A full-size look at one item's picture, over the grid.
+    /// </summary>
+    /// <remarks>
+    /// Sized from the viewport rather than the window: the point is to see the picture properly, and
+    /// the wardrobe window is often narrow. It stays a look rather than an editor — the buttons on
+    /// it are the two things worth doing while looking at a picture, and everything else is a click
+    /// away in Edit.
+    /// </remarks>
+    private void DrawQuickView()
+    {
+        if (_quickViewItem is not { } id) return;
+
+        var item = _config.WardrobeItems.Find(x => x.Id == id);
+        if (item == null)
+        {
+            _quickViewItem = null;
+            return;
+        }
+
+        if (!ImGui.IsPopupOpen(QuickViewPopup)) ImGui.OpenPopup(QuickViewPopup);
+
+        var vp     = ImGui.GetMainViewport();
+        var centre = new Vector2(vp.Pos.X + vp.Size.X * 0.5f, vp.Pos.Y + vp.Size.Y * 0.5f);
+        ImGui.SetNextWindowPos(centre, ImGuiCond.Appearing, new Vector2(0.5f, 0.5f));
+
+        if (!ImGui.BeginPopupModal(QuickViewPopup, ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            _quickViewItem = null;
+            return;
+        }
+
+        var side = Math.Min(vp.Size.Y * 0.7f, vp.Size.X * 0.5f);
+
+        // Loaded from the path rather than read out of the card cache. The cache is cleared whenever
+        // an item is opened for editing, which is one of the two places this is reached from — taking
+        // it from there would show an empty square exactly where the picture was asked for.
+        if (!string.IsNullOrEmpty(item.ImagePath) && File.Exists(item.ImagePath))
+        {
+            try
+            {
+                if (_textures.GetFromFile(item.ImagePath).GetWrapOrDefault() is { } wrap)
+                    ImageDraw.Square(wrap, side);
+            }
+            catch (Exception ex)
+            {
+                _log.Warning(ex, $"[Wardrobe] Could not load '{item.ImagePath}' for quick view");
+            }
+        }
+        else
+        {
+            ImGui.TextDisabled("This item has no picture.");
+        }
+
+        ImGui.Spacing();
+        ImGui.TextUnformatted(item.Name);
+        ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f), item.Slot.DisplayName());
+
+        if (item.Tags.Count > 0)
+            ImGui.TextDisabled(string.Join(" · ", item.Tags.Select(t =>
+                TagTree.IsStyle(t) ? t[(TagTree.StyleRoot.Length + 1)..] : t)));
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var worn  = _wardrobe.IsItemWorn(item);
+        var btnW  = UiScale.S(130);
+        var (wearLabel, removeLabel) = item.Slot.ActionLabels();
+
+        if (ImGui.Button(worn ? removeLabel : wearLabel, new Vector2(btnW, 0)))
+        {
+            if (worn) _wardrobe.UnwearItem(item);
+            else      _wardrobe.WearItemLinked(item);
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Edit", new Vector2(btnW, 0)))
+        {
+            OpenItemEditor(item);
+            CloseQuickView();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Close", new Vector2(btnW, 0)))
+            CloseQuickView();
+
+        // Escape is what people press at a picture they have finished looking at
+        if (ImGui.IsKeyPressed(ImGuiKey.Escape)) CloseQuickView();
+
+        ImGui.EndPopup();
+    }
+
+    private void CloseQuickView()
+    {
+        _quickViewItem = null;
+        ImGui.CloseCurrentPopup();
+    }
+
+    private const string QuickViewPopup = "Quick view###quickView";
 
     private unsafe void AcceptImageDrop(WardrobeItem item)
     {
@@ -3536,6 +4212,8 @@ public class PluginUi : Window, IDisposable
 
         ImGui.Spacing();
 
+        if (_session.CurrentItem is { } shooting) DrawCompactCameraPresets(shooting);
+
         if (_session.State == SessionState.WaitingForShot)
         {
             if (ImGui.Button("Skip")) _session.Skip();
@@ -3547,6 +4225,107 @@ public class PluginUi : Window, IDisposable
         if (ImGui.Button("End Session")) _session.Stop();
         ImGui.PopStyleColor(2);
         UiLayout.PopWrap();
+    }
+
+    /// <summary>
+    /// Camera presets for the slot being photographed, inside the compact session view.
+    /// </summary>
+    /// <remarks>
+    /// The moment a preset is wrong is the moment you are looking at the shot it framed, and until
+    /// now fixing it meant expanding the window back over the very scene you were photographing.
+    /// <para>
+    /// Deliberately not the whole panel. Renaming, deleting and choosing the session default are
+    /// wardrobe housekeeping, and a stray click on a delete button mid-session is a preset gone with
+    /// the window too small to notice. What is here is the three things worth doing between shots:
+    /// switch to another angle, correct the one being used, and keep a good angle you just found.
+    /// Expand is a click away for the rest.
+    /// </para>
+    /// </remarks>
+    private void DrawCompactCameraPresets(WardrobeItem item)
+    {
+        var slotKey = item.Slot.ToString();
+        var presets = _config.PresetsFor(slotKey);
+
+        ImGui.Separator();
+        ImGui.TextDisabled($"Camera  ·  {item.Slot.DisplayName()}");
+
+        // Moving to another slot makes the remembered preset meaningless — it belonged to the last one
+        if (_compactPresetSlot != slotKey)
+        {
+            _compactPresetSlot = slotKey;
+            _compactPreset     = null;
+        }
+
+        var sessionPreset = _config.DefaultPresetFor(slotKey);
+
+        // What Update corrects: whatever was last snapped to here, falling back to the one the
+        // session loaded, since that is what is on screen before anything has been clicked
+        var target = _compactPreset != null && presets.Contains(_compactPreset)
+            ? _compactPreset
+            : sessionPreset;
+
+        var applyIdx = -1;
+        for (var i = 0; i < presets.Count; i++)
+        {
+            var isTarget  = ReferenceEquals(presets[i], target);
+            var isSession = ReferenceEquals(presets[i], sessionPreset);
+            var name      = string.IsNullOrWhiteSpace(presets[i].Name) ? "(unnamed)" : presets[i].Name;
+
+            // The session's own preset is marked, so picking another does not lose track of which one
+            // the remaining items will be shot with
+            var label = isSession ? $"*{name}" : name;
+
+            if (i > 0) UiLayout.SameLineIfRoomForButton(label);
+
+            if (isTarget)
+            {
+                ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.42f, 0.3f, 0.62f, 1f));
+                ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.52f, 0.38f, 0.74f, 1f));
+            }
+
+            if (ImGui.SmallButton($"{label}##compactpreset_{i}")) applyIdx = i;
+            if (isTarget) ImGui.PopStyleColor(2);
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Snap to this angle." +
+                                 (isSession ? "\n* The session loads this one." : string.Empty) +
+                                 (isTarget  ? "\nUpdate corrects this one."     : string.Empty));
+        }
+
+        if (applyIdx >= 0)
+        {
+            Plugin.Camera.Apply(presets[applyIdx]);
+            _compactPreset = presets[applyIdx];
+        }
+
+        if (presets.Count > 0 && target != null)
+        {
+            var targetName = string.IsNullOrWhiteSpace(target.Name) ? "(unnamed)" : target.Name;
+
+            // Named on the button rather than left to a tooltip. Which preset Update overwrites is
+            // the whole question being asked of it, and a hover is a poor place to answer that.
+            if (ImGui.SmallButton($"Update {targetName}##compactupdate"))
+            {
+                var index = _config.SlotCameraPresetLists[slotKey].IndexOf(target);
+                if (index >= 0) OverwritePreset(slotKey, index);
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"Replace '{targetName}' with the camera as it is now.\n" +
+                                 "Click another preset above to correct that one instead.");
+
+            UiLayout.SameLineIfRoomForButton("Save New");
+        }
+
+        if (ImGui.SmallButton(presets.Count > 0 ? "Save New" : "Save Camera"))
+            SaveCameraPreset(slotKey, string.Empty);
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(presets.Count > 0
+                ? $"Keep the current camera as another {item.Slot.DisplayName()} preset."
+                : $"Save the current camera as the {item.Slot.DisplayName()} preset.\n" +
+                  "The session will use it from the next item on.");
+
+        ImGui.Spacing();
     }
 
     private void DrawSessionHud()
@@ -3714,7 +4493,7 @@ public class PluginUi : Window, IDisposable
                 }
 
                 ImGui.Separator();
-                if (ImGui.MenuItem("Delete")) deleteIdx = i;
+                if (UiLayout.DeleteMenuItem("Delete")) deleteIdx = i;
                 ImGui.EndPopup();
             }
 
@@ -3727,11 +4506,7 @@ public class PluginUi : Window, IDisposable
                                  "Keeps the name.");
 
             UiLayout.SameLineIfRoomForButton("×");
-            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
-            if (ImGui.SmallButton("×")) deleteIdx = i;
-            ImGui.PopStyleColor(2);
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip($"Delete '{label}'.");
+            if (DeleteButton("×", $"Deletes the camera preset '{label}'.")) deleteIdx = i;
 
             ImGui.PopID();
         }
@@ -3787,6 +4562,20 @@ public class PluginUi : Window, IDisposable
 
     private void SavePresetFromCamera(string slotKey)
     {
+        SaveCameraPreset(slotKey, _newPresetName);
+        _newPresetName = string.Empty;
+    }
+
+    /// <summary>
+    /// Saves the camera as a new preset for a slot. A blank name is numbered.
+    /// </summary>
+    /// <remarks>
+    /// Takes the name rather than reading the edit panel's box, so the compact session view — which
+    /// has no room for a name box — cannot pick up whatever happens to be typed in a panel that is
+    /// not even on screen.
+    /// </remarks>
+    private void SaveCameraPreset(string slotKey, string rawName)
+    {
         var captured = Plugin.Camera.Capture();
         if (captured == null)
         {
@@ -3797,14 +4586,16 @@ public class PluginUi : Window, IDisposable
         if (!_config.SlotCameraPresetLists.TryGetValue(slotKey, out var list))
             _config.SlotCameraPresetLists[slotKey] = list = new List<CameraPreset>();
 
-        var name = _newPresetName.Trim();
+        var name = rawName.Trim();
         captured.Name = name.Length > 0 ? name : $"Preset {list.Count + 1}";
+
+        // The first preset a slot ever gets is the one sessions will load, so it marks itself
+        if (list.Count == 0) captured.IsDefault = true;
         list.Add(captured);
 
         _config.Save();
         _config.SavePresets();
         _log.Information($"[Wardrobe] Saved camera preset '{captured.Name}' for {slotKey}");
-        _newPresetName = string.Empty;
     }
 
     private void OverwritePreset(string slotKey, int index)
@@ -3907,17 +4698,6 @@ public class PluginUi : Window, IDisposable
                                  "screenshot, exactly like an item session.");
         }
 
-        UiLayout.SameLineIfRoom(UiLayout.CheckboxWidth("Large cards"));
-        var largeCards = _config.LargeOutfitCards;
-        if (ImGui.Checkbox("Large cards", ref largeCards))
-        {
-            _config.LargeOutfitCards = largeCards;
-            _config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Outfit previews are usually full-body shots.\n" +
-                             "Turn this off to match the item grid's card size.");
-
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
@@ -3928,12 +4708,29 @@ public class PluginUi : Window, IDisposable
             return;
         }
 
+        // The same filter row drives both grids, so a style ticked while looking at outfits narrows
+        // the outfits rather than quietly doing nothing
         var outfits = _config.Outfits
+            .Where(OutfitMatchesTagFilters)
             .OrderBy(o => o.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        var cardW = _config.LargeOutfitCards ? OutfitCardWidth  : CardWidth;
-        var cardH = _config.LargeOutfitCards ? OutfitCardHeight : CardHeight;
+        if (outfits.Count == 0)
+        {
+            ImGui.TextDisabled("No outfit matches the tags or styles you are filtering on.");
+            return;
+        }
+
+        // The same card as the item grid's, on its own multiplier — the two grids are looked at
+        // differently, and the old Large cards toggle was a two-position version of this
+        var cardW = OutfitCardWidth;
+        var cardH = OutfitCardHeight;
+
+        // A card clips rather than scrolls, so the style line has to be paid for in height or it
+        // pushes the buttons past the bottom edge. Grown for the whole grid rather than per card,
+        // so the rows still line up — the same rule the item grid follows for slot icons.
+        if (outfits.Any(o => o.Tags.Any(TagTree.IsStyle)))
+            cardH += ImGui.GetTextLineHeightWithSpacing();
 
         var avail   = ImGui.GetContentRegionAvail().X;
         var columns = Math.Max(1, (int)((avail + CardPad) / (cardW + CardPad)));
@@ -3963,20 +4760,29 @@ public class PluginUi : Window, IDisposable
         var worn   = _wardrobe.IsOutfitWorn(outfit);
         var partly = _wardrobe.IsOutfitPartlyWorn(outfit);
 
+        var background = new Vector4(0.11f, 0.11f, 0.13f, 1f);
+        var border     = new Vector4(0.28f, 0.28f, 0.33f, 1f);
+
+        // Tinted by its style exactly as an item card is, so a grid of outfits sorts by mood the
+        // same way. Worn keeps its gold, for the same reason it does there.
+        if (!worn && StyleTint(outfit.Tags) is { } tint)
+        {
+            background = TagTree.Blend(background, tint, 0.3f);
+            border     = TagTree.Blend(border,     tint, 0.75f);
+        }
+
         ImGui.PushID(outfit.Id.ToString());
         ImGui.PushStyleColor(ImGuiCol.ChildBg,
-            worn ? new Vector4(0.22f, 0.18f, 0.04f, 1f)
-                 : new Vector4(0.11f, 0.11f, 0.13f, 1f));
+            worn ? new Vector4(0.22f, 0.18f, 0.04f, 1f) : background);
         ImGui.PushStyleColor(ImGuiCol.Border,
-            worn ? new Vector4(1f, 0.85f, 0.25f, 1f)
-                 : new Vector4(0.28f, 0.28f, 0.33f, 1f));
+            worn ? new Vector4(1f, 0.85f, 0.25f, 1f) : border);
 
         ImGui.BeginChild($"##outfit_{outfit.Id}", new Vector2(cardW, cardH),
             true, ImGuiWindowFlags.NoScrollbar);
 
         DrawOutfitImage(outfit, cardW - CardPad * 2);
 
-        var dispName = outfit.Name.Length > 20 ? outfit.Name[..18] + "…" : outfit.Name;
+        var dispName = CardName(outfit.Name);
         ImGui.TextUnformatted(dispName);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(items.Count > 0
@@ -3998,6 +4804,8 @@ public class PluginUi : Window, IDisposable
             ? $"{items.Count} items · {missing} missing"
             : $"{items.Count} items");
         ImGui.PopStyleColor();
+
+        DrawOutfitStyleLabels(outfit, cardW);
 
         if (partly)
         {
@@ -4081,13 +4889,8 @@ public class PluginUi : Window, IDisposable
             ImGui.SameLine();
         }
 
-        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
-        if (ImGui.SmallButton("X"))
+        if (DeleteButton("X", "Deletes the outfit only. The items themselves are kept."))
             pendingDelete = outfit;
-        ImGui.PopStyleColor(2);
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Deletes the outfit only. The items themselves are kept.");
 
         ImGui.EndChild();
         ImGui.PopStyleColor(2);
@@ -4192,7 +4995,17 @@ public class PluginUi : Window, IDisposable
             // Text and controls sit to the right of the thumbnail
             ImGui.SetCursorPos(new Vector2(top.X + rowThumb + 8, top.Y));
             ImGui.TextUnformatted(item.Name.Length > 24 ? item.Name[..22] + "…" : item.Name);
-            if (ImGui.IsItemHovered()) ImGui.SetTooltip(item.Name);
+
+            // The name opens the item, as well as the Edit button below. Clicking the thing you
+            // want to work on is the guess most people make first, and the button is there for
+            // everyone who does not.
+            if (ImGui.IsItemHovered())
+            {
+                ImGui.SetTooltip($"{item.Name}\n\nClick to edit this item.");
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+            }
+
+            if (ImGui.IsItemClicked()) OpenItemEditor(item);
 
             ImGui.SetCursorPos(new Vector2(top.X + rowThumb + 8, top.Y + ImGui.GetTextLineHeightWithSpacing()));
             ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.55f, 0.75f, 0.95f, 1f));
@@ -4236,11 +5049,19 @@ public class PluginUi : Window, IDisposable
                                      "without wearing the rest of the outfit.");
             }
 
+            // Small, to sit level with the rest of the row's buttons rather than towering over them
             ImGui.SameLine();
-            if (ImGui.SmallButton("Remove from outfit"))
-                removeId = item.Id;
+            if (ImGui.SmallButton("Edit"))
+                OpenItemEditor(item);
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Takes this item out of the outfit.\nThe item itself is kept.");
+                ImGui.SetTooltip("Open this item's own panel — mod options, tags, image, slot.\n\n" +
+                                 "Closing it comes back here.");
+
+            // A × rather than "Remove from outfit": four labelled buttons ran off the edge of the
+            // panel, and this is the one whose meaning a tooltip can carry
+            ImGui.SameLine();
+            if (DeleteButton("×", "Take this item out of the outfit.\nThe item itself is kept."))
+                removeId = item.Id;
 
             // Dyes sit below the row, full width, since two pickers do not fit beside the thumbnail
             ImGui.SetCursorPos(new Vector2(top.X, top.Y + rowThumb + 6));
@@ -4271,6 +5092,8 @@ public class PluginUi : Window, IDisposable
                     _wardrobe.SetDye(outfit, item.Id, s1, newS2);
 
                 ImGui.SetCursorPos(new Vector2(dyeTop.X, afterDye.Y));
+
+                DrawAdvancedDyes(outfit, item, worn, rowDye);
             }
 
             ImGui.Spacing();
@@ -4284,6 +5107,18 @@ public class PluginUi : Window, IDisposable
             outfit.ItemIds.Remove(removeId.Value);
             _config.Save();
         }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        DrawOutfitVanillaItems(outfit);
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        DrawOutfitTags(outfit);
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -4392,6 +5227,211 @@ public class PluginUi : Window, IDisposable
     /// picking Undyed over a mix would read as no change and quietly do nothing.
     /// Returns true when a different dye was chosen.
     /// </remarks>
+    /// <summary>
+    /// The dyeing the two channels above cannot do: hand off to Glamourer's editor, then keep what
+    /// it produced.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately three small controls rather than an editor. Glamourer owns the colour table and
+    /// the live preview, and duplicating either would mean guessing at how many materials the loaded
+    /// model has. What the wardrobe adds is memory: the rows are Glamourer's, and this is where they
+    /// become part of the outfit.
+    /// <para>
+    /// All of it needs the piece equipped. A colour row addresses the material of whatever occupies
+    /// the slot right now, so there is nothing to capture from, and nothing to show it on, until the
+    /// item is on the character.
+    /// </para>
+    /// </remarks>
+    private void DrawAdvancedDyes(Outfit outfit, WardrobeItem item, bool worn, OutfitDye? dye)
+    {
+        // Off by default and hidden entirely when off. Captured rows stay on the outfit, so turning
+        // it back on finds them where they were left.
+        if (!_config.AdvancedDyesEnabled) return;
+
+        var rows  = dye?.Advanced ?? NoAdvancedDyes;
+        var saved = rows.Count > 0;
+
+        ImGui.Spacing();
+
+        // Turning it on has to read from the character, so it needs the piece worn. Turning it off
+        // never does, and a saved row you cannot get rid of without equipping the item first would
+        // be a trap.
+        var locked = !saved && !worn;
+        if (locked) ImGui.BeginDisabled();
+
+        var on = saved;
+        if (ImGui.Checkbox($"Advanced dyes##adv{item.Id}", ref on))
+        {
+            if (on)
+                _advancedDyeCaptured = (item.Id, _wardrobe.CaptureAdvancedDyes(outfit, item));
+            else
+            {
+                _wardrobe.ClearAdvancedDyes(outfit, item);
+                _advancedDyeCaptured = null;
+            }
+        }
+
+        if (locked) ImGui.EndDisabled();
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(locked
+                ? "Equip this piece first — advanced dyes are read from the\n" +
+                  "character as they are now, not from a row in an outfit."
+                : "Keeps this piece's advanced dyes with the outfit and puts\n" +
+                  "them back whenever it is worn. Untick to forget them and\n" +
+                  "return the material to its game colours.");
+
+        // The palette icon rather than a sentence: the button is a door to Glamourer, and the row
+        // is already carrying two dye pickers and three buttons above it. IconButton places itself
+        // on the line, so there is no SameLine here.
+        if (!worn) ImGui.BeginDisabled();
+        if (IconButton(FontAwesomeIcon.Palette, $"advopen{item.Id}",
+                "Open Glamourer on your character.\nThe palette icon beside the slot's dyes is the editor."))
+            Plugin.Glamourer.OpenOnPlayer();
+
+        if (saved && IconButton(FontAwesomeIcon.Sync, $"advre{item.Id}",
+                "Capture again, replacing what is saved with\nwhatever the slot has on it now."))
+            _advancedDyeCaptured = (item.Id, _wardrobe.CaptureAdvancedDyes(outfit, item));
+        if (!worn) ImGui.EndDisabled();
+
+        if (saved)
+        {
+            DrawAdvancedDyeSwatches(item.Id, rows);
+        }
+        else if (_advancedDyeCaptured is { Rows: 0 } miss && miss.Item == item.Id)
+        {
+            ImGui.Indent(UiScale.S(22f));
+            ImGui.TextDisabled("nothing advanced dyed on that slot");
+            ImGui.Unindent(UiScale.S(22f));
+        }
+    }
+
+    /// <summary>An item with no advanced dyes, so the drawing path has no null to special-case.</summary>
+    private static readonly Dictionary<string, string> NoAdvancedDyes = new();
+
+    /// <summary>
+    /// One square per captured row, in its diffuse colour.
+    /// </summary>
+    /// <remarks>
+    /// A row count alone says nothing — six rows of what? The swatches are what make the setting
+    /// legible at a glance, and they are the only honest thing to show: the wardrobe stores rows it
+    /// deliberately does not interpret, so a colour and a count is all it truthfully knows.
+    /// </remarks>
+    private void DrawAdvancedDyeSwatches(Guid itemId, Dictionary<string, string> rows)
+    {
+        var colours = AdvancedDyeSwatches(itemId, rows);
+
+        // Its own line, indented under the tick box. On the same line it shared a row with a
+        // checkbox, a label and two buttons, and the count was wrapping mid-word off the edge.
+        ImGui.Indent(UiScale.S(22f));
+
+        var size = ImGui.GetTextLineHeight();
+        var gap  = UiScale.S(3f);
+
+        for (var i = 0; i < colours.Count; i++)
+        {
+            if (i > 0) UiLayout.SameLineIfRoom(size + gap);
+
+            var pos = ImGui.GetCursorScreenPos();
+            ImGui.GetWindowDrawList().AddRectFilled(pos, new Vector2(pos.X + size, pos.Y + size), colours[i]);
+            ImGui.Dummy(new Vector2(size, size));
+        }
+
+        var label = rows.Count == 1 ? "1 row" : $"{rows.Count} rows";
+        if (colours.Count != rows.Count) label += $", {colours.Count} coloured";
+
+        if (colours.Count > 0) UiLayout.SameLineIfRoomForText(label);
+        ImGui.TextDisabled(label);
+
+        ImGui.Unindent(UiScale.S(22f));
+    }
+
+    /// <summary>
+    /// Diffuse colours of an item's stored rows, parsed once rather than every frame.
+    /// </summary>
+    /// <remarks>
+    /// The fingerprint is the row count and the total length of their JSON — enough to notice a
+    /// re-capture without parsing to find out, which is the whole point of the cache. This draws
+    /// inside the outfit editor, so it runs for every item in the outfit on every frame.
+    /// </remarks>
+    private List<uint> AdvancedDyeSwatches(Guid itemId, Dictionary<string, string> rows)
+    {
+        var fingerprint = rows.Count * 397 + rows.Values.Sum(v => v.Length);
+
+        if (_advancedDyeSwatches.TryGetValue(itemId, out var cached) && cached.Fingerprint == fingerprint)
+            return cached.Colours;
+
+        var colours = rows.Values
+            .Select(GlamourerIpc.RowDiffuseColour)
+            .Where(c => c.HasValue)
+            .Select(c => c!.Value)
+            .ToList();
+
+        _advancedDyeSwatches[itemId] = (fingerprint, colours);
+        return colours;
+    }
+
+    /// <summary>
+    /// A delete button that does nothing unless Ctrl is held.
+    /// </summary>
+    /// <param name="label">Button text, including any <c>##id</c> suffix.</param>
+    /// <param name="tooltip">What this deletes, shown under the Ctrl hint. No trailing newline.</param>
+    /// <param name="size">Size for a full-height button. Null draws a small one.</param>
+    /// <remarks>
+    /// These are the one-click deletes: an X on a card removes the thing immediately, with no
+    /// confirmation and no undo, and it sits a few pixels from the buttons people press constantly.
+    /// Ctrl is the cheapest guard that cannot be clicked through by accident — deliberately not a
+    /// modal, since a dialog on every X would be worse than the mistake it prevents.
+    /// <para>
+    /// The button is disabled rather than merely inert while Ctrl is up, so the reason is visible
+    /// before the click rather than explained after nothing happens. The tooltip is shown either way
+    /// — a disabled control that also refuses to say why is a dead end.
+    /// </para>
+    /// </remarks>
+    private static bool DeleteButton(string label, string tooltip, Vector2? size = null) =>
+        UiLayout.DeleteButton(label, tooltip, size);
+
+    /// <summary>
+    /// A square button drawn with a Font Awesome glyph, sized to sit level with a checkbox.
+    /// </summary>
+    /// <remarks>
+    /// A full-height button rather than a small one, and the glyph scaled up inside it: an icon is
+    /// the only label these carry, so it has to be legible at a glance in a row that also holds a
+    /// tick box and text. <see cref="ImGui.GetFrameHeight"/> is what the checkbox beside them uses,
+    /// so they line up rather than floating in the middle of the row.
+    /// </remarks>
+    private static bool IconButton(FontAwesomeIcon icon, string id, string tooltip)
+    {
+        bool clicked;
+
+        ImGui.SameLine();
+
+        var text    = icon.ToIconString();
+        var padding = ImGui.GetStyle().FramePadding.X * 2;
+
+        using (Plugin.PluginInterface.UiBuilder.IconFontHandle?.Push())
+        {
+            ImGui.SetWindowFontScale(IconGlyphScale);
+
+            // Measured under the same font and scale it will be drawn with, then squared off. Sizing
+            // the frame from the row height instead let the scaled glyph outgrow its own button and
+            // clip — a Font Awesome glyph is not the width of a line of text.
+            var glyph = ImGui.CalcTextSize(text);
+            var side  = Math.Max(ImGui.GetFrameHeight(), Math.Max(glyph.X, glyph.Y) + padding);
+
+            clicked = ImGui.Button($"{text}##{id}", new Vector2(side, side));
+            ImGui.SetWindowFontScale(1f);
+        }
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(tooltip);
+
+        return clicked;
+    }
+
+    /// <summary>How much larger than the body text an icon button's glyph is drawn.</summary>
+    private const float IconGlyphScale = 1.2f;
+
     private bool DrawDyePicker(string id, string label, byte? current, float width, out byte picked)
     {
         picked = current ?? 0;
@@ -4448,6 +5488,324 @@ public class PluginUi : Window, IDisposable
         return changed;
     }
 
+    /// <summary>
+    /// The plain game items an outfit carries for the slots its own items do not fill.
+    /// </summary>
+    /// <remarks>
+    /// Read-only apart from removing one and re-capturing the lot. There is no picker here on
+    /// purpose: choosing a game item piece by piece is what Glamourer is for, and the wardrobe's
+    /// part is to notice what you are already wearing and keep it. Wear the look, press the button.
+    /// </remarks>
+    private void DrawOutfitVanillaItems(Outfit outfit)
+    {
+        ImGui.TextDisabled("Vanilla items");
+        ImGui.TextDisabled("Plain gear in the slots this outfit's own items do not fill. Saved with " +
+                           "the outfit and put back when it is worn.");
+        ImGui.Spacing();
+
+        if (ImGui.SmallButton("Capture what I'm wearing##vanilla"))
+        {
+            var before = outfit.VanillaItems.Count;
+            var found  = _wardrobe.CaptureVanillaItems(outfit);
+            _config.Save();
+
+            // Always says something. Capturing the same pieces twice changes nothing on screen, and
+            // a button that looks identical before and after reads as a button that does not work.
+            _vanillaStatus = found > 0
+                ? $"Captured {found}: {string.Join(", ", outfit.VanillaItems.Keys
+                    .Select(k => Enum.TryParse<EquipSlot>(k, out var s) ? s.DisplayName() : k))}."
+                : _wardrobe.ResolveOutfit(outfit).Count > 0
+                    ? "Nothing to capture — the outfit's own items already cover every slot you are wearing."
+                    : "Nothing to capture — Glamourer reported no equipment.";
+
+            if (found > 0 && found == before)
+                _vanillaStatus += " (Unchanged.)";
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Reads Glamourer and stores whatever is in the slots this outfit\n" +
+                             "does not already cover, dyes and all. Replaces what is stored now.");
+
+        if (!string.IsNullOrEmpty(_vanillaStatus))
+        {
+            ImGui.Spacing();
+            ImGui.TextWrapped(_vanillaStatus);
+        }
+
+        if (outfit.VanillaItems.Count == 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled("None saved.");
+            return;
+        }
+
+        ImGui.Spacing();
+
+        string? drop = null;
+
+        foreach (var (slotName, piece) in outfit.VanillaItems.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            var slot = Enum.TryParse<EquipSlot>(slotName, out var parsed) ? parsed : EquipSlot.Unknown;
+
+            ImGui.PushID($"vanilla_{slotName}");
+
+            if (DeleteButton("×", $"Stop saving the {slot.DisplayName()} piece with this outfit."))
+                drop = slotName;
+
+            ImGui.SameLine();
+            ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f), slot.DisplayName());
+
+            ImGui.SameLine();
+            ImGui.TextUnformatted(string.IsNullOrEmpty(piece.Name) ? $"#{piece.ItemId}" : piece.Name);
+
+            DrawStainSwatch(piece.Stain1);
+            DrawStainSwatch(piece.Stain2);
+
+            ImGui.PopID();
+        }
+
+        if (drop == null) return;
+
+        outfit.VanillaItems.Remove(drop);
+        _config.Save();
+    }
+
+    /// <summary>
+    /// A name cut to what fits on a card at the current size.
+    /// </summary>
+    /// <remarks>
+    /// Scaled with the card rather than fixed at twenty characters: enlarging a card to read the
+    /// names on it and getting the same truncation in more empty space is the opposite of what the
+    /// slider is for.
+    /// </remarks>
+    private string CardName(string name)
+    {
+        var max = Math.Max(8, (int)(20 * CardScale));
+        return name.Length > max ? name[..(max - 2)] + "…" : name;
+    }
+
+    /// <summary>
+    /// The styles an outfit carries, named on its card in their own colours.
+    /// </summary>
+    /// <remarks>
+    /// The card is already tinted by the first coloured style, but a tint alone cannot be read back
+    /// — it says "this one is different" without saying what it is, and says nothing at all on a
+    /// style with no colour set. The name is what makes a grid of outfits sortable by eye.
+    /// <para>
+    /// Text rather than buttons: a card is a thing to look at, and everything on it that can be
+    /// clicked already does something. Styles are set in the edit panel.
+    /// </para>
+    /// </remarks>
+    private void DrawOutfitStyleLabels(Outfit outfit, float cardW)
+    {
+        var styles = outfit.Tags.Where(TagTree.IsStyle).ToList();
+        if (styles.Count == 0) return;
+
+        var names = styles
+            .Select(s => s[(TagTree.StyleRoot.Length + 1)..])
+            .Select(s => s.Contains('/') ? s[..s.IndexOf('/')] : s)
+            .ToList();
+
+        // One line, ellipsised rather than wrapped: the card has a fixed height and a second row of
+        // styles would push the buttons off the bottom of it
+        var label = string.Join(" · ", names);
+        var room  = cardW - CardPad * 4;
+
+        while (label.Length > 4 && ImGui.CalcTextSize(label).X > room)
+            label = label[..^2] + "…";
+
+        var colour = _config.TagColoursEnabled ? TagTree.Colour(_config, styles[0]) : null;
+        ImGui.PushStyleColor(ImGuiCol.Text, colour is { } c
+            ? TagTree.Shade(c, true, true)
+            : new Vector4(0.72f, 0.62f, 0.9f, 1f));
+
+        ImGui.TextUnformatted(label);
+        ImGui.PopStyleColor();
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(names.Count == 1 ? $"Style: {names[0]}" : "Styles: " + string.Join(", ", names));
+    }
+
+    /// <summary>
+    /// Opens an item's own edit panel from wherever it was clicked.
+    /// </summary>
+    /// <remarks>
+    /// The right panel draws one thing at a time and the item editor sits above the outfit editor
+    /// in that order, so opening it covers the outfit and closing it uncovers the outfit again —
+    /// still open, still on the same outfit, because nothing here clears
+    /// <see cref="_editingOutfit"/>. Going to change a mod option and coming back is therefore the
+    /// default behaviour rather than something to arrange.
+    /// <para>
+    /// The cached thumbnail is dropped on the way, matching the item grid's Edit: the picture is the
+    /// thing most likely to be changed in there, and a stale one would survive the trip back.
+    /// </para>
+    /// </remarks>
+    private void OpenItemEditor(WardrobeItem item)
+    {
+        _imageCache.Remove(item.Id);
+        _panel.OpenEdit(item);
+    }
+
+    /// <summary>
+    /// Styles and tags on an outfit, sharing the wardrobe's one tag scheme.
+    /// </summary>
+    /// <remarks>
+    /// The same strings items use, filtered by the same row: an outfit tagged <c>Beach</c> answers
+    /// to the Beach filter exactly as a swimsuit does, and there is no second vocabulary to keep in
+    /// step. Styles are toggles and tags are chips, matching the item edit panel, because a style is
+    /// picked from a short known list while a tag can be anything.
+    /// </remarks>
+    private void DrawOutfitTags(Outfit outfit)
+    {
+        ImGui.TextDisabled("Styles");
+        ImGui.Spacing();
+
+        var styles  = TagTree.Styles(_config);
+        var changed = false;
+
+        if (styles.Count == 0)
+        {
+            ImGui.TextDisabled("None yet — make one in the Tags panel.");
+        }
+        else
+        {
+            for (var i = 0; i < styles.Count; i++)
+            {
+                var style = styles[i];
+                var on    = outfit.Tags.Contains(style.FullPath, StringComparer.OrdinalIgnoreCase);
+
+                if (i > 0) UiLayout.SameLineIfRoomForButton(style.Segment);
+
+                var colour = _config.TagColoursEnabled ? TagTree.Colour(_config, style.FullPath) : null;
+                var pushed = 0;
+
+                if (colour is { } c)
+                {
+                    var fill = TagTree.Shade(c, on, true);
+                    ImGui.PushStyleColor(ImGuiCol.Button,        on ? fill : TagTree.Blend(fill, new Vector4(0.16f, 0.16f, 0.19f, 1f), 0.55f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, fill);
+                    ImGui.PushStyleColor(ImGuiCol.Text,          on ? TagTree.ReadableOn(fill) : new Vector4(0.75f, 0.75f, 0.8f, 1f));
+                    pushed = 3;
+                }
+                else if (on)
+                {
+                    ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.42f, 0.3f, 0.62f, 1f));
+                    ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.52f, 0.38f, 0.74f, 1f));
+                    pushed = 2;
+                }
+
+                if (ImGui.SmallButton($"{style.Segment}##outfitstyle_{style.FullPath}"))
+                {
+                    if (on) outfit.Tags.RemoveAll(t => t.Equals(style.FullPath, StringComparison.OrdinalIgnoreCase));
+                    else    outfit.Tags.Add(style.FullPath);
+                    changed = true;
+                }
+
+                if (pushed > 0) ImGui.PopStyleColor(pushed);
+            }
+        }
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Tags");
+        ImGui.Spacing();
+
+        // Styles are shown above, so a style is never repeated down here as a chip
+        var removeIdx = -1;
+        var drawn     = 0;
+
+        for (var i = 0; i < outfit.Tags.Count; i++)
+        {
+            if (TagTree.IsStyle(outfit.Tags[i])) continue;
+
+            if (drawn++ > 0) UiLayout.SameLineIfRoomForButton(outfit.Tags[i]);
+
+            ImGui.PushID($"outfittag_{i}");
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.35f, 0.2f, 0.55f, 1f));
+            ImGui.SmallButton(outfit.Tags[i]);
+            ImGui.PopStyleColor();
+
+            ImGui.SameLine();
+            if (DeleteButton("×", $"Take '{outfit.Tags[i]}' off this outfit.")) removeIdx = i;
+            ImGui.PopID();
+        }
+
+        if (removeIdx >= 0)
+        {
+            outfit.Tags.RemoveAt(removeIdx);
+            changed = true;
+        }
+
+        ImGui.SetNextItemWidth(UiScale.S(200));
+        var entered = ImGui.InputTextWithHint("##outfittaginput", "new tag", ref _outfitTagInput, 128,
+            ImGuiInputTextFlags.EnterReturnsTrue);
+
+        UiLayout.SameLineIfRoomForButton("Add");
+        if ((ImGui.SmallButton("Add") || entered) && AddOutfitTag(outfit)) changed = true;
+
+        // Every known tag, so a scheme laid out in the Tags panel is one click away here too
+        var suggestions = _config.AllTags()
+            .Where(t => !TagTree.IsStyle(t)
+                     && !outfit.Tags.Contains(t, StringComparer.OrdinalIgnoreCase)
+                     && (string.IsNullOrEmpty(_outfitTagInput)
+                         || t.Contains(_outfitTagInput, StringComparison.OrdinalIgnoreCase)))
+            .Take(24)
+            .ToList();
+
+        if (suggestions.Count > 0)
+        {
+            ImGui.TextDisabled("Existing tags");
+            for (var i = 0; i < suggestions.Count; i++)
+            {
+                var s     = suggestions[i];
+                var label = s.Contains('/') ? s[(s.LastIndexOf('/') + 1)..] + "…" : s;
+
+                if (i > 0) UiLayout.SameLineIfRoomForButton(label);
+
+                if (ImGui.SmallButton($"{label}##outfitsug_{s}"))
+                {
+                    outfit.Tags.Add(s);
+                    _outfitTagInput = string.Empty;
+                    changed = true;
+                }
+
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip(s);
+            }
+        }
+
+        if (changed) _config.Save();
+    }
+
+    private bool AddOutfitTag(Outfit outfit)
+    {
+        var tag = NormaliseTag(_outfitTagInput);
+        if (tag.Length == 0) return false;
+
+        _outfitTagInput = string.Empty;
+
+        if (outfit.Tags.Contains(tag, StringComparer.OrdinalIgnoreCase)) return false;
+
+        outfit.Tags.Add(tag);
+        return true;
+    }
+
+    /// <summary>A small square of a dye's colour, skipped entirely when the channel is undyed.</summary>
+    private void DrawStainSwatch(byte stain)
+    {
+        if (stain == 0) return;
+
+        var entry = Plugin.ItemLookup.GetStains().FirstOrDefault(s => s.Id == stain);
+        if (entry.Id == 0) return;
+
+        ImGui.SameLine();
+
+        var pos  = ImGui.GetCursorScreenPos();
+        var size = ImGui.GetTextLineHeight();
+        ImGui.GetWindowDrawList().AddRectFilled(pos, new Vector2(pos.X + size, pos.Y + size), entry.Colour);
+        ImGui.Dummy(new Vector2(size, size));
+
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(entry.Name);
+    }
+
     /// <summary>Adds an existing wardrobe item to the outfit, searchable by name.</summary>
     private void DrawAddToOutfit(Outfit outfit)
     {
@@ -4493,6 +5851,10 @@ public class PluginUi : Window, IDisposable
         _editOutfitName    = string.Empty;
         _editOutfitImage   = string.Empty;
         _addToOutfitSearch = string.Empty;
+
+        // Belongs to the outfit that was open, and would otherwise report on it under the next one
+        _vanillaStatus     = string.Empty;
+        _outfitTagInput    = string.Empty;
     }
 
     private void OpenOutfitEdit(Outfit outfit)
@@ -4741,13 +6103,37 @@ public class PluginUi : Window, IDisposable
         SettingsBreak();
         DrawSlotIconSettings();
         SettingsBreak();
+        DrawCardSizeSettings();
+        SettingsBreak();
+        DrawTagColourSettings();
+        SettingsBreak();
         DrawImageFolderSettings();
         SettingsBreak();
         DrawScreenshotSettings();
         SettingsBreak();
         DrawBackupSettings();
         SettingsBreak();
+        DrawExperimentalSettings();
+        SettingsBreak();
         DrawSetupSettings();
+    }
+
+    /// <summary>
+    /// Features that are finished enough to try but have not been proven in the game yet.
+    /// </summary>
+    /// <remarks>
+    /// Last before Setup, and off by default, because the honest thing to do with something written
+    /// against a plugin's undocumented internals is to say so rather than let it look as settled as
+    /// the rest of the panel. Anything here either graduates into a section of its own or goes.
+    /// </remarks>
+    private void DrawExperimentalSettings()
+    {
+        ImGui.TextUnformatted("Experimental");
+        ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f),
+            "Not fully tested. Turn these on if you want to help find out how well they work.");
+        ImGui.Spacing();
+
+        DrawAdvancedDyeSettings();
     }
 
     /// <summary>Spacing and a rule between two settings sections.</summary>
@@ -4862,6 +6248,179 @@ public class PluginUi : Window, IDisposable
 
         ImGui.Spacing();
         DrawRevertDesignPicker();
+    }
+
+    /// <summary>
+    /// Whether outfits carry Glamourer's advanced dyes, and the probe for when one misbehaves.
+    /// </summary>
+    private void DrawAdvancedDyeSettings()
+    {
+        ImGui.TextDisabled("Advanced dyes");
+        ImGui.TextDisabled("Glamourer can dye a piece far past the game's two channels, editing a " +
+                           "material's colour rows directly. With this on, an outfit can keep those " +
+                           "rows for each of its items and put them back when it is worn.");
+        ImGui.Spacing();
+
+        var enabled = _config.AdvancedDyesEnabled;
+        if (ImGui.Checkbox("Keep advanced dyes with outfits", ref enabled))
+        {
+            _config.AdvancedDyesEnabled = enabled;
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Adds a tick box to each item's dyes in an outfit's edit panel.\n" +
+                             "Glamourer stays the editor — the wardrobe only remembers.");
+
+        if (!_config.AdvancedDyesEnabled)
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled("Anything already captured is kept, and comes back when this is " +
+                               "turned on again.");
+            return;
+        }
+
+        ImGui.Spacing();
+        DrawAdvancedDyeProbe();
+    }
+
+    /// <summary>
+    /// Reads Glamourer's advanced dyes for the current character and writes them to the log.
+    /// </summary>
+    /// <remarks>
+    /// A diagnostic rather than a control. Advanced dyes are saved per item on an outfit's edit
+    /// panel; this only answers "what does Glamourer actually have on me", which is the first thing
+    /// worth knowing when a captured row does not come back the way it went in.
+    /// </remarks>
+    private void DrawAdvancedDyeProbe()
+    {
+        ImGui.TextDisabled("Advanced dyes");
+        ImGui.TextDisabled("Saved per item in an outfit's edit panel. This writes whatever " +
+                           "Glamourer has on you right now to the log, for when one does not come " +
+                           "back the way it was captured.");
+        ImGui.Spacing();
+
+        if (ImGui.Button(" Log advanced dyes "))
+        {
+            Plugin.Glamourer.LogAdvancedDyes();
+            _advancedDyeCount = Plugin.Glamourer.GetAdvancedDyes()?.Count;
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Advanced dye something in Glamourer first, then press this.\n" +
+                             "The rows go to the Dalamud log.");
+
+        if (_advancedDyeCount is not { } count) return;
+
+        ImGui.SameLine();
+        if (count > 0)
+            ImGui.TextColored(new Vector4(0.5f, 0.85f, 0.6f, 1f), $"{count} row(s) — written to the log.");
+        else
+            ImGui.TextDisabled("Nothing advanced dyed right now.");
+    }
+
+    /// <summary>
+    /// How big the cards in both grids are drawn.
+    /// </summary>
+    /// <remarks>
+    /// A slider rather than a set of sizes: how many cards fit is a function of the window width,
+    /// the font scale and how much of the picture someone wants to see, and no three presets are
+    /// right for all of that. Both grids read it — a wardrobe browsed by picture wants big cards
+    /// everywhere, and the outfits toggle only ever governed outfits.
+    /// </remarks>
+    private void DrawCardSizeSettings()
+    {
+        ImGui.TextUnformatted("Card Size");
+        ImGui.TextDisabled("How large the cards in the item and outfit grids are drawn. Larger cards " +
+                           "mean bigger previews and fewer per row.");
+        ImGui.Spacing();
+
+        DrawCardScaleSlider("Items", UiScale.S(260));
+        ImGui.Spacing();
+        DrawCardScaleSlider("Outfits", UiScale.S(260));
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Separate, because the two grids are looked at differently: an outfit " +
+                           "preview is usually a full-body shot and wants the room, while more item " +
+                           "cards on screen is the point of the item grid.");
+    }
+
+    /// <summary>
+    /// One of the two card size sliders, with its pixel readout and a Reset once it is off default.
+    /// </summary>
+    /// <param name="grid">"Items" or "Outfits" — the only two, and what the slider is labelled with.</param>
+    private void DrawCardScaleSlider(string grid, float width)
+    {
+        var outfits = grid == "Outfits";
+        var value   = outfits ? _config.OutfitCardScale : _config.CardScale;
+        var shownW  = outfits ? OutfitCardWidth  : CardWidth;
+        var shownH  = outfits ? OutfitCardHeight : CardHeight;
+
+        ImGui.TextDisabled(grid);
+        ImGui.SetNextItemWidth(width);
+
+        if (ImGui.SliderFloat($"##cardscale{grid}", ref value, MinCardScale, MaxCardScale,
+                $"{shownW:0} × {shownH:0} px  (%.2fx)"))
+        {
+            if (outfits) _config.OutfitCardScale = value;
+            else         _config.CardScale       = value;
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Ctrl-click to type a value.\n" +
+                             "This is on top of Dalamud's Global Font Scale, not instead of it.");
+
+        if (Math.Abs(value - 1f) <= 0.001f) return;
+
+        ImGui.SameLine();
+        if (!ImGui.Button($"Reset##cardscale{grid}")) return;
+
+        if (outfits) _config.OutfitCardScale = 1f;
+        else         _config.CardScale       = 1f;
+        _config.Save();
+    }
+
+    /// <summary>
+    /// Whether tags and styles carry a colour, and item cards take the colour of their style.
+    /// </summary>
+    private void DrawTagColourSettings()
+    {
+        ImGui.TextUnformatted("Tag Colours");
+        ImGui.TextDisabled("Right-click a tag or style in the Tags panel to give it a colour. An " +
+                           "item card takes the colour of its style, so a glance across the grid " +
+                           "sorts it by mood before you read a word of it.");
+        ImGui.Spacing();
+
+        var enabled = _config.TagColoursEnabled;
+        if (ImGui.Checkbox("Colour tags and styles", ref enabled))
+        {
+            _config.TagColoursEnabled = enabled;
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Turning this off keeps every colour you have picked —\n" +
+                             "it only stops them being used.");
+
+        var coloured = _config.TagColours.Count;
+
+        ImGui.Spacing();
+        if (!_config.TagColoursEnabled)
+        {
+            ImGui.TextDisabled(coloured > 0
+                ? $"{coloured} colour(s) kept, and used again when this is turned back on."
+                : "Nothing is coloured yet.");
+            return;
+        }
+
+        ImGui.TextDisabled(coloured > 0
+            ? $"{coloured} tag(s) and style(s) have a colour."
+            : "Nothing is coloured yet. Right-click one in the Tags panel to start.");
+
+        // Worn cards keep their gold, and it is worth saying so before someone colours a style and
+        // wonders why the piece they are wearing ignored it
+        ImGui.TextDisabled("A worn item keeps its gold card, whatever its style.");
     }
 
     private void DrawImageFolderSettings()
@@ -4990,6 +6549,32 @@ public class PluginUi : Window, IDisposable
             }
             ImGui.PopStyleColor(2);
         }
+
+        ImGui.Spacing();
+        ImGui.TextUnformatted("Captured image size");
+        ImGui.TextDisabled("Every shot is centre-cropped to a square and saved at this size. Larger " +
+                           "is for looking at closely; each step up costs roughly four times the " +
+                           "space per image.");
+        ImGui.Spacing();
+
+        var sizes    = ScreenshotSessionService.ImageSizes;
+        var labels   = sizes.Select(s => $"{s} × {s}").ToArray();
+        var sizeIdx  = Array.IndexOf(sizes, _config.CapturedImageSize);
+        if (sizeIdx < 0) sizeIdx = 0;
+
+        ImGui.SetNextItemWidth(UiScale.S(180));
+        if (ImGui.Combo("##capturedsize", ref sizeIdx, labels, labels.Length))
+        {
+            _config.CapturedImageSize = sizes[sizeIdx];
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("One per screen height: 1024 for 1080p, 1440 for 1440p, 2048 for 4K.\n\n" +
+                             "Never upscales — the crop is as tall as your game window, so a 1080p\n" +
+                             "screenshot gives about 1080 pixels however large a size is chosen.");
+
+        ImGui.TextDisabled("Existing images are left as they are — this applies to shots taken from now on.");
 
         ImGui.Spacing();
         ImGui.TextUnformatted("During a session");
@@ -5318,9 +6903,196 @@ public class PluginUi : Window, IDisposable
     private void DrawCustomIconSettings()
     {
         ImGui.TextDisabled("Your own icons");
-        ImGui.TextDisabled("A folder of images named after their slots — Head.png, Body.png, " +
-                           "RingRight.png. Any slot you supply uses your image; the rest stay on " +
-                           "the set chosen above.");
+        ImGui.TextDisabled("Images named after their slots — Head.png, Body.png, RingRight.png. " +
+                           "Install a zipped pack, or point at a folder of your own. Any slot you " +
+                           "supply uses your image; the rest stay on the set chosen above.");
+        ImGui.Spacing();
+
+        DrawIconPackSettings();
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        DrawCustomIconFolderSettings();
+
+        // Once, under both — what is covered is the sum of the two, and where a given icon came
+        // from is not something the list needs to answer
+        if (Plugin.IconPacks.Active != null || !string.IsNullOrEmpty(_config.CustomIconFolder))
+            DrawCustomIconCoverage();
+    }
+
+    /// <summary>
+    /// Installed icon packs: a dropdown to choose one, an x on each to remove it, and an importer.
+    /// </summary>
+    /// <remarks>
+    /// A pack is unpacked into the plugin's own config directory rather than left zipped, so what is
+    /// installed is the same folder of slot-named files the setting below already accepts. Nothing
+    /// new can go wrong at draw time, and a pack can be opened, edited or zipped back up by hand.
+    /// </remarks>
+    private void DrawIconPackSettings()
+    {
+        var packs  = Plugin.IconPacks.Packs;
+        var active = Plugin.IconPacks.Active;
+
+        ImGui.TextDisabled("Icon pack");
+
+        ImGui.SetNextItemWidth(UiScale.S(220));
+        if (ImGui.BeginCombo("##iconpack", active?.DisplayName ?? "None"))
+        {
+            if (ImGui.Selectable("None", active == null))
+            {
+                Plugin.IconPacks.Select(string.Empty);
+                Plugin.SlotIcons.Rescan();
+            }
+
+            foreach (var pack in packs)
+            {
+                // The row is narrowed to leave room for the x, which sits on the same line. A pack
+                // is removed from where it is chosen — the alternative is selecting one in order to
+                // delete it, which changes what you are looking at on the way to throwing it away.
+                var removeWidth = ImGui.CalcTextSize("x").X + ImGui.GetStyle().FramePadding.X * 2;
+                var rowWidth    = Math.Max(UiScale.S(120), ImGui.GetContentRegionAvail().X - removeWidth
+                                                           - ImGui.GetStyle().ItemSpacing.X);
+
+                if (ImGui.Selectable($"{pack.DisplayName}##pack{pack.Id}", pack.Id == active?.Id,
+                        ImGuiSelectableFlags.None, new Vector2(rowWidth, 0)))
+                {
+                    Plugin.IconPacks.Select(pack.Id);
+                    Plugin.SlotIcons.Rescan();
+                }
+
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(PackTooltip(pack));
+
+                ImGui.SameLine();
+                if (DeleteButton($"x##remove{pack.Id}", $"Remove '{pack.DisplayName}'."))
+                {
+                    // Deferred: opening a modal from inside a combo popup fights with the combo for
+                    // focus, so the popup is opened next frame from outside it
+                    _iconPackPendingRemoval = pack.Id;
+                    ImGui.CloseCurrentPopup();
+                }
+            }
+
+            ImGui.EndCombo();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button(" Import zip… "))
+        {
+            _fileDialog.OpenFileDialog("Import Icon Pack", "Icon pack{.zip}", (confirmed, path) =>
+            {
+                if (!confirmed) return;
+
+                // The zip is only read — the file stays wherever the user keeps it
+                Plugin.IconPacks.TryImport(path, out _iconPackStatus);
+                Plugin.SlotIcons.Rescan();
+            });
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Unpacks it into the plugin's own folder and switches to it.");
+
+        if (packs.Count > 0)
+        {
+            // The path rather than the folder itself: an installed pack is a folder of ordinary
+            // files worth editing, and this plugin does not start processes of its own — see the
+            // note in NoteText.Open
+            ImGui.SameLine();
+            if (ImGui.Button(" Copy path##iconpacks "))
+            {
+                Plugin.IconPacks.EnsureRoot();
+                ImGui.SetClipboardText(Plugin.IconPacks.PacksRoot);
+                _iconPackStatus = "Path copied — paste it into Explorer to edit or zip a pack.";
+            }
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(Plugin.IconPacks.PacksRoot);
+        }
+
+        if (Plugin.IconPacks.ActiveIsMissing)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
+                "The selected pack is no longer installed.");
+        }
+        else if (active != null)
+        {
+            ImGui.TextDisabled(PackTooltip(active));
+        }
+
+        if (!string.IsNullOrEmpty(_iconPackStatus))
+            ImGui.TextWrapped(_iconPackStatus);
+
+        DrawIconPackRemoveConfirm();
+    }
+
+    private static string PackTooltip(IconPack pack)
+    {
+        var author = string.IsNullOrWhiteSpace(pack.Author) ? string.Empty : $" · by {pack.Author}";
+        return $"{pack.MatchedSlots} slot(s){author}";
+    }
+
+    /// <summary>
+    /// Confirms removing a pack, since the folder and everything in it is deleted.
+    /// </summary>
+    /// <remarks>
+    /// Worth a modal rather than an inline second click: a pack may be the only copy of the images
+    /// if the zip it came from has since been tidied away, and the x is small and sits in a list
+    /// people are scrolling through to pick something else.
+    /// </remarks>
+    private void DrawIconPackRemoveConfirm()
+    {
+        if (_iconPackPendingRemoval != null && !ImGui.IsPopupOpen(IconPackRemovePopup))
+            ImGui.OpenPopup(IconPackRemovePopup);
+
+        var vp     = ImGui.GetMainViewport();
+        var centre = new Vector2(vp.Pos.X + vp.Size.X * 0.5f, vp.Pos.Y + vp.Size.Y * 0.5f);
+        ImGui.SetNextWindowPos(centre, ImGuiCond.Appearing, new Vector2(0.5f, 0.5f));
+
+        if (!ImGui.BeginPopupModal(IconPackRemovePopup, ImGuiWindowFlags.AlwaysAutoResize)) return;
+
+        var pack = Plugin.IconPacks.Packs.FirstOrDefault(p => p.Id == _iconPackPendingRemoval);
+        if (pack == null)
+        {
+            _iconPackPendingRemoval = null;
+            ImGui.CloseCurrentPopup();
+            ImGui.EndPopup();
+            return;
+        }
+
+        ImGui.TextUnformatted($"Remove the icon pack '{pack.DisplayName}'?");
+        ImGui.Spacing();
+        ImGui.TextDisabled("Its folder and the images in it are deleted. Your own icon folder and\n" +
+                           "everything else in the wardrobe are untouched.");
+        ImGui.Spacing();
+        ImGui.TextDisabled("Re-import the zip to get it back.");
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        if (DeleteButton(" Remove ", $"Deletes the pack folder and the images in it.", UiScale.S(140, 0)))
+        {
+            Plugin.IconPacks.Uninstall(pack.Id, out _iconPackStatus);
+            Plugin.SlotIcons.Rescan();
+            _iconPackPendingRemoval = null;
+            ImGui.CloseCurrentPopup();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button(" Cancel ", UiScale.S(120, 0)))
+        {
+            _iconPackPendingRemoval = null;
+            ImGui.CloseCurrentPopup();
+        }
+
+        ImGui.EndPopup();
+    }
+
+    private void DrawCustomIconFolderSettings()
+    {
+        ImGui.TextDisabled("Your own folder");
+        ImGui.TextDisabled("Layered over the pack, so a file here replaces that one slot and leaves " +
+                           "the rest of the pack alone.");
         ImGui.Spacing();
 
         var folder = _config.CustomIconFolder;
@@ -5355,14 +7127,19 @@ public class PluginUi : Window, IDisposable
             }, startDir);
         }
 
-        if (string.IsNullOrEmpty(folder)) return;
-
-        // Files are added to the folder outside the game, so there has to be a way to pick them up
-        // without changing the setting or restarting
+        // Files are added to either source outside the game, so there has to be a way to pick them
+        // up without changing the setting or restarting
         ImGui.SameLine();
-        if (ImGui.Button(" Rescan ")) Plugin.SlotIcons.Rescan();
+        if (ImGui.Button(" Rescan "))
+        {
+            Plugin.IconPacks.Refresh();
+            Plugin.SlotIcons.Rescan();
+        }
+
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Re-reads the folder. Use after adding or renaming a file.");
+            ImGui.SetTooltip("Re-reads the pack and the folder. Use after adding or renaming a file.");
+
+        if (string.IsNullOrEmpty(folder)) return;
 
         ImGui.SameLine();
         ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
@@ -5374,8 +7151,6 @@ public class PluginUi : Window, IDisposable
             Plugin.SlotIcons.Rescan();
         }
         ImGui.PopStyleColor(2);
-
-        DrawCustomIconCoverage();
     }
 
     private void DrawCustomIconCoverage()
@@ -5392,7 +7167,7 @@ public class PluginUi : Window, IDisposable
 
         if (!ImGui.CollapsingHeader("Which slots###customIconCoverage")) return;
 
-        ImGui.TextDisabled("Either name works — the slot's own name, or its label without spaces.");
+        ImGui.TextDisabled("Hover a slot for every name it will answer to.");
         ImGui.Spacing();
 
         foreach (var slot in slots)
@@ -5407,6 +7182,11 @@ public class PluginUi : Window, IDisposable
                 UiLayout.SameLineIfRoomForText($"— add {SlotIconService.ExpectedFileName(slot)}");
                 ImGui.TextDisabled($"— add {SlotIconService.ExpectedFileName(slot)}");
             }
+
+            // The names are the whole difficulty of custom icons: a misspelt file is indistinguishable
+            // from one that was never added, so the alternatives are worth having to hand
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Any of: " + string.Join(", ", SlotIconService.AcceptedNames(slot)));
         }
     }
 

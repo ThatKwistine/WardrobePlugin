@@ -129,6 +129,89 @@ public static class TagTree
         return styles.Values.ToList();
     }
 
+    // ── Colours ───────────────────────────────────────────────────────────────
+
+    /// <summary>The colour chosen for a tag, or null when it has none and the defaults apply.</summary>
+    public static Vector4? Colour(Configuration config, string path) =>
+        config.TagColours.TryGetValue(path, out var packed) ? ToVector(packed) : null;
+
+    /// <summary>Stores a tag's colour, dropping it if it matches nothing meaningful.</summary>
+    public static void SetColour(Configuration config, string path, Vector3 rgb)
+    {
+        config.TagColours[path] = FromVector(rgb);
+        config.Save();
+    }
+
+    /// <summary>Returns a tag to the default colouring.</summary>
+    public static void ClearColour(Configuration config, string path)
+    {
+        if (config.TagColours.Remove(path)) config.Save();
+    }
+
+    /// <summary>Drops the colours of a tag and everything nested under it.</summary>
+    /// <remarks>Called when a tag is deleted, so a path reused later does not inherit a colour
+    /// nobody chose for it.</remarks>
+    public static void ClearColours(Configuration config, string path)
+    {
+        var stale = config.TagColours.Keys
+            .Where(k => k.Equals(path, StringComparison.OrdinalIgnoreCase) ||
+                        k.StartsWith($"{path}/", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        foreach (var key in stale)
+            config.TagColours.Remove(key);
+    }
+
+    public static Vector4 ToVector(uint rgb) => new(
+        ((rgb >> 16) & 0xFF) / 255f,
+        ((rgb >> 8)  & 0xFF) / 255f,
+        (rgb         & 0xFF) / 255f,
+        1f);
+
+    public static uint FromVector(Vector3 rgb) =>
+        ((uint)(Math.Clamp(rgb.X, 0f, 1f) * 255f + 0.5f) << 16) |
+        ((uint)(Math.Clamp(rgb.Y, 0f, 1f) * 255f + 0.5f) << 8)  |
+        (uint)(Math.Clamp(rgb.Z, 0f, 1f) * 255f + 0.5f);
+
+    /// <summary>
+    /// A tag's colour adjusted for its state, so colour and state can both be read at once.
+    /// </summary>
+    /// <remarks>
+    /// The two would otherwise fight: filtering is shown by colouring a tag, and a tag with a colour
+    /// of its own has nothing left to say it with. Keeping the hue and moving only the brightness
+    /// means a green tag stays green whether it is filtering, idle or unused — which is the point of
+    /// having chosen green — while still looking different in each.
+    /// </remarks>
+    public static Vector4 Shade(Vector4 colour, bool active, bool inUse)
+    {
+        if (active)
+            return new Vector4(
+                colour.X + (1f - colour.X) * 0.35f,
+                colour.Y + (1f - colour.Y) * 0.35f,
+                colour.Z + (1f - colour.Z) * 0.35f,
+                1f);
+
+        return inUse ? colour : new Vector4(colour.X * 0.5f, colour.Y * 0.5f, colour.Z * 0.5f, 1f);
+    }
+
+    /// <summary>Mixes <paramref name="amount"/> of <paramref name="tint"/> into a base colour.</summary>
+    /// <remarks>
+    /// Used to tint a surface without repainting it. An item card carrying a style keeps the card
+    /// colour it always had with the style's hue mixed in, so the grid still reads as a grid of
+    /// cards rather than a row of coloured blocks.
+    /// </remarks>
+    public static Vector4 Blend(Vector4 baseColour, Vector4 tint, float amount) => new(
+        baseColour.X + (tint.X - baseColour.X) * amount,
+        baseColour.Y + (tint.Y - baseColour.Y) * amount,
+        baseColour.Z + (tint.Z - baseColour.Z) * amount,
+        baseColour.W);
+
+    /// <summary>Black or white, whichever can be read on top of the given colour.</summary>
+    public static Vector4 ReadableOn(Vector4 background) =>
+        background.X * 0.299f + background.Y * 0.587f + background.Z * 0.114f > 0.55f
+            ? new Vector4(0.05f, 0.05f, 0.06f, 1f)
+            : new Vector4(1f, 1f, 1f, 1f);
+
     /// <summary>
     /// Walks a <c>Parent/Child</c> tag into the tree, creating what is missing.
     /// </summary>

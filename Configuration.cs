@@ -174,6 +174,40 @@ public class Configuration : IPluginConfiguration
     /// </remarks>
     public bool ModCategoriesEnabled { get; set; }
 
+    /// <summary>
+    /// Colour chosen for a tag or style, keyed by its full path, packed as 0xRRGGBB.
+    /// </summary>
+    /// <remarks>
+    /// Kept here rather than on the tag itself because a tag has no object of its own — it is a
+    /// string on the items that carry it, and pre-made ones are a string in
+    /// <see cref="DefinedTags"/>. Absent means the tag is drawn the way it always was, so this is
+    /// only ever an addition to the default. Deleting a tag drops its colour with it.
+    /// </remarks>
+    public Dictionary<string, uint> TagColours { get; set; } = new();
+
+    /// <summary>Use the colours in <see cref="TagColours"/> where tags, styles and items are drawn.</summary>
+    /// <remarks>
+    /// On by default, which is safe because it changes nothing until a colour is actually chosen —
+    /// and because the right-click menu that chooses one is hidden while this is off, so defaulting
+    /// it off would hide the feature behind a setting nobody knew to look for. Turning it off keeps
+    /// every colour already picked, ready for turning it back on.
+    /// </remarks>
+    public bool TagColoursEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Keep Glamourer's advanced dyes with an outfit, on top of the game's two dye channels.
+    /// </summary>
+    /// <remarks>
+    /// Experimental, and off by default. It rides on Glamourer's state JSON rather than on any
+    /// advanced-dye API, because there is not one — so it is the setting most likely to be broken by
+    /// a Glamourer update, and the least proven in the game.
+    /// Turning it off keeps anything already captured — the rows stay on their outfits — but
+    /// the wardrobe stops applying them, so a look goes back to plain dyes until it is turned on
+    /// again. Nothing already on the character is undone at that moment: switching this off is an
+    /// instruction to stop touching advanced dyes, and reverting them would be one last touch.
+    /// </remarks>
+    public bool AdvancedDyesEnabled { get; set; }
+
     /// <summary>Show an icon instead of the slot name where slots are displayed.</summary>
     public bool SlotIconsEnabled { get; set; }
 
@@ -189,6 +223,15 @@ public class Configuration : IPluginConfiguration
     /// </remarks>
     public string CustomIconFolder { get; set; } = string.Empty;
 
+    /// <summary>Folder name of the installed icon pack in use, or empty for none.</summary>
+    /// <remarks>
+    /// The folder name rather than a path, so the packs folder can move with the plugin's config
+    /// directory. A pack is layered under <see cref="CustomIconFolder"/> rather than replacing it:
+    /// a pack is someone else's set, and the folder is where you override the two icons of theirs
+    /// you did not like. See <see cref="Services.IconPackService"/>.
+    /// </remarks>
+    public string ActiveIconPack { get; set; } = string.Empty;
+
     /// <summary>Size multiplier for slot icons on item cards. 1 is the original fixed size.</summary>
     /// <remarks>
     /// Item cards grow taller to match, so a larger icon pushes nothing off the bottom of a card.
@@ -200,17 +243,43 @@ public class Configuration : IPluginConfiguration
     /// <summary>Size multiplier for slot icons on the filter row, separate from the cards.</summary>
     public float SlotIconRowScale { get; set; } = 1f;
 
+    /// <summary>
+    /// Size multiplier for the cards in the item and outfit grids. 1 is the original size.
+    /// </summary>
+    /// <remarks>
+    /// Applied on top of the layout scale rather than replacing it, so a card still grows with
+    /// Dalamud's Global Font Scale and this only says how much bigger than that you want it. Both
+    /// grids read it: a wardrobe browsed by picture wants large cards everywhere, not just where
+    /// there is a toggle. Clamped on read by <see cref="Ui.PluginUi"/>.
+    /// </remarks>
+    public float CardScale { get; set; } = 1f;
+
+    /// <summary>
+    /// Size multiplier for the outfit grid's cards, separate from <see cref="CardScale"/>.
+    /// </summary>
+    /// <remarks>
+    /// Its own number because the two grids are looked at differently: an outfit preview is usually
+    /// a full-body shot and wants the room, while an item card is a close-up and more of them on
+    /// screen is the point. One slider for both traded them against each other.
+    /// </remarks>
+    public float OutfitCardScale { get; set; } = 1f;
+
+    /// <summary>
+    /// Edge length, in pixels, of the square images a screenshot session writes.
+    /// </summary>
+    /// <remarks>
+    /// 512 is enough for a card and keeps a wardrobe of hundreds small on disk. Larger is for
+    /// looking at closely — the quick view, or a preview blown up on a big screen — and costs
+    /// roughly four times the space per step. Capped at what the screenshot actually has: the crop
+    /// is as tall as the game window, so a 1080p shot cannot fill 2048 and is not stretched to try.
+    /// </remarks>
+    public int CapturedImageSize { get; set; } = 512;
+
     /// <summary>Ordering applied to the item grid.</summary>
     public ItemSortMode SortMode { get; set; } = ItemSortMode.NameAsc;
 
     /// <summary>Ordering applied to the image browser.</summary>
     public ImageSortMode ImageSortMode { get; set; } = ImageSortMode.NameAsc;
-
-    /// <summary>
-    /// Draw outfit cards larger than item cards. Outfit previews are usually full-body shots
-    /// rather than close-ups, so they need the room; off matches the item grid exactly.
-    /// </summary>
-    public bool LargeOutfitCards { get; set; } = true;
 
     /// <summary>
     /// Switch the character to the hairstyle a hair mod replaces when applying it. Without this a

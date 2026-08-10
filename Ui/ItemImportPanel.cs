@@ -71,6 +71,9 @@ public class ItemImportPanel : IDisposable
         public ModAnalysisResult?                  Analysis;
         public Dictionary<string, int>             SingleSel = new();
         public Dictionary<string, HashSet<string>> MultiSel  = new();
+
+        /// <summary>Options forced off. Anything in neither this nor <see cref="MultiSel"/> is ignored.</summary>
+        public Dictionary<string, HashSet<string>> MultiOff  = new();
     }
     private readonly List<EditModOptions> _editModOptions = new();
 
@@ -201,6 +204,15 @@ public class ItemImportPanel : IDisposable
         IsOpen = true;
     }
 
+    /// <summary>
+    /// Asks for an item's picture to be shown full size. Set by <see cref="PluginUi"/>.
+    /// </summary>
+    /// <remarks>
+    /// A callback rather than a popup of its own: this panel is a fixed narrow column, and a picture
+    /// shown full size inside it would be no larger than the preview already there.
+    /// </remarks>
+    public Action<WardrobeItem>? QuickViewRequested { get; set; }
+
     public void OpenEdit(WardrobeItem item)
     {
         ResetImport();
@@ -269,9 +281,36 @@ public class ItemImportPanel : IDisposable
                     if (g.GroupType == ModGroupType.Multi)
                     {
                         var sel = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        if (mod.MultiOptions.TryGetValue(g.GroupName, out var stored))
+                        var off = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                        if (mod.OptionStates.TryGetValue(g.GroupName, out var states))
+                        {
+                            // Tri-states as saved: on, off, and everything unmentioned ignored
+                            foreach (var (option, on) in states)
+                                (on ? sel : off).Add(option);
+                        }
+                        else if (mod.MultiOptions.TryGetValue(g.GroupName, out var stored))
+                        {
+                            // Saved before tri-states existed, where the list was the exact
+                            // selection — so everything it left out was off, not ignored. Read any
+                            // other way, opening the edit panel would quietly loosen the item.
                             foreach (var s in stored) sel.Add(s);
+                            foreach (var name in g.OptionNames)
+                                if (!sel.Contains(name)) off.Add(name);
+                        }
+                        else if (!g.AffectsSlot(_editTarget.Slot))
+                        {
+                            // Never stored, and the group's files do not touch this item's slot:
+                            // it belongs to a sibling item from the same mod, so this one starts
+                            // with no opinion about it rather than inheriting whatever was live
+                        }
+                        else
+                        {
+                            foreach (var name in g.OptionNames) off.Add(name);
+                        }
+
                         entry.MultiSel[g.GroupName] = sel;
+                        entry.MultiOff[g.GroupName] = off;
                     }
                     else
                     {
@@ -282,6 +321,14 @@ public class ItemImportPanel : IDisposable
                         string? stored = null;
                         if (mod.Options.TryGetValue(g.GroupName, out var fromConfig))
                             stored = fromConfig;
+                        else if (!g.AffectsSlot(_editTarget.Slot))
+                        {
+                            // Not stored, and the group changes some other slot's files: this item
+                            // has no business setting it, and reading the live value would give it
+                            // an opinion it never asked for
+                            entry.SingleSel[g.GroupName] = ModOptionPicker.Ignore;
+                            continue;
+                        }
                         else
                         {
                             var live = _penumbra.GetModSettings(mod.Collection, mod.ModDirectory, mod.ModName);
@@ -333,6 +380,20 @@ public class ItemImportPanel : IDisposable
                 if (wrap != null)
                 {
                     ImGui.Image(wrap.Handle, new Vector2(avail, avail));
+
+                    // The panel is 360px wide; full size is the whole window. Offered here as well
+                    // as on the card, since this is where someone is already looking at the picture.
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Right-click to view full size.");
+
+                    if (ImGui.IsItemClicked(ImGuiMouseButton.Right) && _editTarget != null)
+                        QuickViewRequested?.Invoke(_editTarget);
+
+                    ImGui.Spacing();
+
+                    if (_editTarget != null && ImGui.SmallButton("View full size"))
+                        QuickViewRequested?.Invoke(_editTarget);
+
                     ImGui.Spacing();
                 }
             }
@@ -494,7 +555,16 @@ public class ItemImportPanel : IDisposable
                     }
                     else
                         foreach (var g in opts.Analysis.OptionGroups)
-                            ModOptionPicker.Draw(g, opts.SingleSel, opts.MultiSel);
+                        {
+                            // Naming the ones that belong to another slot is most of the help: this
+                            // is where someone comes to work out why a variant keeps losing its
+                            // options to the item worn beside it
+                            if (!g.AffectsSlot(_editTarget.Slot))
+                                ImGui.TextDisabled($"  ({g.GroupName} changes " +
+                                    $"{string.Join(", ", g.Slots!.Select(s => s.DisplayName()))}, not this slot)");
+
+                            ModOptionPicker.Draw(g, opts.SingleSel, opts.MultiSel, opts.MultiOff);
+                        }
                     ImGui.Spacing();
                 }
             }
@@ -579,15 +649,22 @@ public class ItemImportPanel : IDisposable
                 var opts = _editModOptions[i];
                 if (opts.Analysis == null) continue;
 
-                var newSingle = BuildOptions(opts.Analysis.OptionGroups, opts.SingleSel);
-                var newMulti  = BuildMultiOptions(opts.Analysis.OptionGroups, opts.MultiSel);
+                var groups    = opts.Analysis.OptionGroups;
+                var newSingle = BuildOptions(groups, opts.SingleSel);
+                var newMulti  = BuildMultiOptions(groups, opts.MultiSel);
+                var newStates = BuildOptionStates(groups, opts.MultiSel, opts.MultiOff);
+
                 _editTarget.Mods[i].Options      = newSingle;
                 _editTarget.Mods[i].MultiOptions = newMulti;
+                _editTarget.Mods[i].OptionStates = newStates;
 
                 // Propagate to items in *other* slots only. Items sharing a mod across slots are
-                // worn together, and Penumbra can only hold one option state per mod, so their
-                // options must agree. Items in the same slot are variants — different option sets
-                // for the same mod, never worn at once — and must be allowed to differ.
+                // worn together and Penumbra holds one option state per mod, so what they both have
+                // an opinion on still has to agree. Items in the same slot are variants — different
+                // option sets for the same mod, never worn at once — and must be allowed to differ.
+                //
+                // Filtered by the receiving item's slot, which is what stops the copy from handing
+                // the legs an opinion about the body and undoing a body variant on the way (#12).
                 var modDir = _editTarget.Mods[i].ModDirectory;
                 var coll   = _editTarget.Mods[i].Collection;
                 foreach (var other in _config.WardrobeItems)
@@ -600,8 +677,9 @@ public class ItemImportPanel : IDisposable
                         if (otherMod.ModDirectory.Equals(modDir, StringComparison.OrdinalIgnoreCase) &&
                             otherMod.Collection.Equals(coll, StringComparison.OrdinalIgnoreCase))
                         {
-                            otherMod.Options      = newSingle;
-                            otherMod.MultiOptions = newMulti;
+                            otherMod.Options      = ModOptionSets.ForSlot(newSingle, groups, other.Slot);
+                            otherMod.MultiOptions = ModOptionSets.ForSlot(newMulti,  groups, other.Slot);
+                            otherMod.OptionStates = ModOptionSets.ForSlot(newStates, groups, other.Slot);
                         }
                     }
                 }
@@ -728,6 +806,12 @@ public class ItemImportPanel : IDisposable
                 ModName      = mod.ModName,
                 Options      = new Dictionary<string, string>(mod.Options),
                 MultiOptions = mod.MultiOptions.ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value)),
+
+                // Tri-states copy across so the variant starts where the original was, including
+                // which groups the original had decided to leave alone
+                OptionStates = mod.OptionStates.ToDictionary(
+                    kv => kv.Key,
+                    kv => new Dictionary<string, bool>(kv.Value)),
             });
         }
 
@@ -836,10 +920,9 @@ public class ItemImportPanel : IDisposable
             if (i > 0)
             {
                 ImGui.SameLine();
-                if (ImGui.SmallButton("X")) _editModRemovals.Add(i);
-                if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip("Remove this supplementary mod on save.\n" +
-                                     "It is removed from every item built from the same mod.");
+                if (UiLayout.DeleteButton("X", "Remove this supplementary mod on save.\n" +
+                                               "It is removed from every item built from the same mod."))
+                    _editModRemovals.Add(i);
             }
 
             var cur = Array.FindIndex(collNames,
@@ -1004,6 +1087,9 @@ public class ItemImportPanel : IDisposable
                     ModName      = add.ModName,
                     Options      = new Dictionary<string, string>(add.Options),
                     MultiOptions = add.MultiOptions.ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value)),
+                    OptionStates = add.OptionStates.ToDictionary(
+                        kv => kv.Key,
+                        kv => new Dictionary<string, bool>(kv.Value)),
                 });
                 _log.Debug($"[Wardrobe] Edit: added supplement '{add.ModName}' to '{item.Name}'");
             }
@@ -1210,7 +1296,7 @@ public class ItemImportPanel : IDisposable
             ImGui.SmallButton(_importTags[i]);
             ImGui.PopStyleColor(2);
             ImGui.SameLine();
-            if (ImGui.SmallButton("×")) removeIdx = i;
+            if (UiLayout.DeleteButton("×", $"Do not put '{_importTags[i]}' on this import.")) removeIdx = i;
             ImGui.PopID();
         }
 
@@ -1638,7 +1724,8 @@ public class ItemImportPanel : IDisposable
         var lbl = extra.Label;
         if (ImGui.InputText("##lbl", ref lbl, 64)) extra.Label = lbl;
         ImGui.SameLine();
-        var remove = ImGui.Button("X", UiScale.S(50, 0));
+        var remove = UiLayout.DeleteButton("X", "Take this supplementary mod off the import.",
+            UiScale.S(50, 0));
 
         var collNames = _collections.ToArray();
         if (collNames.Length > 0)
@@ -1976,8 +2063,11 @@ public class ItemImportPanel : IDisposable
                 Collection   = collection,
                 ModDirectory = primaryMod.Dir,
                 ModName      = primaryMod.Name,
-                Options      = primaryOptions,
-                MultiOptions = primaryMultiOptions,
+                // Filtered to the slot this item is being created for. One import of a mod covering
+                // body and legs makes two items, and giving each the whole mod's options is what
+                // sets them fighting the moment a variant of either exists (#12).
+                Options      = ModOptionSets.ForSlot(primaryOptions,      _analysisResult?.OptionGroups, slot),
+                MultiOptions = ModOptionSets.ForSlot(primaryMultiOptions, _analysisResult?.OptionGroups, slot),
             });
             item.Mods.AddRange(extraRefs);
             _config.WardrobeItems.Add(item);
@@ -1994,8 +2084,11 @@ public class ItemImportPanel : IDisposable
         if (groups == null) return result;
         foreach (var g in groups.Where(g => g.GroupType == ModGroupType.Single))
         {
-            if (selections.TryGetValue(g.GroupName, out var i))
-                result[g.GroupName] = i < g.OptionNames.Count ? g.OptionNames[i] : g.OptionNames[0];
+            // Left out entirely when set to leave alone, which is what the apply path reads as
+            // "do not touch this group" — see PenumbraIpc.ApplyModSettings
+            if (!selections.TryGetValue(g.GroupName, out var i) || i == ModOptionPicker.Ignore) continue;
+
+            result[g.GroupName] = i >= 0 && i < g.OptionNames.Count ? g.OptionNames[i] : g.OptionNames[0];
         }
         return result;
     }
@@ -2010,6 +2103,38 @@ public class ItemImportPanel : IDisposable
             if (selections.TryGetValue(g.GroupName, out var sel) && sel.Count > 0)
                 result[g.GroupName] = sel.ToList();
         }
+        return result;
+    }
+
+    /// <summary>
+    /// Turns the picker's two sets into stored tri-states: on, off, and everything else ignored.
+    /// </summary>
+    /// <remarks>
+    /// A group where every option is ignored is left out entirely, so the item says nothing about it
+    /// at all rather than saying nothing about it in a longer way.
+    /// </remarks>
+    private static Dictionary<string, Dictionary<string, bool>> BuildOptionStates(
+        IReadOnlyList<ModOptionGroup>? groups,
+        Dictionary<string, HashSet<string>> on, Dictionary<string, HashSet<string>> off)
+    {
+        var result = new Dictionary<string, Dictionary<string, bool>>();
+        if (groups == null) return result;
+
+        foreach (var g in groups.Where(g => g.GroupType == ModGroupType.Multi))
+        {
+            on.TryGetValue(g.GroupName, out var onSet);
+            off.TryGetValue(g.GroupName, out var offSet);
+
+            var states = new Dictionary<string, bool>();
+            foreach (var name in g.OptionNames)
+            {
+                if (onSet != null && onSet.Contains(name))       states[name] = true;
+                else if (offSet != null && offSet.Contains(name)) states[name] = false;
+            }
+
+            if (states.Count > 0) result[g.GroupName] = states;
+        }
+
         return result;
     }
 
@@ -2092,8 +2217,7 @@ public class ItemImportPanel : IDisposable
             {
                 ImGui.PushID($"link_{partner.Id}");
 
-                if (ImGui.SmallButton("×")) unlink = partner;
-                if (ImGui.IsItemHovered()) ImGui.SetTooltip($"Unlink '{partner.Name}'");
+                if (UiLayout.DeleteButton("×", $"Unlink '{partner.Name}'.")) unlink = partner;
 
                 ImGui.SameLine();
                 ImGui.TextUnformatted($"{partner.Slot.DisplayName()} — {partner.Name}");
@@ -2200,7 +2324,7 @@ public class ItemImportPanel : IDisposable
             ImGui.SmallButton(_editTags[i]);
             ImGui.PopStyleColor(2);
             ImGui.SameLine();
-            if (ImGui.SmallButton("×"))
+            if (UiLayout.DeleteButton("×", $"Take '{_editTags[i]}' off this item."))
                 removeIdx = i;
             ImGui.PopID();
         }

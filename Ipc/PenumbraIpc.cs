@@ -174,11 +174,22 @@ public class PenumbraIpc : IDisposable
     /// Returns true when every required option (single and multi-select) is currently active for
     /// the mod, or when both dictionaries are empty.
     /// </summary>
+    /// <param name="requiredStates">
+    /// Tri-states, when the item has them. An option forced on must be on and one forced off must be
+    /// off; anything ignored is not evidence either way, so it cannot fail the match. When this is
+    /// supplied, <paramref name="requiredMultiOptions"/> is skipped — the two describe the same
+    /// groups and the older one would demand an exact selection the tri-states deliberately do not.
+    /// </param>
     public bool ActiveOptionsMatch(string collectionName, string modDirectory, string modName,
         Dictionary<string, string> requiredOptions,
-        Dictionary<string, List<string>>? requiredMultiOptions = null)
+        Dictionary<string, List<string>>? requiredMultiOptions = null,
+        Dictionary<string, Dictionary<string, bool>>? requiredStates = null)
     {
-        if (requiredOptions.Count == 0 && (requiredMultiOptions == null || requiredMultiOptions.Count == 0))
+        var useStates = requiredStates is { Count: > 0 };
+        if (useStates) requiredMultiOptions = null;
+
+        if (requiredOptions.Count == 0 && !useStates &&
+            (requiredMultiOptions == null || requiredMultiOptions.Count == 0))
             return true;
         try
         {
@@ -216,6 +227,29 @@ public class PenumbraIpc : IDisposable
                             _log.Debug($"[Wardrobe] ActiveOptionsMatch: '{modName}' multi-group '{group}' — want '{req}', Penumbra has [{string.Join(", ", active)}]");
                             return false;
                         }
+                }
+            }
+
+            if (useStates)
+            {
+                foreach (var (group, options) in requiredStates!)
+                {
+                    if (options.Count == 0) continue;
+
+                    // A group Penumbra does not report can still satisfy an item that only asks for
+                    // options to be off, so absence is treated as an empty selection rather than a
+                    // failure — unlike the exact-selection path above, which needs the group to exist
+                    activeSettings.TryGetValue(group, out var active);
+                    active ??= new List<string>();
+
+                    foreach (var (option, on) in options)
+                    {
+                        if (active.Contains(option, StringComparer.OrdinalIgnoreCase) == on) continue;
+
+                        _log.Debug($"[Wardrobe] ActiveOptionsMatch: '{modName}' group '{group}' — want '{option}' " +
+                                   $"{(on ? "on" : "off")}, Penumbra has [{string.Join(", ", active)}]");
+                        return false;
+                    }
                 }
             }
 
@@ -276,6 +310,65 @@ public class PenumbraIpc : IDisposable
                     _log.Warning($"[Wardrobe] TrySetModSettings.V5 ec={ec} for '{modName}' group '{group}' → [{string.Join(", ", wantedOptions)}]");
                 else
                     _log.Debug($"[Wardrobe] TrySetModSettings.V5 '{modName}' group '{group}' → [{string.Join(", ", wantedOptions)}] ec={ec}");
+            }
+            catch (Exception ex)
+            {
+                _log.Warning(ex, $"[Wardrobe] TrySetModSettings.V5 failed for '{modName}' group '{group}'");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Applies tri-state option settings: forces some options on, some off, and leaves the rest
+    /// however they are.
+    /// </summary>
+    /// <remarks>
+    /// Penumbra has no per-option call — <c>TrySetModSettings.V5</c> takes a group's entire
+    /// selection — so "leave that one alone" has to be built here: read what is selected now, add
+    /// the options this item insists on, remove the ones it insists against, and send the result
+    /// back as the whole list. Everything nobody expressed an opinion about goes back exactly as it
+    /// came, which is what lets two items from one mod both get their way.
+    /// <para>
+    /// The read is per apply rather than cached: the current selection is precisely what another
+    /// item may have changed a moment ago, and a cached copy would reintroduce the overwrite this
+    /// exists to prevent.
+    /// </para>
+    /// </remarks>
+    public void ApplyModOptionStates(string collectionName, string modDirectory, string modName,
+        Dictionary<string, Dictionary<string, bool>> states)
+    {
+        if (states.Count == 0) return;
+        if (!TryGetCollectionGuid(collectionName, out var id)) return;
+
+        var current = GetModSettingsFull(collectionName, modDirectory, modName);
+
+        foreach (var (group, options) in states)
+        {
+            if (options.Count == 0) continue; // every option ignored — nothing to say about this group
+
+            var wanted = current.TryGetValue(group, out var now)
+                ? new List<string>(now)
+                : new List<string>();
+
+            foreach (var (option, on) in options)
+            {
+                if (on)
+                {
+                    if (!wanted.Contains(option, StringComparer.OrdinalIgnoreCase)) wanted.Add(option);
+                }
+                else
+                {
+                    wanted.RemoveAll(o => o.Equals(option, StringComparison.OrdinalIgnoreCase));
+                }
+            }
+
+            try
+            {
+                var ec = _setModSettings.InvokeFunc(id, modDirectory, modName, group, wanted);
+                if (ec != EcSuccess && ec != EcNothingChanged)
+                    _log.Warning($"[Wardrobe] TrySetModSettings.V5 ec={ec} for '{modName}' group '{group}' → [{string.Join(", ", wanted)}]");
+                else
+                    _log.Debug($"[Wardrobe] Option states '{modName}' group '{group}' → [{string.Join(", ", wanted)}] ec={ec}");
             }
             catch (Exception ex)
             {

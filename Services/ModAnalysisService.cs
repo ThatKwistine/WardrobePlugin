@@ -12,7 +12,56 @@ namespace WardrobePlugin.Services;
 
 public enum ModGroupType { Single = 0, Multi = 1 }
 
-public record ModOptionGroup(string GroupName, ModGroupType GroupType, IReadOnlyList<string> OptionNames);
+/// <param name="Slots">
+/// Slots the group's own files touch, which is not the same as the mod's slots — a mod covering body
+/// and legs has groups that only change one of them. Empty means nothing in the group named a slot:
+/// meta edits, materials and shared textures all land here, and they are assumed to matter to
+/// everything rather than to nothing.
+/// </param>
+public record ModOptionGroup(string GroupName, ModGroupType GroupType, IReadOnlyList<string> OptionNames,
+    IReadOnlySet<EquipSlot>? Slots = null)
+{
+    /// <summary>
+    /// Whether this group is worth an opinion from an item in the given slot.
+    /// </summary>
+    /// <remarks>
+    /// The question behind issue #12: two items from one mod, worn together, each writing the whole
+    /// mod's options and so overwriting the other's. A group whose files never touch your slot is one
+    /// you have no business asserting, and leaving it alone is what lets the two coexist.
+    /// </remarks>
+    public bool AffectsSlot(EquipSlot slot) =>
+        Slots == null || Slots.Count == 0 || Slots.Contains(slot);
+}
+
+/// <summary>Trimming a mod's option settings down to one slot's business.</summary>
+public static class ModOptionSets
+{
+    /// <summary>
+    /// Drops the groups that have nothing to do with a slot.
+    /// </summary>
+    /// <remarks>
+    /// The heart of issue #12. Items sharing a mod across slots are worn together and Penumbra holds
+    /// one option state per mod, so they were given identical settings — which meant the legs
+    /// asserting the body's groups, and whichever was applied last winning. Each keeping only what
+    /// its own slot is made of lets a variant in one slot survive its sibling in another.
+    /// <para>
+    /// A group whose files name no slot is kept for everyone: meta edits, materials and shared
+    /// textures cannot be attributed, and dropping them would quietly stop applying settings that
+    /// were doing their job.
+    /// </para>
+    /// </remarks>
+    public static Dictionary<string, T> ForSlot<T>(Dictionary<string, T> settings,
+        IReadOnlyList<ModOptionGroup>? groups, EquipSlot slot)
+    {
+        if (groups == null) return new Dictionary<string, T>(settings);
+
+        var byName = groups.ToDictionary(g => g.GroupName, StringComparer.OrdinalIgnoreCase);
+
+        return settings
+            .Where(kv => !byName.TryGetValue(kv.Key, out var g) || g.AffectsSlot(slot))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+    }
+}
 
 public record ModAnalysisResult(
     IReadOnlySet<EquipSlot> DetectedSlots,
@@ -293,17 +342,25 @@ public class ModAnalysisService
         Dictionary<int, ushort> hairIds, Dictionary<EquipSlot, string> replace, List<ModOptionGroup> groups)
     {
         var optNames = new List<string>();
+
+        // Collected for this group alone and then folded into the mod's set, so a group can be asked
+        // which slots it changes. Everything else classification produces stays mod-wide.
+        var groupSlots = new HashSet<EquipSlot>();
+
         foreach (var opt in g.Options)
         {
             optNames.Add(opt.Name);
             if (opt.Files == null) continue;
 
             foreach (var key in opt.Files.Keys)
-                ClassifyPath(key, slots, setIds, hairIds, replace);
+                ClassifyPath(key, groupSlots, setIds, hairIds, replace);
         }
 
+        groupSlots.Remove(EquipSlot.Unknown);
+        slots.UnionWith(groupSlots);
+
         if (optNames.Count > 0)
-            groups.Add(new ModOptionGroup(g.Name, ClassifyGroupType(g.Type, g.Name), optNames));
+            groups.Add(new ModOptionGroup(g.Name, ClassifyGroupType(g.Type, g.Name), optNames, groupSlots));
     }
 
     private void ClassifyPath(string gamePath, HashSet<EquipSlot> slots, Dictionary<EquipSlot, ushort> setIds,
