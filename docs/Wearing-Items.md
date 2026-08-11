@@ -36,6 +36,54 @@ Click **Unequip** on a worn card (shown with a filled circle), or use `/wardrobe
 1. The Penumbra mod is disabled (unless another worn item still needs it)
 2. Glamourer's `SetItem.V3` is called with the Emperor's New item for that slot, making it appear empty
 
+## Base character
+
+Stripping exists so one piece can be photographed on its own, and by default it takes the character
+with it — the tail mod worn on a ring, the ear mod on a pair of earrings, the hair and skin that make
+the character yours.
+
+A **base character** is what a strip strips *down to*. Set one up in **Settings → Base character**
+and it holds three things:
+
+- **What a strip leaves alone**, in two halves. **Equipment slots**: whatever is worn in a ticked
+  slot stays exactly as it is, wardrobe item or plain gear. **Character mods**: the hair, face, tail,
+  Viera ear, skin and shared-texture mods you have on stay switched on. A strip cannot *empty* those
+  — there is no game item in them — but it does turn their mods off, which takes the character's own
+  hair or skin with it, so they get ticks of their own.
+- **Items.** Applied with the base and never stripped — hair, skin and tail, plus any gear item that
+  is really part of the character. An item's slot is protected on its behalf, so a tail worn on a
+  ring needs no separate tick.
+- **A Glamourer design.** Only its *customisations* are applied — face, colouring, hairstyle. Its
+  gear is ignored, or it would put back the clothes the strip just removed. **Apply in full** beside
+  the picker applies the whole design once, by hand, for getting dressed as your character in the
+  first place.
+
+Several can be saved and one is active at a time, so a second character — or the same character with
+different ears — is a matter of picking one from the list. Switching takes off the items only the old
+base wore and applies the new one.
+
+**Apply base character now** puts it on: the design's customisations, then any of its items you are
+not already wearing. Nothing is removed.
+
+With no base character active, stripping behaves exactly as it always has.
+
+### In a screenshot session
+
+The base character is applied before **every** shot, not just the first. An item photographed in a
+protected slot displaces the base's own piece for that shot, and the base is put back for the next
+one — without that, a session drifts further from your character with every item.
+
+The picker is on the session HUD as well as in Settings, because the first shot with your ears
+missing is when you go looking for it. It lists what the active base keeps.
+
+Outfit sessions hold the base back too: an outfit shot shows the outfit and nothing else, bar the
+character wearing it.
+
+### Strip and Unequip All
+
+**Strip** keeps the base character. **Unequip All** does not — that is the wardrobe emptying itself
+rather than a strip, and it is the way to take a base off without changing any setting.
+
 ## Linked items
 
 Two items can be linked so they are worn and taken off together — a top and the gloves that finish

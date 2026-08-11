@@ -15,9 +15,12 @@ Wear a look you like, type a name, and **Save current look** records every item 
 | **Photo** | Wears the outfit alone and waits for a screenshot, assigning it as the outfit's image |
 | **Edit** | Opens the outfit for renaming, previews, and managing its contents |
 
-Outfit cards are the same size as item cards. The magnifying glass on the toolbar scales both grids
-together — worth turning up if your outfit previews are full-body shots showing too little. See
+Outfit cards start the same size as item cards, with their own slider behind the magnifying glass on
+the toolbar — worth turning up if your previews are full-body shots showing too little. See
 [Card size](Settings.md#card-size).
+
+**Right-click an outfit's picture** to see it full size, on a card or in its edit panel. See
+[Quick view](Items-and-Mods.md#quick-view).
 
 ## The edit panel
 
@@ -115,6 +118,129 @@ Slots covered by the outfit's own items are skipped, both when capturing and whe
 item carries its mod and options as well as the game item, so it is always the better record; adding
 an item to a slot that used to hold a vanilla piece leaves that piece stored but unused rather than
 having the two fight over the slot.
+
+## Vanilla glamour plates
+
+The game's own twenty glamour plates can be brought into the wardrobe and worn as outfits, so a look
+you already built in-game does not have to be rebuilt here before it can be photographed.
+
+**Sync Glamour Plates**, at the top of the outfits view, reads them and saves each non-empty plate as
+an outfit named `Glamour Plate 1`…`20`, tagged with the **Glamour Plate** style so the whole set can
+be filtered in or out with the styles dropdown. They sit in the same grid as everything else, with a
+blue border and a `Glamour Plate` label on the card.
+
+### You have to open the plate window first
+
+The game only holds your plates in memory after the server has sent them, which happens when you open
+the **Glamour Plate** window — at a summoning bell, an inn room, or the Glamour Dresser. Until you
+have done that once, there is nothing to read and the sync button says so.
+
+That is a limit on *reading* them. Once a plate is saved it works anywhere, gpose included, with no
+bell in sight.
+
+### Two different ways to put one on
+
+There are two, and they are not the same thing. The difference matters, so the wardrobe keeps them
+well apart.
+
+**Wear** — on the card, and the ordinary one — equips the plate's pieces through **Glamourer**, which
+is a visual override on your own client:
+
+- Works anywhere. No summoning bell, no gear set, and it works in gpose.
+- Your real equipment and your real glamour are untouched.
+- Only you see it, plus anyone you are synced with through Mare.
+- `/glamour disable`, a revert, or logging out puts it back.
+
+**Apply In Game** — the gold button on the card, and again in the edit panel — asks the game to apply
+the plate for real:
+
+- Your actual glamour changes. Everyone sees it, and it stays until you change it again.
+- It is applied over the gear set you already have equipped, so your **gear and job do not change** —
+  only the glamour does.
+- One click, no confirmation, exactly as it is from the game's own Gear Set List.
+- The game decides whether it is allowed. In combat, in a duty, or somewhere plates are not
+  permitted, the button is disabled and says why.
+
+For screenshots, **Wear** is the one you want — it works in gpose and leaves nothing to tidy up.
+
+### Applying in game takes the wardrobe's clothes off
+
+Glamourer sits **on top of** the game. So applying a plate for real while the wardrobe has items on
+would change nothing you can see: the plate lands underneath an override that hides it.
+
+So an in-game apply is followed by a revert. The wardrobe takes its own items off — properly, mods
+disabled and all, not just cleared out of Glamourer — and then clears Glamourer so the character
+shows what the game actually has on. It waits for the game to finish applying before doing this, so
+the two do not race.
+
+Animations, VFX and mounts are left running. A plate has nothing to say about them, and a dance
+stopping because you changed your shirt would be a surprise.
+
+**Show In-Game Look**, next to the apply button, does the same thing on its own — useful for
+answering "what do I actually look like to everyone else?" without taking every item off by hand.
+
+### Keeping your character through the revert
+
+A revert clears *everything* the wardrobe was overriding, and that includes the hair, skin, tail and
+ears that make the character yours rather than the ones on the character sheet.
+
+**Keep '<name>' on top** — the checkbox beside the button, shown when you have a
+[base character](Wearing-Items.md#base-character) set — puts it back afterwards, over the game's
+gear. It is on by default, because for most people those are not clothes to be taken off.
+
+All three parts of it come back: the items it names, its design's customisations, and whatever was
+worn in the slots it keeps — the tail on a ring that you never added to its item list is put back
+too. The plate is the clothes; the base is still the character wearing them.
+
+Turn it off and the revert is absolute: you see the unmodded character the server sees. The setting
+applies everywhere the wardrobe reverts, not just to this plate.
+
+### A weapon your job cannot hold will not glamour
+
+Gear no longer has job restrictions, but weapons still do. Applying a plate whose main hand is a
+ninja katana while you are a botanist glamours everything else and leaves the weapon alone, and the
+game says so:
+
+> Unable to fully apply glamour plate 1. Some items may be of an incompatible category, or
+> contradictory to character race and gender.
+
+That is the game talking, not the wardrobe, and it means what it says — the rest of the plate went
+on. The same message covers race- and gender-restricted pieces.
+
+### They are read-only
+
+A plate's contents belong to the game, so the wardrobe shows them and nothing more. There is no
+adding, removing, dyeing or **Update from what I'm wearing** on a plate — edit the plate in-game and
+resync.
+
+What *is* yours: the **name**, the **preview image** and the **tags**. Rename `Glamour Plate 3` to
+`Ballroom`, photograph it, tag it — all of it survives every resync untouched.
+
+**Duplicate As Editable Outfit** is the way out. It copies the plate's pieces into an ordinary outfit
+you can edit freely and build wardrobe items on top of, and resyncing the plate will never touch the
+copy.
+
+### Keeping them in step
+
+Plates get edited in-game constantly, so the wardrobe checks its saved copies against the real ones
+whenever the game has plate data loaded, and says so when they have drifted:
+
+- **Resync All** brings every changed plate up to date, or **Resync** on a single row for just one.
+- **Ignore** hides the notice until the next sync. Nothing is changed.
+- A plate whose card carries an amber ● has been changed in-game since it was saved.
+
+If the game has no plate data loaded, nothing is claimed either way — nothing has been compared, and
+"up to date" would be a guess rather than a fact. Open the plate window to check.
+
+Plates you empty in-game are reported but **not** deleted. The saved copy is still a wearable look
+and may be the only record of it left, so throwing it away because you cleared a plate would destroy
+exactly what you cleared the plate to make room for.
+
+### One thing it does not do
+
+Wearing a plate does not clear the slots the plate leaves empty. A plate with no hat, worn over a hat,
+keeps the hat. This is not special to plates — no outfit strips vanilla gear it does not have a piece
+for — but it shows up more often here, because plates are frequently partial.
 
 ## Tags and styles
 

@@ -81,6 +81,27 @@ applied.
 
 ---
 
+## Base character
+
+The character underneath the clothes: what a strip leaves on, and what a screenshot session puts back
+before every shot.
+
+Pick one from the list, or **New** to start another. Each holds **what a strip leaves alone**, the
+**items** it wears, and a **Glamourer design** whose customisations it applies. Slots holding one of
+its own items are ticked and locked — those are already protected on the item's behalf.
+
+The slots come in two blocks. **Equipment slots** keep whatever is worn in them. **Character mods** —
+hair, face, tail, Viera ears, skin, and shared textures like piercings — keep the mod you have on
+switched on, which is the half a strip would otherwise take with it.
+
+**Add worn customisation** takes every hair, face, tail, Viera ear, skin and shared-texture item you
+have on right now, which is the quickest way in if you are already wearing your character.
+
+**Apply base character now** puts it on without removing anything. The same picker is on the
+screenshot session HUD. See [Base character](Wearing-Items.md#base-character).
+
+---
+
 ## Variants
 
 **Name new variants** chooses what **Create variant of this item** calls the copy — a plain
@@ -203,7 +224,15 @@ options:
   queued item is showing
 - **Compact main window during session** shrinks the plugin window to keep it out of the shot
 
-Both persist between sessions.
+Both persist between sessions. Stripping stops at your
+[base character](Wearing-Items.md#base-character) if one is active, so the slots and customisation
+mods you marked as part of the character survive every shot.
+
+**Portrait outfit previews (9:16)** draws outfit previews as portraits rather than squares, matching
+GPose's own portrait mode, and captures them that way. Outfit cards grow taller to suit. Item
+previews stay square. Pictures already assigned are centre-cropped to whichever shape is in use, so
+turning it on or off never spoils a wardrobe built under the other one — see
+[Portrait outfit previews](Images-and-Screenshots.md#portrait-outfit-previews).
 
 ---
 

@@ -66,7 +66,25 @@ public unsafe class CameraService : IDisposable
             GPoseFoVOffset = *GPoseFoV(cam),
             PanH        = *PanH(cam),
             PanV        = *PanV(cam),
+
+            // Both are stored: the offset is what gets applied, and the absolute angle stays as the
+            // fallback for a character the game cannot report a facing for
+            DirHOffset  = PlayerFacing() is { } facing ? Normalise(cam->DirH - facing) : null,
         };
+    }
+
+    /// <summary>The local player's facing in radians, or null when there is nobody to read.</summary>
+    private static float? PlayerFacing() => Plugin.Objects.LocalPlayer?.Rotation;
+
+    /// <summary>Folds an angle into -π to π, the range the camera's own DirH uses.</summary>
+    private static float Normalise(float radians)
+    {
+        const float twoPi = MathF.PI * 2f;
+
+        radians %= twoPi;
+        if (radians >  MathF.PI) radians -= twoPi;
+        if (radians < -MathF.PI) radians += twoPi;
+        return radians;
     }
 
     /// <summary>
@@ -126,10 +144,24 @@ public unsafe class CameraService : IDisposable
         cam->Distance       = dist;
         cam->InterpDistance = dist; // snap rather than interpolate
         cam->FoV            = Math.Clamp(preset.FoV, cam->MinFoV, cam->MaxFoV);
-        cam->DirH           = preset.DirH;
+
+        // Relative to the character where the preset has an offset, absolute where it does not
+        cam->DirH = preset.DirHOffset is { } offset && PlayerFacing() is { } facing
+            ? Normalise(facing + offset)
+            : preset.DirH;
+
         cam->DirV           = Math.Clamp(preset.DirV, cam->DirVMin, cam->DirVMax);
         cam->TiltOffset     = preset.TiltOffset;
         *GPoseFoV(cam)      = preset.GPoseFoVOffset;
+
+        // Anything the player had queued when the preset was applied would otherwise be spent the
+        // moment the sustain stops writing, nudging the camera off the angle a second later — which
+        // is exactly the drift reported after engaging a preset. Cleared every frame of the sustain,
+        // so input during it is discarded rather than saved up.
+        cam->InputDeltaH         = 0f;
+        cam->InputDeltaV         = 0f;
+        cam->InputDeltaHAdjusted = 0f;
+        cam->InputDeltaVAdjusted = 0f;
 
         // Only when the preset actually recorded a pan. A preset saved before pan existed leaves the
         // camera's own pan untouched, rather than writing a zero that may not be the centred value.

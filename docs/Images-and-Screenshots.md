@@ -14,10 +14,17 @@ Options during a session:
 
 - **per-slot GPose camera presets** — saved camera positions per equipment slot, as many as you want
 - **strip other items** — persisted between sessions
+- **base character** — the customisation mods and slots every shot keeps, chosen from the HUD
 - **compact window mode** — keeps the plugin UI out of the shot
 
+Stripping stops at the active [base character](Wearing-Items.md#base-character), which is re-applied
+before every shot — so the hair, skin, tail and ear mods that make the character yours are in each
+picture rather than stripped out of it.
+
 **Screenshot Outfits** starts a session covering every outfit without a preview, exactly like the
-item sessions.
+item sessions. [Synced glamour plates](Outfits.md#vanilla-glamour-plates) are outfits like any other,
+so they join the run and can be photographed one at a time from their edit panel as well — which is
+much of the point of bringing them in.
 
 ### A session over just the items you pick
 
@@ -33,18 +40,36 @@ The panel says how many of the selected already have an image before you start.
 The selection survives the session, so a run that goes wrong can be repeated without ticking
 everything again.
 
-## Previews are always square
+## Portrait outfit previews
 
-Screenshot sessions crop the largest centred square out of the shot and save it as a square, so
-nothing is distorted.
+An outfit preview is a full-body shot, and a square crop of one spends most of the frame on the floor
+either side of the character. **Portrait outfit previews (9:16)** in Settings → Screenshots matches
+GPose's own portrait mode instead: outfit cards grow taller, and the picture keeps the character
+rather than the space around them.
 
-**Captured image size** in Settings → Screenshots chooses that square: 512, 1024, 1440 or 2048
+It applies to outfits only — item previews are close-ups of one piece and stay square.
+
+Take the shot in GPose's portrait mode and the game saves it upright, ready to crop. A landscape shot
+still works — it is centre-cropped to 9:16 like any other picture — but it will only have the middle
+column of the frame to give.
+
+Turning it on or off never spoils a wardrobe built under the other setting. Pictures already assigned
+are centre-cropped to whichever shape is in use, so a square shot keeps its middle column in a
+portrait card and a portrait shot keeps its middle band in a square one. Nothing has to be re-taken,
+and no file on disk is touched — only new captures are written in the new shape.
+
+## Previews are never distorted
+
+Screenshot sessions crop the largest centred rectangle of the right shape out of the shot — square,
+or 9:16 for an outfit with portrait previews on — so nothing is stretched.
+
+**Captured image size** in Settings → Screenshots chooses how large that is: 512, 1024, 1440 or 2048
 pixels — one per common screen height above the default, so 1024 suits 1080p, 1440 suits 1440p and
-2048 suits 4K.
+2048 suits 4K. For a portrait it is the height, and the width follows at 9:16.
 
 512 is enough for a card and keeps a wardrobe of hundreds small on disk. The larger sizes are for
 looking at closely — quick view, or a preview on a big screen — and cost roughly four times the space
-per step up. It never upscales: a square crop can only be as tall as your game window, so a 1080p
+per step up. It never upscales: the crop can only be as tall as your game window, so a 1080p
 screenshot gives about 1080 pixels however large a size is chosen. Existing images are left alone;
 the setting applies to shots taken from then on.
 
@@ -87,6 +112,21 @@ Each preset is a row with three controls:
 - **×** deletes it, while Ctrl is held — see [Deleting things](Items-and-Mods.md#deleting-things)
 
 Right-click the name to **Rename**.
+
+Outfits have their own set, in an outfit's edit panel under **Take Screenshot**. One set for every
+outfit rather than one per outfit: the angle that frames one whole look frames the next.
+
+### Angles follow your character
+
+A preset stores its angle relative to the way your character is facing, so a face close-up stays a
+face close-up wherever they are stood and whichever way they turned since. GPose cannot turn a
+character, so without this the only remedy was to line them up in normal play before entering.
+
+Presets saved before this are labelled **world angle**. They keep pointing the same way whichever way
+you face, exactly as they always have — the facing they were saved at was never recorded, so there is
+nothing to convert them from. Frame the shot as you want it and press **Update**, and that one starts
+following your character. There is no bulk conversion for the same reason: it would have to assume
+every preset was saved from one spot, and guessing wrong would break angles that currently work.
 
 ### During a session
 

@@ -19,6 +19,10 @@ name, slot and tags, with **Wear**, **Edit** and **Close**; Escape closes it too
 tooltip says so, and the same right-click works on the preview in an item's edit panel, which also
 has a **View full size** button.
 
+Outfits work the same way — right-click an outfit card's picture, or the preview in its edit panel.
+The outfit version shows how many items it holds, any vanilla pieces, and its styles, with **Wear**
+and **Edit**.
+
 Right-click rather than a button on the card: at small card sizes anything drawn over the thumbnail
 covers the very thing it exists to show you.
 

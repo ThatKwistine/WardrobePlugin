@@ -216,6 +216,12 @@ public class ScreenshotSessionService : IDisposable
         CurrentItem   = target.Item;
         CurrentOutfit = target.Outfit;
 
+        // Before the target, every time. The character being photographed is the user's own, so the
+        // base character's customisations and kept slots are put back for each shot rather than only
+        // at the start — a base item displaced by the last piece photographed has to come back, or
+        // the session drifts further from the character with every shot. Stripping does this itself.
+        if (!StripOthers || target.Item == null) _wardrobe.ApplyBase();
+
         if (target.Item != null)
         {
             if (StripOthers) _wardrobe.StripAll();
@@ -223,17 +229,20 @@ public class ScreenshotSessionService : IDisposable
         }
         else if (target.Outfit != null)
         {
-            // Always exclusive: an outfit shot should show the outfit and nothing else
+            // Always exclusive: an outfit shot should show the outfit and nothing else — bar the
+            // base character, which WearOutfit holds back for the same reason a strip does
             _wardrobe.WearOutfit(target.Outfit, removeOthers: true);
         }
 
         HideWeaponIfNeeded();
         Plugin.Penumbra.RedrawPlayer();
 
-        // Camera presets are per slot, so they only apply to single items. A slot can hold several;
-        // the one it uses is whichever the edit panel has ticked.
-        if (target.Item != null &&
-            _config.DefaultPresetFor(target.Item.Slot.ToString()) is { } preset)
+        // Presets are per slot for items and one shared set for outfits — whichever applies, the one
+        // used is the one ticked as the session default
+        var presetKey = target.Item?.Slot.ToString()
+                     ?? (target.Outfit != null ? Configuration.OutfitPresetKey : null);
+
+        if (presetKey != null && _config.DefaultPresetFor(presetKey) is { } preset)
             _camera.Apply(preset);
 
         _watchFrom = DateTime.UtcNow;
@@ -262,7 +271,10 @@ public class ScreenshotSessionService : IDisposable
                 WaitForFile(e.FullPath);
 
                 var dest = UniquePath(_config.ImagesFolder, Sanitize(name) + ".jpg");
-                CropAndConvert(e.FullPath, dest, _config.CapturedImageSize);
+                // Portrait only for an outfit, and only when the setting is on: an item preview is a
+                // close-up of one piece and has nothing to gain from a full-body frame
+                CropAndConvert(e.FullPath, dest, _config.CapturedImageSize,
+                    portrait: outfit != null && _config.PortraitOutfitPreviews);
 
                 _framework.RunOnFrameworkThread(() =>
                 {
@@ -335,28 +347,47 @@ public class ScreenshotSessionService : IDisposable
     /// bigger image is usually wanted for looking at closely, which is exactly when JPEG artefacts
     /// start to show.
     /// </remarks>
-    private static void CropAndConvert(string sourcePath, string destPath, int requested)
+    /// <param name="portrait">
+    /// Crop 9:16 instead of square, for an outfit preview shot in GPose's portrait mode. The
+    /// requested size becomes the height, since height is what a portrait has most of and what the
+    /// screenshot limits.
+    /// </param>
+    private static void CropAndConvert(string sourcePath, string destPath, int requested, bool portrait)
     {
-        using var img  = Image.FromFile(sourcePath);
-        var size = Math.Min(img.Width, img.Height);
-        var x    = (img.Width  - size) / 2;
-        var y    = (img.Height - size) / 2;
+        using var img = Image.FromFile(sourcePath);
 
-        var target = Math.Min(requested <= 0 ? ImageSizes[0] : requested, size);
+        // No rotation here on purpose. The game writes a portrait shot upright already, and rotating
+        // anything landscape would turn an ordinary shot on its side — the file cannot say which
+        // mode it was taken in, so there is nothing safe to infer from its shape.
+        var wanted = requested <= 0 ? ImageSizes[0] : requested;
 
-        using var bmp = new Bitmap(target, target);
+        // The largest centred rectangle of the wanted shape that the screenshot actually contains
+        var ratio = portrait ? PortraitRatio : 1f;
+        var cropH = Math.Min(img.Height, (int)(img.Width * ratio));
+        var cropW = (int)(cropH / ratio);
+
+        var x = (img.Width  - cropW) / 2;
+        var y = (img.Height - cropH) / 2;
+
+        var targetH = Math.Min(wanted, cropH);
+        var targetW = Math.Max(1, (int)(targetH / ratio));
+
+        using var bmp = new Bitmap(targetW, targetH);
         using var g   = Graphics.FromImage(bmp);
         g.InterpolationMode = InterpolationMode.HighQualityBicubic;
         g.DrawImage(img,
-            new Rectangle(0, 0, target, target),
-            new Rectangle(x, y, size, size),
+            new Rectangle(0, 0, targetW, targetH),
+            new Rectangle(x, y, cropW, cropH),
             GraphicsUnit.Pixel);
 
         var codec  = ImageCodecInfo.GetImageEncoders().First(c => c.FormatID == ImageFormat.Jpeg.Guid);
         var encParams = new EncoderParameters(1);
-        encParams.Param[0] = new EncoderParameter(Encoder.Quality, target >= 1024 ? 92L : 85L);
+        encParams.Param[0] = new EncoderParameter(Encoder.Quality, targetH >= 1024 ? 92L : 85L);
         bmp.Save(destPath, codec, encParams);
     }
+
+    /// <summary>9:16, as height ÷ width. Mirrors <see cref="Ui.ImageDraw.PortraitRatio"/>.</summary>
+    private const float PortraitRatio = 16f / 9f;
 
     private static void WaitForFile(string path)
     {

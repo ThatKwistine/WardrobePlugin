@@ -91,6 +91,77 @@ public class Configuration : IPluginConfiguration
             .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+    // ── Base character ────────────────────────────────────────────────────────
+
+    /// <summary>Saved base characters — what a strip leaves on. See <see cref="BaseCharacter"/>.</summary>
+    public List<BaseCharacter> BaseCharacters { get; set; } = new();
+
+    /// <summary>
+    /// The base character currently in force, or null when stripping takes everything.
+    /// </summary>
+    /// <remarks>
+    /// One at a time, and the same one everywhere: what is held back from a strip by hand is also
+    /// what a screenshot session keeps between shots. Two settings for that would only ever be a way
+    /// to have the session photograph a character that is not the one you set up.
+    /// </remarks>
+    public Guid? ActiveBaseCharacterId { get; set; }
+
+    /// <summary>The active base character, or null when none is set or the saved one is gone.</summary>
+    public BaseCharacter? ActiveBaseCharacter =>
+        ActiveBaseCharacterId is { } id ? BaseCharacters.Find(b => b.Id == id) : null;
+
+    /// <summary>
+    /// Drops repeated entries from every base character's slots and items. Returns true if anything
+    /// changed, so the caller can save.
+    /// </summary>
+    /// <remarks>
+    /// Run on every load rather than once, because it is a repair and not a migration: a duplicate
+    /// is never meaningful here — the same slot kept twice is the same slot, and the same item
+    /// applied twice is one item and one wasted Penumbra reload — so there is no state this can
+    /// destroy and no reason to trust that it has already been done.
+    /// <para>
+    /// One user's head item appeared four times over in a base character (11 August 2026). No path
+    /// through the code was found that could add it more than once, and the state was gone before it
+    /// could be captured, so this exists because the cause is unknown rather than because it is
+    /// understood. If duplicates reappear in a config that has been through this, the fault is
+    /// upstream of the list and worth chasing properly.
+    /// </para>
+    /// </remarks>
+    public bool NormaliseBaseCharacters()
+    {
+        var changed = false;
+
+        foreach (var baseChar in BaseCharacters)
+        {
+            var slots = baseChar.KeepSlots.Distinct(StringComparer.Ordinal).ToList();
+            if (slots.Count != baseChar.KeepSlots.Count)
+            {
+                baseChar.KeepSlots = slots;
+                changed = true;
+            }
+
+            var items = baseChar.ItemIds.Distinct().ToList();
+            if (items.Count != baseChar.ItemIds.Count)
+            {
+                baseChar.ItemIds = items;
+                changed = true;
+            }
+        }
+
+        return changed;
+    }
+
+    /// <summary>
+    /// Whether the base character goes back on after the wardrobe drops to the in-game look.
+    /// </summary>
+    /// <remarks>
+    /// Showing what the game actually has on means clearing every Glamourer override the wardrobe
+    /// put there, and the character's own hair, skin and tail are among them. For most people those
+    /// are not clothes to be taken off — they are the character — so they go back on by default.
+    /// Turned off, the revert is absolute and shows the unmodded character the server sees.
+    /// </remarks>
+    public bool KeepBaseCharacterOnRevert { get; set; } = true;
+
     /// <summary>Folder on disk containing wardrobe item images, shown in the image browser.</summary>
     public string ImagesFolder { get; set; } = string.Empty;
 
@@ -137,6 +208,20 @@ public class Configuration : IPluginConfiguration
     /// empty is then what stops the migration running twice.
     /// </remarks>
     public Dictionary<string, CameraPreset> SlotCameraPresets { get; set; } = new();
+
+    /// <summary>
+    /// Key the outfit grid's camera presets are stored under, alongside the per-slot ones.
+    /// </summary>
+    /// <remarks>
+    /// A reserved name rather than a second dictionary: the lists are keyed by string and no
+    /// <see cref="Models.EquipSlot"/> is called this, so outfits get everything slots already have —
+    /// several presets, a chosen default, export and import — for the price of a key.
+    /// <para>
+    /// One set for all outfits, not one per outfit. An outfit is a whole look, and the angle that
+    /// frames one frames the next; per-outfit angles would be a preset list per card to maintain.
+    /// </para>
+    /// </remarks>
+    public const string OutfitPresetKey = "Outfit";
 
     /// <summary>The presets saved for a slot, or an empty list. Read-only — mutate the dictionary.</summary>
     public IReadOnlyList<CameraPreset> PresetsFor(string slotKey) =>
@@ -274,6 +359,21 @@ public class Configuration : IPluginConfiguration
     /// is as tall as the game window, so a 1080p shot cannot fill 2048 and is not stretched to try.
     /// </remarks>
     public int CapturedImageSize { get; set; } = 512;
+
+    /// <summary>
+    /// Draw outfit previews as 9:16 portraits rather than squares, and capture them that way.
+    /// </summary>
+    /// <remarks>
+    /// Outfit previews are full-body shots, and a square crop of one spends most of the frame on the
+    /// floor either side of the character. Matching GPose's own portrait mode keeps the character and
+    /// drops the empty space, at the cost of a taller card.
+    /// <para>
+    /// Off by default, and it changes only what is drawn and what is captured from now on: pictures
+    /// already assigned are centre-cropped to whichever shape is in use, so turning it on or off
+    /// never spoils a wardrobe that was built under the other one.
+    /// </para>
+    /// </remarks>
+    public bool PortraitOutfitPreviews { get; set; }
 
     /// <summary>Ordering applied to the item grid.</summary>
     public ItemSortMode SortMode { get; set; } = ItemSortMode.NameAsc;

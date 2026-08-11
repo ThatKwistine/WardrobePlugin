@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
 using WardrobePlugin.Ipc;
 using WardrobePlugin.Models;
+using WardrobePlugin.Ui;
 
 namespace WardrobePlugin.Services;
 
@@ -747,6 +748,119 @@ public class WardrobeService : IDisposable
         WardrobeChanged?.Invoke();
     }
 
+    // ── Base character ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The slots a base character holds against a strip: those ticked, plus those its own items
+    /// occupy.
+    /// </summary>
+    /// <remarks>
+    /// An item's slot is protected on its behalf rather than needing its own tick. A tail mod worn
+    /// on a ring is in the base precisely because it is not really a ring, and asking the user to
+    /// also remember which finger it was on would be a second chance to get it wrong.
+    /// </remarks>
+    public HashSet<EquipSlot> KeptSlots(BaseCharacter? baseChar)
+    {
+        var slots = new HashSet<EquipSlot>();
+        if (baseChar == null) return slots;
+
+        foreach (var name in baseChar.KeepSlots)
+            if (Enum.TryParse<EquipSlot>(name, out var slot)) slots.Add(slot);
+
+        foreach (var item in ResolveBase(baseChar))
+            slots.Add(item.Slot);
+
+        return slots;
+    }
+
+    /// <summary>Items of a base character that still exist, in slot order and each only once.</summary>
+    /// <remarks>
+    /// <see cref="Configuration.NormaliseBaseCharacters"/> clears duplicates on load and both add
+    /// paths refuse them, so <c>Distinct</c> here is the belt to their braces: everything that reads
+    /// a base goes through this, and a repeated id would otherwise mean a row drawn twice and an
+    /// item applied twice — each apply being a Penumbra reload nobody asked for.
+    /// </remarks>
+    public List<WardrobeItem> ResolveBase(BaseCharacter baseChar) =>
+        baseChar.ItemIds
+            .Distinct()
+            .Select(id => _config.WardrobeItems.Find(x => x.Id == id))
+            .Where(x => x != null)
+            .Select(x => x!)
+            .OrderBy(x => (int)x.Slot)
+            .ToList();
+
+    /// <summary>
+    /// Puts the active base character back on the character: its design's customisations, then any
+    /// of its items that are not already worn.
+    /// </summary>
+    /// <remarks>
+    /// Safe to call repeatedly, which is the point — a screenshot session calls it before every
+    /// shot, so a base item displaced by the piece being photographed comes back for the next one
+    /// instead of the session quietly drifting away from the character it started with.
+    /// <para>
+    /// Only the design's customisations are applied. Its gear would put back the very clothes a
+    /// strip had just removed; the base's own gear is its items and its kept slots.
+    /// </para>
+    /// </remarks>
+    /// <returns>How many items were newly applied. Zero when everything was already in place.</returns>
+    public int ApplyBase(BaseCharacter? baseChar = null)
+    {
+        baseChar ??= _config.ActiveBaseCharacter;
+        if (baseChar == null) return 0;
+
+        if (baseChar.DesignId is { } designId && !_glamourer.ApplyDesignCustomization(designId))
+            _log.Warning($"[Wardrobe] Base character '{baseChar.Name}': could not apply design " +
+                         $"'{baseChar.DesignName}' — it may have been deleted in Glamourer.");
+
+        var applied = 0;
+        foreach (var item in ResolveBase(baseChar))
+        {
+            if (IsItemWorn(item)) continue;
+            WearItem(item);
+            applied++;
+        }
+
+        if (applied > 0)
+            _log.Debug($"[Wardrobe] Base character '{baseChar.Name}': re-applied {applied} item(s)");
+
+        return applied;
+    }
+
+    /// <summary>
+    /// Switches to another base character, taking off the items only the old one wore.
+    /// </summary>
+    /// <remarks>
+    /// Items shared by both are left alone rather than removed and re-applied, and an item whose
+    /// slot the new base also fills is displaced by <see cref="WearItem"/> anyway — so the only
+    /// thing to undo is what the old base held in a slot the new one has nothing for. Without this,
+    /// swapping a Viera base for a Miqo'te one would leave the ears on.
+    /// </remarks>
+    public void SwitchBase(BaseCharacter? previous, BaseCharacter? next)
+    {
+        var needsRedraw = false;
+
+        if (previous != null && previous.Id != next?.Id)
+        {
+            var keep = next?.ItemIds ?? new List<Guid>();
+            foreach (var item in ResolveBase(previous))
+            {
+                if (keep.Contains(item.Id) || !IsItemWorn(item)) continue;
+                needsRedraw |= UnwearItem(item, save: false, redraw: false);
+            }
+        }
+
+        _config.ActiveBaseCharacterId = next?.Id;
+        _config.Save();
+
+        if (next != null) ApplyBase(next);
+
+        // Only when a removal asked for one, as unwearing a set does: hair and texture mods have
+        // nothing else to make them disappear, while gear forces its own reload on the way out
+        if (needsRedraw) _penumbra.RedrawPlayer();
+
+        WardrobeChanged?.Invoke();
+    }
+
     /// <summary>
     /// Disables the mods behind everything the character has on, then forces every equipment slot
     /// in Glamourer to its Emperor's New item so the character appears fully unequipped.
@@ -756,9 +870,18 @@ public class WardrobeService : IDisposable
     /// wearing and none of those are on it, so turning off a dance mod because someone wanted a
     /// bare screenshot would be a surprise — and a quiet one, since nothing about the character
     /// would show it had happened.
+    /// <para>
+    /// With a base character active this strips down to it rather than down to nothing: its items
+    /// stay on, its slots are left as they are, and it is re-applied afterwards so a slot displaced
+    /// since the last strip comes back. Nothing changes when there is no base character.
+    /// </para>
     /// </remarks>
     public void StripAll()
     {
+        var baseChar = _config.ActiveBaseCharacter;
+        var kept     = KeptSlots(baseChar);
+        var keptIds  = baseChar?.ItemIds ?? new List<Guid>();
+
         foreach (var (key, id) in _config.WornItems.ToList())
         {
             var item = _config.WardrobeItems.Find(x => x.Id == id);
@@ -773,6 +896,9 @@ public class WardrobeService : IDisposable
 
             if (item.Slot.IsModCategory()) continue;
 
+            // The base character is what a strip strips down to, not part of what it removes
+            if (keptIds.Contains(item.Id) || kept.Contains(item.Slot)) continue;
+
             // Removes its own WornItems entry
             UnwearItem(item, save: false);
         }
@@ -781,11 +907,15 @@ public class WardrobeService : IDisposable
         // Customisation slots are skipped — stripping cannot remove a character's hair.
         foreach (var slot in EquipSlotEx.All)
         {
-            if (slot.IsCustomization()) continue;
+            if (slot.IsCustomization() || kept.Contains(slot)) continue;
             var emperorsId = ItemLookupService.FindEmperorsNewItem(slot);
             if (emperorsId.HasValue)
                 _glamourer.SetItem(slot, emperorsId.Value);
         }
+
+        // After the stripping, so a base item that something else had displaced is put back rather
+        // than merely spared
+        ApplyBase(baseChar);
 
         _config.Save();
         WardrobeChanged?.Invoke();
@@ -943,12 +1073,12 @@ public class WardrobeService : IDisposable
         // and its variant — would otherwise be reported every single time.
         var explained = on
             .SelectMany(i => i.Mods)
-            .Select(m => $"{m.Collection} {m.ModDirectory}")
+            .Select(m => $"{m.Collection} {m.ModDirectory}")
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var unexplained = desynced
             .Where(i => i.Mods.Any(m => !string.IsNullOrEmpty(m.ModDirectory) &&
-                                        !explained.Contains($"{m.Collection} {m.ModDirectory}")))
+                                        !explained.Contains($"{m.Collection} {m.ModDirectory}")))
             .ToList();
 
         if (unexplained.Count > 0)
@@ -1324,11 +1454,24 @@ public class WardrobeService : IDisposable
         if (removeOthers)
         {
             var keep = items.Select(i => i.Id).ToHashSet();
+
+            // Wearing an outfit exclusively still means wearing it on your own character, so the
+            // base character's items and slots are held back here exactly as a strip holds them
+            var baseChar = _config.ActiveBaseCharacter;
+            var keptSlots = KeptSlots(baseChar);
+            foreach (var id in baseChar?.ItemIds ?? new List<Guid>()) keep.Add(id);
+
             foreach (var wornId in _config.WornItems.Values.ToList())
             {
                 if (keep.Contains(wornId)) continue;
                 var worn = _config.WardrobeItems.Find(x => x.Id == wornId);
-                if (worn != null) UnwearItem(worn, save: false, redraw: false);
+
+                // Never a slot the outfit itself fills: its own piece is about to take that slot,
+                // and holding the old one back would be the base protecting the outfit from itself
+                if (worn == null || (keptSlots.Contains(worn.Slot) &&
+                                     !items.Any(i => i.Slot == worn.Slot))) continue;
+
+                UnwearItem(worn, save: false, redraw: false);
             }
         }
 
@@ -1395,5 +1538,304 @@ public class WardrobeService : IDisposable
         _config.Outfits.Remove(outfit);
         _config.Save();
         WardrobeChanged?.Invoke();
+    }
+
+    // ── Vanilla glamour plates ────────────────────────────────────────────────
+
+    /// <summary>
+    /// The style every synced plate is tagged with, so the whole set can be filtered in or out
+    /// with the control that already exists rather than a switch of its own.
+    /// </summary>
+    public static readonly string GlamourPlateStyle = TagTree.StylePath("Glamour Plate");
+
+    /// <summary>Plate outfits, whether or not the game currently has plate data to compare against.</summary>
+    public List<Outfit> PlateOutfits() =>
+        _config.Outfits.Where(o => o.IsGlamourPlate).OrderBy(o => o.GlamourPlateId).ToList();
+
+    private static Dictionary<string, VanillaPiece> ToVanillaItems(IReadOnlyList<PlateSlotPiece> pieces)
+    {
+        var items = new Dictionary<string, VanillaPiece>();
+        foreach (var piece in pieces)
+            items[piece.Slot.ToString()] = new VanillaPiece
+            {
+                ItemId = piece.ItemId,
+                Name   = Plugin.ItemLookup.GetItemName(piece.ItemId),
+                Stain1 = piece.Stain1,
+                Stain2 = piece.Stain2,
+            };
+        return items;
+    }
+
+    /// <summary>
+    /// Brings every readable glamour plate into the outfit list, creating what is missing and
+    /// refreshing what has changed. Returns what it did, for the message shown afterwards.
+    /// </summary>
+    /// <remarks>
+    /// Contents are the game's and are overwritten wholesale. Name, preview image and tags are the
+    /// user's and are never touched after the outfit is first created — a plate renamed "Ballroom"
+    /// with a photograph taken of it stays that way through every resync, or the feature would
+    /// punish anyone who used it.
+    /// </remarks>
+    public (int Created, int Updated) SyncGlamourPlates()
+    {
+        Plugin.GlamourPlates.Invalidate();
+        var live = Plugin.GlamourPlates.ReadPlates();
+        if (live.Count == 0) return (0, 0);
+
+        var created = 0;
+        var updated = 0;
+
+        foreach (var plate in live)
+        {
+            var outfit = _config.Outfits.Find(o => o.GlamourPlateId == plate.PlateId);
+
+            if (outfit == null)
+            {
+                outfit = new Outfit
+                {
+                    Name           = $"Glamour Plate {plate.PlateId}",
+                    GlamourPlateId = plate.PlateId,
+                    Tags           = new List<string> { GlamourPlateStyle },
+                };
+                _config.Outfits.Add(outfit);
+                created++;
+            }
+            else if (GlamourPlateService.Signature(outfit.VanillaItems)
+                  == GlamourPlateService.Signature(plate.Pieces))
+            {
+                continue;
+            }
+            else
+            {
+                updated++;
+            }
+
+            ApplyPlate(outfit, plate);
+        }
+
+        _config.Save();
+        WardrobeChanged?.Invoke();
+        _log.Information($"[Wardrobe] Glamour plates synced: {created} created, {updated} updated, " +
+                         $"{live.Count} readable");
+        return (created, updated);
+    }
+
+    /// <summary>Refreshes one plate outfit from the game. False when its plate cannot be read.</summary>
+    public bool SyncGlamourPlate(Outfit outfit)
+    {
+        if (outfit.GlamourPlateId is not { } id) return false;
+
+        Plugin.GlamourPlates.Invalidate();
+        if (Plugin.GlamourPlates.ReadPlate(id) is not { } plate) return false;
+
+        ApplyPlate(outfit, plate);
+        _config.Save();
+        WardrobeChanged?.Invoke();
+        _log.Information($"[Wardrobe] Resynced '{outfit.Name}' from glamour plate {id} " +
+                         $"({plate.Pieces.Count} piece(s))");
+        return true;
+    }
+
+    private static void ApplyPlate(Outfit outfit, LivePlate plate)
+    {
+        outfit.VanillaItems  = ToVanillaItems(plate.Pieces);
+        outfit.PlateSyncedAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Plate outfits whose stored copy no longer matches the plate in the game.
+    /// </summary>
+    /// <remarks>
+    /// Empty whenever the client has no plate data, so a session that has not been near a
+    /// summoning bell reads as "nothing to say" rather than as drift. Silence is the honest answer
+    /// there: nothing has been compared.
+    /// </remarks>
+    public List<Outfit> DesyncedPlates()
+    {
+        if (!Plugin.GlamourPlates.PlatesLoaded) return new List<Outfit>();
+
+        var live = Plugin.GlamourPlates.ReadPlates().ToDictionary(p => p.PlateId);
+        return _config.Outfits
+            .Where(o => o.IsGlamourPlate
+                     && live.TryGetValue(o.GlamourPlateId!.Value, out var plate)
+                     && GlamourPlateService.Signature(plate.Pieces)
+                     != GlamourPlateService.Signature(o.VanillaItems))
+            .OrderBy(o => o.GlamourPlateId)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Plate outfits whose plate has been emptied in the game.
+    /// </summary>
+    /// <remarks>
+    /// Reported rather than deleted. The stored copy is still a wearable look and may well be the
+    /// only record left of it, so throwing it away on the strength of an in-game edit would destroy
+    /// exactly what someone cleared the plate to make room for.
+    /// </remarks>
+    public List<Outfit> OrphanedPlates()
+    {
+        if (!Plugin.GlamourPlates.PlatesLoaded) return new List<Outfit>();
+
+        var live = Plugin.GlamourPlates.ReadPlates().Select(p => p.PlateId).ToHashSet();
+        return _config.Outfits
+            .Where(o => o.IsGlamourPlate && !live.Contains(o.GlamourPlateId!.Value))
+            .OrderBy(o => o.GlamourPlateId)
+            .ToList();
+    }
+
+    /// <summary>Plates in the game that have not been brought into the wardrobe yet.</summary>
+    public int UnsyncedPlateCount()
+    {
+        if (!Plugin.GlamourPlates.PlatesLoaded) return 0;
+
+        var known = _config.Outfits.Where(o => o.IsGlamourPlate)
+                                   .Select(o => o.GlamourPlateId!.Value).ToHashSet();
+        return Plugin.GlamourPlates.ReadPlates().Count(p => !known.Contains(p.PlateId));
+    }
+
+    /// <summary>
+    /// Drops every override the wardrobe is holding, so the character shows what the game has on.
+    /// </summary>
+    /// <remarks>
+    /// Glamourer sits on top of the game, so applying a plate for real changes nothing you can see
+    /// while the wardrobe still has clothes on the character — the plate lands underneath an
+    /// override that hides it. This is what makes the result visible.
+    /// <para>
+    /// The items are unworn properly rather than merely reverted in Glamourer. A bare revert would
+    /// leave their Penumbra mods enabled with nothing showing them, which is exactly the state the
+    /// desync notice exists to complain about; there is no sense in building a button that
+    /// manufactures it.
+    /// </para>
+    /// <para>
+    /// The base character then goes back on, unless
+    /// <see cref="Configuration.KeepBaseCharacterOnRevert"/> says otherwise. Its items are taken off
+    /// with the rest first: the revert wipes their Glamourer state whatever the wardrobe believes,
+    /// so sparing them here would leave the wardrobe holding items the character is not wearing.
+    /// Anything worn in one of its kept slots is put back the same way, so a plate applied for real
+    /// lands underneath the character rather than over the top of it.
+    /// </para>
+    /// </remarks>
+    /// <returns>How many items were taken off.</returns>
+    public int RevertToInGameLook()
+    {
+        var baseChar = _config.KeepBaseCharacterOnRevert ? _config.ActiveBaseCharacter : null;
+        var kept     = KeptSlots(baseChar);
+
+        // Items worn in a slot the base holds but which the base does not name itself — the tail on a
+        // ring that was never added to its item list. They come off with everything else, because
+        // RevertState wipes their Glamourer half whatever the wardrobe believes, and go back on
+        // afterwards. Without this, "kept" would mean one thing for a strip and another for a plate.
+        var keptItems = new List<WardrobeItem>();
+        var removed   = 0;
+
+        foreach (var (key, id) in _config.WornItems.ToList())
+        {
+            var item = _config.WardrobeItems.Find(x => x.Id == id);
+            if (item == null)
+            {
+                _config.WornItems.Remove(key);
+                continue;
+            }
+
+            // Animations, VFX and mounts are not on the character and a glamour plate has nothing to
+            // say about them, so a dance left running keeps running — the same line StripAll draws
+            if (item.Slot.IsModCategory()) continue;
+
+            if (kept.Contains(item.Slot) && baseChar?.ItemIds.Contains(item.Id) != true)
+                keptItems.Add(item);
+
+            UnwearItem(item, save: false, redraw: false);
+            removed++;
+        }
+
+        // After the unwearing, so the Emperor's New pieces it puts in the slots on the way out go
+        // too. Without this the character would be standing there stripped rather than in the gear
+        // the game has on them.
+        _glamourer.RevertState();
+
+        // The kept slots first and the base's own items second, so a base that names an item for a
+        // slot wins over whatever merely happened to be worn there
+        foreach (var item in keptItems) WearItem(item);
+        if (baseChar != null) ApplyBase(baseChar);
+
+        // Customisation mods have nothing but a redraw to make them appear or disappear, and both
+        // taking them off and putting the base back on are changes of exactly that kind. Skipped
+        // when neither happened, so pressing this twice does not stutter the character for nothing.
+        if (removed > 0 || baseChar != null) _penumbra.RedrawPlayer();
+
+        _config.Save();
+        WardrobeChanged?.Invoke();
+        _log.Information($"[Wardrobe] Reverted to the in-game look ({removed} item(s) taken off, " +
+                         $"base character {(baseChar != null ? $"'{baseChar.Name}' re-applied" : "not re-applied")}" +
+                         $"{(keptItems.Count > 0 ? $", {keptItems.Count} item(s) put back in kept slots" : string.Empty)})");
+        return removed;
+    }
+
+    /// <summary>
+    /// Applies a plate for real and then shows the result.
+    /// </summary>
+    /// <remarks>
+    /// The apply is a server round trip and is not finished when the call returns, so the revert
+    /// waits for the game to say it has stopped applying rather than firing straight away. Reverting
+    /// too early is harmless in itself, but re-applying the base character on top of a plate that is
+    /// still landing is a race worth not running.
+    /// </remarks>
+    public bool ApplyPlateInGame(Outfit outfit, out string message)
+    {
+        if (outfit.GlamourPlateId is not { } plateId)
+        {
+            message = "This outfit is not a glamour plate.";
+            return false;
+        }
+
+        if (!Plugin.GlamourPlates.ApplyInGame(plateId, out message)) return false;
+
+        _ = Task.Run(async () =>
+        {
+            // Polled rather than waited on a fixed delay: the round trip is as quick as the server
+            // is. The cap stops a lost reply leaving the wardrobe's clothes on forever.
+            for (var i = 0; i < 40; i++)
+            {
+                await Task.Delay(100);
+                if (!await _framework.RunOnFrameworkThread(() => Plugin.GlamourPlates.IsApplying))
+                    break;
+            }
+
+            await _framework.RunOnFrameworkThread(() => RevertToInGameLook());
+        });
+
+        return true;
+    }
+
+    /// <summary>
+    /// Copies a plate into an ordinary, editable outfit.
+    /// </summary>
+    /// <remarks>
+    /// The way out of read-only. A plate is a fine starting point for a modded look, and this gives
+    /// somewhere to build it that resyncing will never overwrite. The preview image is deliberately
+    /// left behind: the copy is about to stop looking like the plate.
+    /// </remarks>
+    public Outfit DuplicateAsOutfit(Outfit plate)
+    {
+        var copy = new Outfit
+        {
+            Name         = $"{plate.Name} (copy)",
+            Tags         = plate.Tags.Where(t => t != GlamourPlateStyle).ToList(),
+            VanillaItems = plate.VanillaItems.ToDictionary(
+                kv => kv.Key,
+                kv => new VanillaPiece
+                {
+                    ItemId = kv.Value.ItemId,
+                    Name   = kv.Value.Name,
+                    Stain1 = kv.Value.Stain1,
+                    Stain2 = kv.Value.Stain2,
+                }),
+        };
+
+        _config.Outfits.Add(copy);
+        _config.Save();
+        WardrobeChanged?.Invoke();
+        _log.Information($"[Wardrobe] Copied plate '{plate.Name}' to editable outfit '{copy.Name}'");
+        return copy;
     }
 }

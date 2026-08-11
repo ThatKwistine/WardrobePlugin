@@ -70,4 +70,21 @@ public class CameraPreset
 
     /// <inheritdoc cref="PanH"/>
     public float? PanV { get; set; }
+
+    /// <summary>
+    /// <see cref="DirH"/> measured from the character's facing rather than from the world.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="DirH"/> is an absolute compass angle. The camera orbits the character either way,
+    /// but the angle does not, so a preset saved as a face close-up shows a profile the next time
+    /// the character happens to stand facing elsewhere — and GPose cannot turn them, so the only
+    /// remedy was to line the character up in normal play before entering. Storing the angle
+    /// relative to their facing removes that entirely.
+    /// <para>
+    /// Nullable so presets saved before this behave exactly as they did: no offset means fall back
+    /// to the absolute <see cref="DirH"/>. Re-saving a preset, or pressing Update on it, gives it
+    /// one.
+    /// </para>
+    /// </remarks>
+    public float? DirHOffset { get; set; }
 }

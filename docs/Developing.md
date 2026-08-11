@@ -101,10 +101,6 @@ Penumbra mods come in two layouts. `FileVersion` 3 keeps option groups in separa
 Slot detection matches material and texture paths as well as models — a mod that ships only a
 material replacement for a slot still registers.
 
-## Releasing
-
-See [RELEASING.md](../RELEASING.md).
-
 ## Archived work
 
 **Wardrobe sharing** — a WebSocket-based feature letting another player view your wardrobe and

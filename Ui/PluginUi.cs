@@ -212,6 +212,21 @@ public class PluginUi : Window, IDisposable
     private string  _addToOutfitSearch = string.Empty;
     private string  _dyeSearch         = string.Empty;
 
+    // Glamour plates: the message under the sync controls, whether the drift notice has been waved
+    // away for now, and which plate outfits the last draw found out of step. The set is recomputed
+    // each frame in the outfits grid so the cards and the notice always agree.
+    private string _plateSyncStatus = string.Empty;
+    private string _plateApplyStatus = string.Empty;
+    private bool   _plateNoticeIgnored;
+    private readonly HashSet<Guid> _platesOutOfSync = new();
+
+    // Base character editor: the name being typed, whose name it is, and the add-item search. The id
+    // is kept so switching base characters reloads the field instead of renaming the new one to the
+    // name half-typed for the old.
+    private string _baseNameEdit    = string.Empty;
+    private Guid?  _baseNameEditId;
+    private string _addToBaseSearch = string.Empty;
+
     // Mod-scan results: item IDs whose mods are detected enabled in Penumbra
     private readonly HashSet<Guid> _detectedWorn = new();
     private string _scanStatus = string.Empty;
@@ -281,7 +296,26 @@ public class PluginUi : Window, IDisposable
 
     // The outfit grid starts from the same card and scales it separately — see OutfitCardScale
     private float OutfitCardWidth  => UiScale.S(BaseCardWidth)  * OutfitScale;
-    private float OutfitCardHeight => UiScale.S(BaseCardHeight) * OutfitScale;
+
+    /// <summary>
+    /// Outfit card height, taller when previews are portraits.
+    /// </summary>
+    /// <remarks>
+    /// A 9:16 picture is nearly twice as tall as the square one it replaces, so the card has to grow
+    /// by the difference or the buttons fall off the bottom — a card clips rather than scrolls. The
+    /// rest of the card is unchanged, so the extra height is all picture.
+    /// </remarks>
+    private float OutfitCardHeight
+    {
+        get
+        {
+            var square = UiScale.S(BaseCardHeight) * OutfitScale;
+            if (!_config.PortraitOutfitPreviews) return square;
+
+            var thumb = OutfitCardWidth - CardPad * 2;
+            return square + ImageDraw.PortraitHeight(thumb) - thumb;
+        }
+    }
 
     /// <summary>
     /// Card height, grown to fit a slot icon larger than the size the card was designed around.
@@ -1033,6 +1067,13 @@ public class PluginUi : Window, IDisposable
                 _detectedWorn.Clear();
             }
             ImGui.PopStyleColor(2);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Take off every wardrobe item you are wearing." +
+                                 (_config.ActiveBaseCharacter is { } unequipBase
+                                     ? $"\n\nIncluding '{unequipBase.Name}' — this is the wardrobe\n" +
+                                       "emptying itself, not a strip, so the base character is\n" +
+                                       "not held back. Strip keeps it."
+                                     : string.Empty));
             UiLayout.SameLineIfRoomForButton(" Strip ");
         }
 
@@ -1054,7 +1095,10 @@ public class PluginUi : Window, IDisposable
             ImGui.SetTooltip("Force every equipment slot to Emperor's New in Glamourer\n" +
                              "and disable all worn mods.\n\n" +
                              "Animations, VFX and mounts are left running — they are not\n" +
-                             "on the character, so there is nothing to strip.");
+                             "on the character, so there is nothing to strip." +
+                             (_config.ActiveBaseCharacter is { } stripBase
+                                 ? $"\n\nStrips down to '{stripBase.Name}': its slots and items stay on."
+                                 : string.Empty));
 
         UiLayout.SameLineIfRoomForButton(" Refresh ");
 
@@ -3885,6 +3929,105 @@ public class PluginUi : Window, IDisposable
     /// <summary>Item being shown full size, or null. Cleared by closing the popup.</summary>
     private Guid? _quickViewItem;
 
+    /// <summary>Outfit being shown full size. Checked first, so only one picture is ever up.</summary>
+    private Guid? _quickViewOutfit;
+
+    /// <summary>
+    /// The same full-size look, for an outfit.
+    /// </summary>
+    /// <remarks>
+    /// Its own method rather than a branch through the item one: the two share the picture and
+    /// nothing else. An outfit has no slot, its buttons wear and remove a whole set, and what is
+    /// worth saying under the picture is how many pieces it holds and what styles it carries.
+    /// </remarks>
+    private void DrawOutfitQuickView(Guid id)
+    {
+        var outfit = _config.Outfits.Find(o => o.Id == id);
+        if (outfit == null)
+        {
+            _quickViewOutfit = null;
+            return;
+        }
+
+        if (!ImGui.IsPopupOpen(QuickViewPopup)) ImGui.OpenPopup(QuickViewPopup);
+
+        var vp     = ImGui.GetMainViewport();
+        var centre = new Vector2(vp.Pos.X + vp.Size.X * 0.5f, vp.Pos.Y + vp.Size.Y * 0.5f);
+        ImGui.SetNextWindowPos(centre, ImGuiCond.Appearing, new Vector2(0.5f, 0.5f));
+
+        if (!ImGui.BeginPopupModal(QuickViewPopup, ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            _quickViewOutfit = null;
+            return;
+        }
+
+        var side = Math.Min(vp.Size.Y * 0.7f, vp.Size.X * 0.5f);
+
+        if (!string.IsNullOrEmpty(outfit.ImagePath) && File.Exists(outfit.ImagePath))
+        {
+            try
+            {
+                if (_textures.GetFromFile(outfit.ImagePath).GetWrapOrDefault() is { } wrap)
+                {
+                    // Fitted to the height available rather than the width, since a portrait is tall
+                    // and the point of viewing one full size is to see all of it at once
+                    if (_config.PortraitOutfitPreviews)
+                        ImageDraw.Portrait(wrap, Math.Min(side, vp.Size.Y * 0.75f / ImageDraw.PortraitRatio));
+                    else
+                        ImageDraw.Square(wrap, side);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Warning(ex, $"[Wardrobe] Could not load '{outfit.ImagePath}' for quick view");
+            }
+        }
+        else
+        {
+            ImGui.TextDisabled("This outfit has no picture.");
+        }
+
+        var items = _wardrobe.ResolveOutfit(outfit);
+
+        ImGui.Spacing();
+        ImGui.TextUnformatted(outfit.Name);
+        ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f),
+            $"{items.Count} item{(items.Count == 1 ? "" : "s")}" +
+            (outfit.VanillaItems.Count > 0 ? $" · {outfit.VanillaItems.Count} vanilla" : ""));
+
+        if (outfit.Tags.Count > 0)
+            ImGui.TextDisabled(string.Join(" · ", outfit.Tags.Select(t =>
+                TagTree.IsStyle(t) ? t[(TagTree.StyleRoot.Length + 1)..] : t)));
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var worn = _wardrobe.IsOutfitWorn(outfit);
+        var btnW = UiScale.S(130);
+
+        if (ImGui.Button(worn ? "Remove" : "Wear", new Vector2(btnW, 0)))
+        {
+            if (worn) _wardrobe.UnwearOutfit(outfit);
+            else      _wardrobe.WearOutfit(outfit, removeOthers: true);
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Edit", new Vector2(btnW, 0)))
+        {
+            OpenOutfitEdit(outfit);
+            CloseQuickView();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Close", new Vector2(btnW, 0)))
+            CloseQuickView();
+
+        if (ImGui.IsKeyPressed(ImGuiKey.Escape)) CloseQuickView();
+
+        ImGui.EndPopup();
+    }
+
     /// <summary>
     /// A full-size look at one item's picture, over the grid.
     /// </summary>
@@ -3896,6 +4039,12 @@ public class PluginUi : Window, IDisposable
     /// </remarks>
     private void DrawQuickView()
     {
+        if (_quickViewOutfit is { } outfitId)
+        {
+            DrawOutfitQuickView(outfitId);
+            return;
+        }
+
         if (_quickViewItem is not { } id) return;
 
         var item = _config.WardrobeItems.Find(x => x.Id == id);
@@ -3980,7 +4129,8 @@ public class PluginUi : Window, IDisposable
 
     private void CloseQuickView()
     {
-        _quickViewItem = null;
+        _quickViewItem   = null;
+        _quickViewOutfit = null;
         ImGui.CloseCurrentPopup();
     }
 
@@ -4212,7 +4362,11 @@ public class PluginUi : Window, IDisposable
 
         ImGui.Spacing();
 
-        if (_session.CurrentItem is { } shooting) DrawCompactCameraPresets(shooting);
+        // Whichever the session is on: an item's slot presets, or the outfit set
+        if (_session.CurrentItem is { } shooting)
+            DrawCompactCameraPresets(shooting.Slot.ToString(), shooting.Slot.DisplayName());
+        else if (_session.CurrentOutfit != null)
+            DrawCompactCameraPresets(Configuration.OutfitPresetKey, "Outfits");
 
         if (_session.State == SessionState.WaitingForShot)
         {
@@ -4241,13 +4395,12 @@ public class PluginUi : Window, IDisposable
     /// Expand is a click away for the rest.
     /// </para>
     /// </remarks>
-    private void DrawCompactCameraPresets(WardrobeItem item)
+    private void DrawCompactCameraPresets(string slotKey, string label)
     {
-        var slotKey = item.Slot.ToString();
         var presets = _config.PresetsFor(slotKey);
 
         ImGui.Separator();
-        ImGui.TextDisabled($"Camera  ·  {item.Slot.DisplayName()}");
+        ImGui.TextDisabled($"Camera  ·  {label}");
 
         // Moving to another slot makes the remembered preset meaningless — it belonged to the last one
         if (_compactPresetSlot != slotKey)
@@ -4273,9 +4426,9 @@ public class PluginUi : Window, IDisposable
 
             // The session's own preset is marked, so picking another does not lose track of which one
             // the remaining items will be shot with
-            var label = isSession ? $"*{name}" : name;
+            var buttonLabel = isSession ? $"*{name}" : name;
 
-            if (i > 0) UiLayout.SameLineIfRoomForButton(label);
+            if (i > 0) UiLayout.SameLineIfRoomForButton(buttonLabel);
 
             if (isTarget)
             {
@@ -4283,7 +4436,7 @@ public class PluginUi : Window, IDisposable
                 ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.52f, 0.38f, 0.74f, 1f));
             }
 
-            if (ImGui.SmallButton($"{label}##compactpreset_{i}")) applyIdx = i;
+            if (ImGui.SmallButton($"{buttonLabel}##compactpreset_{i}")) applyIdx = i;
             if (isTarget) ImGui.PopStyleColor(2);
 
             if (ImGui.IsItemHovered())
@@ -4321,9 +4474,9 @@ public class PluginUi : Window, IDisposable
 
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(presets.Count > 0
-                ? $"Keep the current camera as another {item.Slot.DisplayName()} preset."
-                : $"Save the current camera as the {item.Slot.DisplayName()} preset.\n" +
-                  "The session will use it from the next item on.");
+                ? $"Keep the current camera as another {label} preset."
+                : $"Save the current camera as the {label} preset.\n" +
+                  "The session will use it from the next shot on.");
 
         ImGui.Spacing();
     }
@@ -4359,6 +4512,9 @@ public class PluginUi : Window, IDisposable
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Shrinks the wardrobe window to a small session view while\n" +
                              "a session runs, so it stays out of the shot.");
+
+        ImGui.Spacing();
+        DrawSessionBasePicker();
 
         ImGui.Separator();
         ImGui.Spacing();
@@ -4413,6 +4569,38 @@ public class PluginUi : Window, IDisposable
         if (!open) _session.Stop();
     }
 
+    /// <summary>
+    /// The base character a session photographs against, chosen from the HUD.
+    /// </summary>
+    /// <remarks>
+    /// Here as well as in settings because this is where you find out it is wrong: the first shot
+    /// with your ears missing is the moment you go looking for the control, and it should be the one
+    /// already on screen rather than three clicks into a panel behind the character.
+    /// </remarks>
+    private void DrawSessionBasePicker()
+    {
+        ImGui.TextDisabled("Base character");
+
+        ImGui.SetNextItemWidth(-1);
+        DrawBaseCharacterCombo("##sessionbase");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Applied before every shot, and held back when other items are\n" +
+                             "stripped. Set one up in Settings → Base character.");
+
+        if (_config.BaseCharacters.Count == 0)
+        {
+            ImGui.TextDisabled("None saved yet — Settings → Base character.");
+            return;
+        }
+
+        if (_config.ActiveBaseCharacter is not { } active) return;
+
+        var kept = _wardrobe.KeptSlots(active);
+        ImGui.TextDisabled(kept.Count == 0
+            ? "No slots kept."
+            : $"Keeps {string.Join(", ", kept.OrderBy(s => (int)s).Select(s => s.DisplayName()))}.");
+    }
+
     // ── Camera preset controls (used inside session HUD) ──────────────────────
 
     /// <summary>
@@ -4428,11 +4616,18 @@ public class PluginUi : Window, IDisposable
     private void DrawCameraPresetControls(WardrobeItem? item)
     {
         if (item == null) return;
+        DrawCameraPresetControls(item.Slot.ToString(), item.Slot.DisplayName(),
+            $"for all {item.Slot.DisplayName()} items");
+    }
 
-        var slotKey = item.Slot.ToString();
+    /// <param name="slotKey">Which list to edit — a slot's name, or <see cref="Configuration.OutfitPresetKey"/>.</param>
+    /// <param name="label">What the list is called on screen.</param>
+    /// <param name="scope">Who the presets apply to, for the Save button's tooltip.</param>
+    private void DrawCameraPresetControls(string slotKey, string label, string scope)
+    {
         var presets = _config.PresetsFor(slotKey);
 
-        ImGui.TextDisabled($"Camera presets — {item.Slot.DisplayName()}");
+        ImGui.TextDisabled($"Camera presets — {label}");
 
         if (presets.Count == 0)
         {
@@ -4476,12 +4671,27 @@ public class PluginUi : Window, IDisposable
 
             ImGui.SameLine();
 
-            var label = string.IsNullOrWhiteSpace(preset.Name) ? "(unnamed)" : preset.Name;
-            if (ImGui.SmallButton(label)) applyIdx = i;
+            var presetLabel = string.IsNullOrWhiteSpace(preset.Name) ? "(unnamed)" : preset.Name;
+            if (ImGui.SmallButton(presetLabel)) applyIdx = i;
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Snap the camera to this preset now.\n" +
                                  "Camera control returns to you after about half a second.\n\n" +
                                  "Right-click to rename.");
+
+            // Marked rather than converted. The offset a preset needs is the character's facing at
+            // the moment it was saved, which nothing recorded — so the only honest conversion is to
+            // re-save it while the shot looks right, and the only useful thing to do here is say so.
+            var worldAngle = preset.DirHOffset == null;
+            if (worldAngle)
+            {
+                UiLayout.SameLineIfRoomForText("world angle");
+                ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f), "world angle");
+
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Saved before angles followed your character, so it points the\n" +
+                                     "same way whichever way you are facing.\n\n" +
+                                     "Frame the shot as you want it and press Update to convert it.");
+            }
 
             if (ImGui.BeginPopupContextItem("##presetctx"))
             {
@@ -4502,11 +4712,12 @@ public class PluginUi : Window, IDisposable
             UiLayout.SameLineIfRoomForButton("Update");
             if (ImGui.SmallButton("Update")) updateIdx = i;
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip($"Replace '{label}' with the camera as it is now.\n" +
-                                 "Keeps the name.");
+                ImGui.SetTooltip($"Replace '{presetLabel}' with the camera as it is now.\n" +
+                                 "Keeps the name." +
+                                 (worldAngle ? "\n\nAlso converts it to follow your character." : string.Empty));
 
             UiLayout.SameLineIfRoomForButton("×");
-            if (DeleteButton("×", $"Deletes the camera preset '{label}'.")) deleteIdx = i;
+            if (DeleteButton("×", $"Deletes the camera preset '{presetLabel}'.")) deleteIdx = i;
 
             ImGui.PopID();
         }
@@ -4525,8 +4736,7 @@ public class PluginUi : Window, IDisposable
         ImGui.SameLine();
         if (ImGui.SmallButton("Save Camera") || entered) SavePresetFromCamera(slotKey);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip($"Save the current GPose camera as a new preset\n" +
-                             $"for all {item.Slot.DisplayName()} items.");
+            ImGui.SetTooltip($"Save the current GPose camera as a new preset\n{scope}.");
     }
 
     /// <summary>The rename box, drawn in place of a preset's row while it is being renamed.</summary>
@@ -4702,6 +4912,8 @@ public class PluginUi : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
+        DrawGlamourPlatesBar();
+
         if (_config.Outfits.Count == 0)
         {
             ImGui.TextDisabled("No outfits saved yet. Wear a look, name it above, then save.");
@@ -4732,6 +4944,11 @@ public class PluginUi : Window, IDisposable
         if (outfits.Any(o => o.Tags.Any(TagTree.IsStyle)))
             cardH += ImGui.GetTextLineHeightWithSpacing();
 
+        // Same rule for the plate cards' apply button: paid for across the grid so the rows still
+        // line up, rather than per card, which would leave the plates standing taller than the rest
+        if (outfits.Any(o => o.IsGlamourPlate))
+            cardH += ImGui.GetFrameHeightWithSpacing();
+
         var avail   = ImGui.GetContentRegionAvail().X;
         var columns = Math.Max(1, (int)((avail + CardPad) / (cardW + CardPad)));
         var col     = 0;
@@ -4754,6 +4971,160 @@ public class PluginUi : Window, IDisposable
         }
     }
 
+    /// <summary>
+    /// Sync controls and the out-of-step notice for the game's own glamour plates.
+    /// </summary>
+    /// <remarks>
+    /// Plates are edited in-game and often, so a stored copy going stale is the normal case rather
+    /// than the exception. That makes the notice the important half of this: a plate that silently
+    /// serves last week's gear is worse than no plate at all, because nothing on screen says so.
+    /// </remarks>
+    private void DrawGlamourPlatesBar()
+    {
+        var loaded = Plugin.GlamourPlates.PlatesLoaded;
+        var plates = _wardrobe.PlateOutfits();
+
+        // Recomputed every frame so the cards below and the notice here cannot disagree. Cheap:
+        // the service caches its read of the game for half a second.
+        _platesOutOfSync.Clear();
+        var desynced = loaded ? _wardrobe.DesyncedPlates() : new List<Outfit>();
+        foreach (var o in desynced) _platesOutOfSync.Add(o.Id);
+
+        var orphaned = loaded ? _wardrobe.OrphanedPlates() : new List<Outfit>();
+        var unsynced = loaded ? _wardrobe.UnsyncedPlateCount() : 0;
+
+        if (!loaded)
+        {
+            // Nothing is claimed about drift here on purpose. With no plate data in the client
+            // nothing has been compared, and "up to date" would be a guess dressed as a fact.
+            if (plates.Count == 0)
+            {
+                ImGui.TextDisabled("Glamour plates: open your Glamour Plate window once — at a summoning bell, " +
+                                   "an inn or the Glamour Dresser — then come back to sync them.");
+            }
+            else
+            {
+                ImGui.TextDisabled($"{plates.Count} glamour plate(s) saved. Open your Glamour Plate window " +
+                                   "to check them against the game.");
+            }
+
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+            return;
+        }
+
+        var syncLabel = plates.Count == 0 ? " Sync Glamour Plates " : " Resync Glamour Plates ";
+        if (ImGui.Button(syncLabel))
+        {
+            var (created, updated) = _wardrobe.SyncGlamourPlates();
+            _plateSyncStatus = created == 0 && updated == 0
+                ? "Glamour plates were already up to date."
+                : $"Glamour plates: {created} added, {updated} updated.";
+            _plateNoticeIgnored = false;
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Reads your glamour plates from the game and saves each one as an outfit.\n\n" +
+                             "Their contents are the game's and cannot be edited here — resync after\n" +
+                             "changing a plate in-game. Names, previews and tags you set are kept.");
+
+        if (unsynced > 0)
+        {
+            UiLayout.SameLineIfRoomForText($"{unsynced} not saved yet");
+            ImGui.TextDisabled($"{unsynced} not saved yet");
+        }
+
+        if (!string.IsNullOrEmpty(_plateSyncStatus))
+        {
+            UiLayout.SameLineIfRoomForText(_plateSyncStatus);
+            ImGui.TextDisabled(_plateSyncStatus);
+        }
+
+        if (orphaned.Count > 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(0.55f, 0.8f, 1f, 1f),
+                $"● {orphaned.Count} saved plate(s) are now empty in the game: " +
+                string.Join(", ", orphaned.Select(o => o.Name)));
+            ImGui.TextDisabled("Their saved copies are kept and still wearable. Delete them yourself if you " +
+                               "cleared the plate on purpose.");
+        }
+
+        if (desynced.Count > 0 && !_plateNoticeIgnored)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
+                $"● {desynced.Count} glamour plate(s) have been changed in the game.");
+            ImGui.TextDisabled("The saved copies still hold the old gear. Resync to bring them up to date — " +
+                               "names, previews and tags are kept.");
+            ImGui.Spacing();
+
+            if (ImGui.Button(" Resync All "))
+            {
+                var (_, updated) = _wardrobe.SyncGlamourPlates();
+                _plateSyncStatus = $"Resynced {updated} glamour plate(s).";
+            }
+
+            UiLayout.SameLineIfRoomForButton(" Ignore ##plates ");
+            if (ImGui.Button(" Ignore ##plates "))
+                _plateNoticeIgnored = true;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Hides this until the next sync. Nothing is changed.");
+
+            // Acted on after the loop, so the list being walked is not resynced out from under it
+            Outfit? resync = null;
+
+            foreach (var plate in desynced)
+            {
+                ImGui.PushID($"plate_{plate.Id}");
+                ImGui.Bullet();
+                ImGui.SameLine();
+                ImGui.TextUnformatted(plate.Name);
+
+                var label = $"(plate {plate.GlamourPlateId})";
+                UiLayout.SameLineIfRoomForText(label);
+                ImGui.TextDisabled(label);
+
+                UiLayout.SameLineIfRoomForButton("Resync");
+                if (ImGui.SmallButton("Resync")) resync = plate;
+                ImGui.PopID();
+            }
+
+            if (resync != null)
+            {
+                _wardrobe.SyncGlamourPlate(resync);
+                _plateSyncStatus = $"Resynced '{resync.Name}'.";
+            }
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+    }
+
+    /// <summary>
+    /// What a card's name shows on hover: its wardrobe items, or for a plate, the pieces it holds.
+    /// </summary>
+    /// <remarks>
+    /// A plate has no wardrobe items at all, so the ordinary listing would leave its card as the one
+    /// thing in the grid that says nothing about its own contents.
+    /// </remarks>
+    private static string OutfitCardTooltip(Outfit outfit, List<WardrobeItem> items)
+    {
+        if (outfit.IsGlamourPlate)
+        {
+            var pieces = outfit.VanillaItems
+                .Select(kv => (Slot: Enum.TryParse<EquipSlot>(kv.Key, out var s) ? s : EquipSlot.Unknown, kv.Value))
+                .OrderBy(p => (int)p.Slot)
+                .Select(p => $"{p.Slot.DisplayName()} — {p.Value.Name}");
+            return $"{outfit.Name}\n\n" + string.Join("\n", pieces);
+        }
+
+        return items.Count > 0
+            ? $"{outfit.Name}\n\n" + string.Join("\n", items.Select(i => $"{i.Slot.DisplayName()} — {i.Name}"))
+            : outfit.Name;
+    }
+
     private void DrawOutfitCard(Outfit outfit, float cardW, float cardH, ref Outfit? pendingDelete)
     {
         var items  = _wardrobe.ResolveOutfit(outfit);
@@ -4771,6 +5142,12 @@ public class PluginUi : Window, IDisposable
             border     = TagTree.Blend(border,     tint, 0.75f);
         }
 
+        // A plate keeps a border of its own whatever style it is tagged with. The whole point of the
+        // colour is to say at a glance which cards the wardrobe does not own, so a style tint must
+        // not be able to disguise one — it still tints the background, just not the edge.
+        if (outfit.IsGlamourPlate)
+            border = new Vector4(0.38f, 0.58f, 0.75f, 1f);
+
         ImGui.PushID(outfit.Id.ToString());
         ImGui.PushStyleColor(ImGuiCol.ChildBg,
             worn ? new Vector4(0.22f, 0.18f, 0.04f, 1f) : background);
@@ -4785,9 +5162,7 @@ public class PluginUi : Window, IDisposable
         var dispName = CardName(outfit.Name);
         ImGui.TextUnformatted(dispName);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(items.Count > 0
-                ? $"{outfit.Name}\n\n" + string.Join("\n", items.Select(i => $"{i.Slot.DisplayName()} — {i.Name}"))
-                : outfit.Name);
+            ImGui.SetTooltip(OutfitCardTooltip(outfit, items));
 
         if (worn)
         {
@@ -4797,12 +5172,35 @@ public class PluginUi : Window, IDisposable
             ImGui.PopStyleColor();
         }
 
+        if (outfit.IsGlamourPlate)
+        {
+            // Said in words, not just in the border colour: the border explains itself only to
+            // someone who already knows what it means
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.5f, 0.72f, 0.92f, 1f));
+            ImGui.TextUnformatted($"Glamour Plate {outfit.GlamourPlateId}");
+            ImGui.PopStyleColor();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("One of the game's own glamour plates, mirrored here.\n" +
+                                 "Its contents are edited in-game, not in the wardrobe.");
+
+            if (_platesOutOfSync.Contains(outfit.Id))
+            {
+                ImGui.SameLine();
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.75f, 0.3f, 1f));
+                ImGui.TextUnformatted("●");
+                ImGui.PopStyleColor();
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("This plate has been changed in the game.\nResync it to bring this copy up to date.");
+            }
+        }
+
         // A deleted item leaves a gap in the outfit; say so rather than quietly wearing fewer
         var missing = outfit.ItemIds.Count - items.Count;
         ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.55f, 0.75f, 0.95f, 1f));
-        ImGui.TextUnformatted(missing > 0
-            ? $"{items.Count} items · {missing} missing"
-            : $"{items.Count} items");
+        ImGui.TextUnformatted(
+            outfit.IsGlamourPlate ? $"{outfit.VanillaItems.Count} pieces"
+            : missing > 0         ? $"{items.Count} items · {missing} missing"
+                                  : $"{items.Count} items");
         ImGui.PopStyleColor();
 
         DrawOutfitStyleLabels(outfit, cardW);
@@ -4837,7 +5235,12 @@ public class PluginUi : Window, IDisposable
                 _wardrobe.WearOutfit(outfit, removeOthers: false);
             ImGui.PopStyleColor(2);
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Wear these items, leaving anything else you have on in place.");
+                ImGui.SetTooltip(outfit.IsGlamourPlate
+                    ? "Shows this plate's gear through Glamourer, leaving anything else you have on in place.\n\n" +
+                      "This is not the game applying the plate: your real glamour and equipment are\n" +
+                      "untouched and only you see the change. In exchange it works anywhere — no\n" +
+                      "summoning bell, no gearset — including gpose."
+                    : "Wear these items, leaving anything else you have on in place.");
         }
 
         ImGui.SameLine();
@@ -4867,6 +5270,10 @@ public class PluginUi : Window, IDisposable
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Wear these items and remove everything else the wardrobe has on.");
         }
+
+        // On the card rather than buried in the editor: applying a plate is one click in the game's
+        // own gear set list, and a wardrobe that mirrors those plates should not make it harder
+        if (outfit.IsGlamourPlate) DrawApplyPlateButton(outfit, cardW - CardPad * 2);
 
         if (ImGui.SmallButton("Edit"))
             OpenOutfitEdit(outfit);
@@ -4920,7 +5327,17 @@ public class PluginUi : Window, IDisposable
             {
                 if (_textures.GetFromFile(_editOutfitImage).GetWrapOrDefault() is { } wrap)
                 {
-                    ImageDraw.Square(wrap, previewW);
+                    if (_config.PortraitOutfitPreviews) ImageDraw.Portrait(wrap, previewW);
+                    else                                ImageDraw.Square(wrap, previewW);
+
+                    // As on the card and in the item editor: the panel is a narrow column, and full
+                    // size is the whole window
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Right-click to view full size.");
+
+                    if (ImGui.IsItemClicked(ImGuiMouseButton.Right))
+                        _quickViewOutfit = outfit.Id;
+
                     ImGui.Spacing();
                 }
             }
@@ -4939,8 +5356,17 @@ public class PluginUi : Window, IDisposable
 
         var items = _wardrobe.ResolveOutfit(outfit);
 
+        // Duplicating swaps the panel to the copy, so the rest of this frame would be drawing
+        // controls for an outfit the editor no longer points at
+        if (outfit.IsGlamourPlate && DrawGlamourPlateEditHeader(outfit)) return;
+
+        // Vanilla pieces count as something to photograph. Without them the check hid the button on
+        // any outfit made only of plain gear — every glamour plate, and every look saved before a
+        // single mod went into it.
+        var hasSomethingToWear = items.Count > 0 || outfit.VanillaItems.Count > 0;
+
         ImGui.Spacing();
-        if (_session.FoldersReady && items.Count > 0)
+        if (_session.FoldersReady && hasSomethingToWear)
         {
             if (ImGui.Button("Take Screenshot", new Vector2(-1, 0)))
             {
@@ -4952,9 +5378,14 @@ public class PluginUi : Window, IDisposable
             }
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Wears this outfit on its own and waits for a screenshot,\n" +
-                                 "then crops it to 1:1 and assigns it as the outfit's image.");
+                                 "then crops and assigns it as the outfit's image.");
+
+            // One set for every outfit, as slot presets are one set per slot: the angle that frames
+            // one whole look frames the next
+            ImGui.Spacing();
+            DrawCameraPresetControls(Configuration.OutfitPresetKey, "Outfits", "for every outfit");
         }
-        else if (items.Count == 0)
+        else if (!hasSomethingToWear)
         {
             ImGui.TextDisabled("Add items before taking a screenshot.");
         }
@@ -4963,6 +5394,260 @@ public class PluginUi : Window, IDisposable
             ImGui.TextDisabled("Set the images and screenshots folders to enable screenshots.");
         }
 
+        // Everything from here to the tags is about editing the outfit's contents, which for a plate
+        // belong to the game. Skipped wholesale rather than disabled: a column of greyed-out
+        // controls invites the reader to look for the one that would turn them back on.
+        if (!outfit.IsGlamourPlate)
+            DrawOutfitContentsEditor(outfit, items);
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        DrawOutfitVanillaItems(outfit);
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        DrawOutfitTags(outfit);
+
+        if (!outfit.IsGlamourPlate)
+        {
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            DrawAddToOutfit(outfit);
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var footerW = (ImGui.GetContentRegionAvail().X - 8) / 2;
+        if (ImGui.Button("Save", new Vector2(footerW, 0)))
+        {
+            outfit.Name      = string.IsNullOrWhiteSpace(_editOutfitName) ? outfit.Name : _editOutfitName.Trim();
+            outfit.ImagePath = string.IsNullOrWhiteSpace(_editOutfitImage) ? null : _editOutfitImage.Trim();
+            _config.Save();
+            CloseOutfitEdit();
+            return;
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Cancel", new Vector2(footerW, 0)))
+        {
+            CloseOutfitEdit();
+        }
+    }
+
+    /// <summary>
+    /// Says what a plate outfit is, and offers the two things that can still be done to one:
+    /// bring it back in step with the game, or copy it somewhere editable.
+    /// </summary>
+    /// <returns>True when the panel has moved to a different outfit and should stop drawing.</returns>
+    private bool DrawGlamourPlateEditHeader(Outfit outfit)
+    {
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(0.5f, 0.72f, 0.92f, 1f),
+            $"● Mirrors glamour plate {outfit.GlamourPlateId}.");
+        ImGui.TextWrapped("Its pieces are the game's, so they are shown here but not editable — change the " +
+                          "plate in-game and resync. The name, preview image and tags are yours and are " +
+                          "kept through every resync.");
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Wearing it shows the plate's gear through Glamourer. Your real glamour and " +
+                           "equipment are untouched and only you see it, which is why it works anywhere — " +
+                           "no summoning bell, gpose included.");
+
+        if (outfit.PlateSyncedAt is { } synced)
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled($"Last synced {synced.ToLocalTime():g}.");
+        }
+
+        ImGui.Spacing();
+
+        var loaded = Plugin.GlamourPlates.PlatesLoaded;
+        if (!loaded) ImGui.BeginDisabled();
+        if (ImGui.Button("Resync From Game", new Vector2(-1, 0)))
+        {
+            if (!_wardrobe.SyncGlamourPlate(outfit))
+                _plateSyncStatus = $"Plate {outfit.GlamourPlateId} is empty in the game — nothing to read.";
+        }
+        if (!loaded) ImGui.EndDisabled();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(loaded
+                ? "Reads this plate from the game again, replacing the pieces below."
+                : "Open your Glamour Plate window once — at a summoning bell, an inn\n" +
+                  "or the Glamour Dresser — to let the game hand over your plates.");
+
+        if (ImGui.Button("Duplicate As Editable Outfit", new Vector2(-1, 0)))
+        {
+            OpenOutfitEdit(_wardrobe.DuplicateAsOutfit(outfit));
+            return true;
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Copies these pieces into an ordinary outfit you can edit and add\n" +
+                             "wardrobe items to. Resyncing this plate will never touch the copy.");
+
+        if (!string.IsNullOrEmpty(_plateSyncStatus))
+        {
+            ImGui.Spacing();
+            ImGui.TextWrapped(_plateSyncStatus);
+        }
+
+        DrawApplyPlateInGame(outfit);
+
+        return false;
+    }
+
+    /// <summary>
+    /// The real thing: hands the plate to the game to apply, rather than showing it through Glamourer.
+    /// </summary>
+    /// <remarks>
+    /// One click, no confirmation, exactly as applying a plate from the game's own gear set list is.
+    /// A guard was tried and taken back off: the wardrobe is mirroring a feature the game gives you
+    /// in one click, and making its copy harder to use than the original is not caution, it is just
+    /// friction. The undo is the same as the game's, too — apply a different plate.
+    /// </remarks>
+    private bool DrawApplyPlateButton(Outfit outfit, float width)
+    {
+        if (outfit.GlamourPlateId is not { } plateId) return false;
+
+        var canApply = Plugin.GlamourPlates.CanApplyInGame(out var reason);
+
+        // Gold rather than the green Wear carries: the two sit next to each other and do very
+        // different things, and the colour is the fastest way to say which one is the real apply
+        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.42f, 0.30f, 0.08f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.60f, 0.44f, 0.12f, 1f));
+
+        if (!canApply) ImGui.BeginDisabled();
+        var clicked = ImGui.Button($"Apply In Game##plate{plateId}", new Vector2(width, 0));
+        if (!canApply) ImGui.EndDisabled();
+
+        ImGui.PopStyleColor(2);
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(canApply
+                ? $"Applies glamour plate {plateId} for real, over the gear set you have equipped —\n" +
+                   "the same thing the game does from its Gear Set List.\n\n" +
+                   "Your gear and job do not change, only the glamour. Everyone sees it,\n" +
+                   "and it stays until you change it again.\n\n" +
+                   "The wardrobe then takes its own clothes off so you can see the result" +
+                   (_config.KeepBaseCharacterOnRevert && _config.ActiveBaseCharacter is { } b
+                       ? $",\nkeeping '{b.Name}' on top."
+                       : ".") + "\n\n" +
+                   "A weapon your current job cannot equip will not glamour; the game says so."
+                : reason);
+
+        if (clicked)
+        {
+            _wardrobe.ApplyPlateInGame(outfit, out var message);
+            _plateApplyStatus = message;
+        }
+
+        return clicked;
+    }
+
+    /// <summary>The same apply, with the explanation the edit panel has room for.</summary>
+    private void DrawApplyPlateInGame(Outfit outfit)
+    {
+        if (!outfit.IsGlamourPlate) return;
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ImGui.TextDisabled("Apply in game");
+        ImGui.TextWrapped("Wearing, above, is a Glamourer preview only you can see. This instead asks the " +
+                          "game to apply the plate for real, over the gear set you have equipped: your " +
+                          "actual glamour changes, everyone sees it, and it stays until you change it " +
+                          "again. Your gear and job are not touched.");
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("The wardrobe then takes its own clothes off, since a Glamourer override sits " +
+                           "on top of the game and would hide the plate you just applied.");
+
+        if (_config.KeepBaseCharacterOnRevert && _config.ActiveBaseCharacter is { } plateBase)
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled($"'{plateBase.Name}' goes back on over the top — its items, its design's " +
+                               "customisations, and whatever it keeps in its slots. The plate is the " +
+                               "clothes; the base is still the character wearing them.");
+        }
+
+        ImGui.Spacing();
+        DrawApplyPlateButton(outfit, -1);
+
+        if (!Plugin.GlamourPlates.CanApplyInGame(out var reason))
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled(reason);
+        }
+
+        ImGui.Spacing();
+        DrawRevertToInGameLook();
+
+        if (!string.IsNullOrEmpty(_plateApplyStatus))
+        {
+            ImGui.Spacing();
+            ImGui.TextWrapped(_plateApplyStatus);
+        }
+    }
+
+    /// <summary>
+    /// The revert on its own, plus the choice of whether the character survives it.
+    /// </summary>
+    /// <remarks>
+    /// Separate from applying a plate because it is useful without one: "show me what I actually
+    /// look like to everyone else" is a question the wardrobe can otherwise only answer by taking
+    /// every item off by hand.
+    /// </remarks>
+    private void DrawRevertToInGameLook()
+    {
+        var baseChar = _config.ActiveBaseCharacter;
+
+        if (baseChar != null)
+        {
+            var keep = _config.KeepBaseCharacterOnRevert;
+            if (ImGui.Checkbox($"Keep '{baseChar.Name}' on top##plateRevertBase", ref keep))
+            {
+                _config.KeepBaseCharacterOnRevert = keep;
+                _config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Puts your base character back on after the revert — the hair, skin,\n" +
+                                 "tail and design that make the character yours, over the game's gear.\n\n" +
+                                 "Off, the revert is absolute: you see the unmodded character the\n" +
+                                 "server sees. This setting applies everywhere the wardrobe reverts.");
+        }
+        else
+        {
+            ImGui.TextDisabled("No base character is set, so a revert shows the unmodded character.");
+        }
+
+        ImGui.Spacing();
+
+        if (ImGui.Button("Show In-Game Look", new Vector2(-1, 0)))
+        {
+            var removed = _wardrobe.RevertToInGameLook();
+            _plateApplyStatus = removed > 0
+                ? $"Took off {removed} item(s). You are now showing the game's own look."
+                : "You were already showing the game's own look.";
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Takes the wardrobe's clothes off and clears Glamourer, so the character\n" +
+                             "shows exactly what the game has on them — plate included.\n\n" +
+                             "Animations, VFX and mounts are left running.");
+    }
+
+    /// <summary>
+    /// The editable half of the outfit panel: update from worn, the item rows and their dyes.
+    /// </summary>
+    private void DrawOutfitContentsEditor(Outfit outfit, List<WardrobeItem> items)
+    {
         ImGui.Spacing();
         DrawUpdateFromWorn(outfit);
 
@@ -5106,44 +5791,6 @@ public class PluginUi : Window, IDisposable
         {
             outfit.ItemIds.Remove(removeId.Value);
             _config.Save();
-        }
-
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-
-        DrawOutfitVanillaItems(outfit);
-
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-
-        DrawOutfitTags(outfit);
-
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-
-        DrawAddToOutfit(outfit);
-
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.Spacing();
-
-        var footerW = (ImGui.GetContentRegionAvail().X - 8) / 2;
-        if (ImGui.Button("Save", new Vector2(footerW, 0)))
-        {
-            outfit.Name      = string.IsNullOrWhiteSpace(_editOutfitName) ? outfit.Name : _editOutfitName.Trim();
-            outfit.ImagePath = string.IsNullOrWhiteSpace(_editOutfitImage) ? null : _editOutfitImage.Trim();
-            _config.Save();
-            CloseOutfitEdit();
-            return;
-        }
-
-        ImGui.SameLine();
-        if (ImGui.Button("Cancel", new Vector2(footerW, 0)))
-        {
-            CloseOutfitEdit();
         }
     }
 
@@ -5498,6 +6145,15 @@ public class PluginUi : Window, IDisposable
     /// </remarks>
     private void DrawOutfitVanillaItems(Outfit outfit)
     {
+        // A plate's pieces are the same thing stored the same way, but they came out of the game
+        // rather than off the character, so neither capturing over them nor dropping one by hand
+        // makes sense — both would be edits to a copy the next resync overwrites
+        if (outfit.IsGlamourPlate)
+        {
+            DrawGlamourPlatePieces(outfit);
+            return;
+        }
+
         ImGui.TextDisabled("Vanilla items");
         ImGui.TextDisabled("Plain gear in the slots this outfit's own items do not fill. Saved with " +
                            "the outfit and put back when it is worn.");
@@ -5568,6 +6224,46 @@ public class PluginUi : Window, IDisposable
 
         outfit.VanillaItems.Remove(drop);
         _config.Save();
+    }
+
+    /// <summary>
+    /// A plate's pieces, in slot order, with nothing on the row that could change them.
+    /// </summary>
+    /// <remarks>
+    /// Ordered by slot rather than by the dictionary key, which sorts alphabetically and would put
+    /// the earrings above the body. A plate is read as a picture of a character, top down.
+    /// </remarks>
+    private void DrawGlamourPlatePieces(Outfit outfit)
+    {
+        ImGui.TextDisabled("Plate contents");
+
+        if (outfit.VanillaItems.Count == 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled("Nothing saved. Resync from the game to read this plate.");
+            return;
+        }
+
+        ImGui.Spacing();
+
+        var pieces = outfit.VanillaItems
+            .Select(kv => (Slot: Enum.TryParse<EquipSlot>(kv.Key, out var s) ? s : EquipSlot.Unknown, kv.Value))
+            .OrderBy(p => (int)p.Slot);
+
+        foreach (var (slot, piece) in pieces)
+        {
+            ImGui.PushID($"platePiece_{slot}");
+
+            ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f), slot.DisplayName());
+
+            ImGui.SameLine();
+            ImGui.TextUnformatted(string.IsNullOrEmpty(piece.Name) ? $"#{piece.ItemId}" : piece.Name);
+
+            DrawStainSwatch(piece.Stain1);
+            DrawStainSwatch(piece.Stain2);
+
+            ImGui.PopID();
+        }
     }
 
     /// <summary>
@@ -5863,6 +6559,11 @@ public class PluginUi : Window, IDisposable
         _editOutfitName    = outfit.Name;
         _editOutfitImage   = outfit.ImagePath ?? string.Empty;
         _addToOutfitSearch = string.Empty;
+
+        // Cleared with the panel: "Applied glamour plate 3 in game" left sitting under a different
+        // plate's button reads as something that just happened to that one
+        _plateApplyStatus  = string.Empty;
+        _plateSyncStatus   = string.Empty;
     }
 
     /// <summary>Small square thumbnail for one item inside the outfit edit list.</summary>
@@ -5915,13 +6616,26 @@ public class PluginUi : Window, IDisposable
 
         if (entry.Texture?.GetWrapOrDefault() is { } wrap)
         {
-            ImageDraw.Square(wrap, thumbSize);
+            if (_config.PortraitOutfitPreviews) ImageDraw.Portrait(wrap, thumbSize);
+            else                                ImageDraw.Square(wrap, thumbSize);
+
             AcceptOutfitImageDrop(outfit);
+
+            // The same right-click as an item card's picture. An outfit preview is a full-body shot,
+            // which is the one that suffers most from being looked at in a card.
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Right-click to view full size.");
+
+            if (ImGui.IsItemClicked(ImGuiMouseButton.Right))
+                _quickViewOutfit = outfit.Id;
+
             return;
         }
 
         ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.07f, 0.07f, 0.09f, 1f));
-        ImGui.Button("Outfit", size);
+        ImGui.Button("Outfit", _config.PortraitOutfitPreviews
+            ? new Vector2(thumbSize, ImageDraw.PortraitHeight(thumbSize))
+            : size);
         ImGui.PopStyleColor();
         AcceptOutfitImageDrop(outfit);
     }
@@ -6099,6 +6813,8 @@ public class PluginUi : Window, IDisposable
         SettingsBreak();
         DrawWearingSettings();
         SettingsBreak();
+        DrawBaseCharacterSettings();
+        SettingsBreak();
         DrawVariantSettings();
         SettingsBreak();
         DrawSlotIconSettings();
@@ -6248,6 +6964,381 @@ public class PluginUi : Window, IDisposable
 
         ImGui.Spacing();
         DrawRevertDesignPicker();
+    }
+
+    /// <summary>Label for having no base character, used in both pickers that offer one.</summary>
+    private const string NoBaseLabel = "(none — a strip takes everything)";
+
+    /// <summary>
+    /// The base character picker, drawn both in settings and on the session HUD.
+    /// </summary>
+    /// <remarks>
+    /// Switching goes through <see cref="WardrobeService.SwitchBase"/> rather than writing the id,
+    /// so the base being left takes its items off with it and the new one goes on — picking one
+    /// mid-session is the whole reason it is on the HUD, and it has to take effect before the next
+    /// shot rather than at the next strip. The caller sets the width.
+    /// </remarks>
+    private void DrawBaseCharacterCombo(string id)
+    {
+        var active = _config.ActiveBaseCharacter;
+
+        if (!ImGui.BeginCombo(id, active?.Name ?? NoBaseLabel)) return;
+
+        if (ImGui.Selectable(NoBaseLabel, active == null) && active != null)
+            _wardrobe.SwitchBase(active, null);
+
+        foreach (var candidate in _config.BaseCharacters)
+            if (ImGui.Selectable($"{candidate.Name}##{id}_{candidate.Id}", active?.Id == candidate.Id) &&
+                active?.Id != candidate.Id)
+                _wardrobe.SwitchBase(active, candidate);
+
+        ImGui.EndCombo();
+    }
+
+    /// <summary>
+    /// The base character: what a strip leaves on, and what a session puts back before each shot.
+    /// </summary>
+    /// <remarks>
+    /// In settings rather than on a panel of its own because it is set up once and then only
+    /// switched, and switching has a picker in the session HUD where the switching happens.
+    /// </remarks>
+    private void DrawBaseCharacterSettings()
+    {
+        ImGui.TextUnformatted("Base character");
+        ImGui.TextDisabled("The character underneath the clothes. Stripping strips down to this " +
+                           "instead of down to nothing, and a screenshot session puts it back " +
+                           "before every shot — so a tail worn on a ring, or an ear mod on a pair " +
+                           "of earrings, survives being photographed in something else.");
+        ImGui.Spacing();
+
+        var active = _config.ActiveBaseCharacter;
+
+        // Full width on its own line, with the buttons under it. The settings panel is a narrow
+        // column and a fixed-width combo plus two buttons ran the second one off the edge.
+        ImGui.SetNextItemWidth(-1);
+        DrawBaseCharacterCombo("##basechar");
+
+        if (ImGui.Button(" New##basechar "))
+        {
+            var created = new BaseCharacter { Name = $"Base {_config.BaseCharacters.Count + 1}" };
+            _config.BaseCharacters.Add(created);
+            _wardrobe.SwitchBase(active, created);
+            active = created;
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Start another base character and make it the active one.\n\n" +
+                             "One per character, or one per version of the same character —\n" +
+                             "the ears you wear on days off need not be the ones you photograph in.");
+
+        if (active == null)
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled("Nothing is held back: a strip empties every equipment slot and " +
+                               "turns off every worn mod, as it always has.");
+            return;
+        }
+
+        UiLayout.SameLineIfRoomForButton(" Delete ");
+        if (DeleteButton(" Delete##basechar ",
+                "Delete this base character.\nThe items in it are kept — only the grouping goes."))
+        {
+            _wardrobe.SwitchBase(active, null);
+            _config.BaseCharacters.Remove(active);
+            _config.Save();
+            _baseNameEditId = null;
+            return;
+        }
+
+        // Reloaded whenever the active base changes, or a half-typed name would follow the switch
+        // onto whichever one was picked next
+        if (_baseNameEditId != active.Id)
+        {
+            _baseNameEdit   = active.Name;
+            _baseNameEditId = active.Id;
+        }
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Name");
+        ImGui.SetNextItemWidth(UiScale.S(260));
+        ImGui.InputText("##basename", ref _baseNameEdit, 128);
+        if (ImGui.IsItemDeactivatedAfterEdit())
+        {
+            active.Name = string.IsNullOrWhiteSpace(_baseNameEdit) ? active.Name : _baseNameEdit.Trim();
+            _baseNameEdit = active.Name;
+            _config.Save();
+        }
+
+        ImGui.Spacing();
+        DrawBaseKeptSlots(active);
+
+        ImGui.Spacing();
+        DrawBaseItems(active);
+
+        ImGui.Spacing();
+        DrawBaseDesignPicker(active);
+
+        ImGui.Spacing();
+        if (ImGui.Button(" Apply base character now "))
+            _wardrobe.ApplyBase(active);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Put this base character on right now: its design's customisations,\n" +
+                             "then any of its items you are not already wearing.\n\n" +
+                             "Nothing is removed — this only puts the base back.");
+
+        if (active.IsEmpty)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f),
+                "This base character is empty, so it changes nothing yet. Keep a slot, add an " +
+                "item, or pick a design.");
+        }
+    }
+
+    /// <summary>Slots the base character holds against a strip, in its two halves.</summary>
+    /// <remarks>
+    /// Split because a strip does two different things and each half is held back differently. Gear
+    /// slots are emptied to Emperor's New, so keeping one means leaving whatever is worn there. Hair,
+    /// face, skin and the rest have no item to empty — a strip removes them by switching their
+    /// Penumbra mods off, so keeping one means leaving the mod worn there enabled.
+    /// </remarks>
+    private void DrawBaseKeptSlots(BaseCharacter baseChar)
+    {
+        ImGui.TextUnformatted("What a strip leaves alone");
+        ImGui.Spacing();
+
+        // Ticked and locked for the slots its own items occupy: those are already protected on the
+        // item's behalf, and a tick box that cannot change anything is better shown than hidden
+        var fromItems = _wardrobe.ResolveBase(baseChar).Select(i => i.Slot).ToHashSet();
+
+        ImGui.TextDisabled("Equipment slots — for the slot a mod is riding on rather than the gear " +
+                           "in it.");
+        ImGui.Spacing();
+        DrawKeepSlotGrid(baseChar, EquipSlotEx.All.Where(s => !s.IsCustomization()).ToArray(), fromItems,
+            s => $"Leave the {s.DisplayName()} slot exactly as it is when stripping.\n" +
+                 "Whatever is worn there stays on, wardrobe item or plain gear.");
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Character mods — the hair, face and skin that are the character rather " +
+                           "than clothes.");
+        ImGui.Spacing();
+
+        // Other is not in EquipSlotEx.All — it is only ever reached by detection or by hand — but a
+        // piercing or a face paint is exactly the kind of thing that belongs to the character
+        var characterSlots = EquipSlotEx.All.Where(s => s.IsCustomization())
+            .Append(EquipSlot.Other)
+            .ToArray();
+
+        DrawKeepSlotGrid(baseChar, characterSlots, fromItems,
+            s => $"Leave the {s.DisplayName()} mod you are wearing switched on when stripping.\n\n" +
+                 "A strip cannot empty this slot — there is no game item in it — but it does\n" +
+                 "turn the mod off, which takes the character's own hair or skin with it.");
+
+        var kept = _wardrobe.KeptSlots(baseChar);
+        ImGui.Spacing();
+        ImGui.TextDisabled(kept.Count == 0
+            ? "Nothing kept — a strip empties every equipment slot and turns off every worn mod."
+            : $"Kept: {string.Join(", ", kept.OrderBy(s => (int)s).Select(s => s.DisplayName()))}");
+    }
+
+    /// <summary>
+    /// A block of keep-this-slot tick boxes, three to a row.
+    /// </summary>
+    /// <remarks>
+    /// Three to a row because a dozen slots down a single column is a lot of scrolling for a list
+    /// everyone reads as a block. The tooltip is a callback rather than a string: the two blocks
+    /// are held back for different reasons, and one wording for both would be wrong for each.
+    /// </remarks>
+    private void DrawKeepSlotGrid(BaseCharacter baseChar, EquipSlot[] slots,
+        IReadOnlySet<EquipSlot> fromItems, Func<EquipSlot, string> tooltip)
+    {
+        var left   = ImGui.GetCursorPosX();
+        var column = ImGui.GetContentRegionAvail().X / 3;
+
+        for (var i = 0; i < slots.Length; i++)
+        {
+            var slot   = slots[i];
+            var forced = fromItems.Contains(slot);
+            var keep   = forced || baseChar.Keeps(slot);
+
+            if (i % 3 != 0) ImGui.SameLine(left + column * (i % 3));
+
+            if (forced) ImGui.BeginDisabled();
+            if (ImGui.Checkbox($"{slot.DisplayName()}##keep_{slot}", ref keep) && !forced)
+            {
+                baseChar.SetKeep(slot, keep);
+                _config.Save();
+            }
+            if (forced) ImGui.EndDisabled();
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(forced
+                    ? "Kept because one of this base character's items is worn here.\n" +
+                      "Take the item out of the base to release the slot."
+                    : tooltip(slot));
+        }
+    }
+
+    /// <summary>The wardrobe items a base character wears, and the pickers that fill the list.</summary>
+    private void DrawBaseItems(BaseCharacter baseChar)
+    {
+        var items = _wardrobe.ResolveBase(baseChar);
+
+        ImGui.TextUnformatted($"Items  ({items.Count})");
+        ImGui.TextDisabled("Applied with the base and never stripped. Hair, skin and the like, plus " +
+                           "any gear item that is really part of the character.");
+        ImGui.Spacing();
+
+        var missing = baseChar.ItemIds.Count - items.Count;
+        if (missing > 0)
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f),
+                $"{missing} item(s) in this base character no longer exist.");
+
+        Guid? removeId = null;
+        foreach (var item in items)
+        {
+            ImGui.PushID($"baseitem_{item.Id}");
+
+            if (DeleteButton("×", "Take this item out of the base character.\nThe item itself is kept."))
+                removeId = item.Id;
+
+            ImGui.SameLine();
+            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.55f, 0.75f, 0.95f, 1f));
+            ImGui.TextUnformatted(item.Slot.DisplayName());
+            ImGui.PopStyleColor();
+
+            ImGui.SameLine();
+            ImGui.TextUnformatted(item.Name);
+
+            if (!_wardrobe.IsItemWorn(item))
+            {
+                ImGui.SameLine();
+                ImGui.TextDisabled("(not worn)");
+            }
+
+            ImGui.PopID();
+        }
+
+        if (removeId.HasValue)
+        {
+            baseChar.ItemIds.Remove(removeId.Value);
+            _config.Save();
+        }
+
+        ImGui.Spacing();
+
+        var candidates = _config.WardrobeItems
+            .Where(i => !baseChar.ItemIds.Contains(i.Id))
+            // An animation or a mount is never stripped in the first place, so putting one in a
+            // base character would protect it from nothing
+            .Where(i => !i.Slot.IsModCategory())
+            .Where(i => string.IsNullOrWhiteSpace(_addToBaseSearch) ||
+                        i.Name.Contains(_addToBaseSearch.Trim(), StringComparison.OrdinalIgnoreCase))
+            .OrderBy(i => (int)i.Slot)
+            .ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        ImGui.SetNextItemWidth(UiScale.S(260));
+        if (ImGui.BeginCombo("##addtobase", $"Add an item…  ({candidates.Count})"))
+        {
+            ImGui.SetNextItemWidth(-1);
+            ImGui.InputTextWithHint("##addbasesearch", "Search…", ref _addToBaseSearch, 128);
+            ImGui.Separator();
+
+            foreach (var item in candidates)
+            {
+                if (!ImGui.Selectable($"{item.Slot.DisplayName()} — {item.Name}##addbase_{item.Id}")) continue;
+
+                // Guarded even though the candidate list already excludes what is in the base: a
+                // duplicate here is invisible until it is four rows deep, and one user found it that
+                // way. The list is the record, so it is the list that has to refuse.
+                if (!baseChar.ItemIds.Contains(item.Id)) baseChar.ItemIds.Add(item.Id);
+                _config.Save();
+                _addToBaseSearch = string.Empty;
+            }
+            ImGui.EndCombo();
+        }
+
+        // The quickest route in for anyone already wearing their character: hair, skin, tail and
+        // the rest are on right now, and naming them one at a time in the picker above is the
+        // same list typed out by hand
+        var worn = _config.WornItems.Values
+            .Select(id => _config.WardrobeItems.Find(x => x.Id == id))
+            .Where(i => i != null && i.Slot.IsCustomization() && !baseChar.ItemIds.Contains(i.Id))
+            .Select(i => i!)
+            .ToList();
+
+        if (worn.Count > 0)
+        {
+            // Wraps to its own line when the picker beside it leaves no room, as the toolbar does
+            UiLayout.SameLineIfRoomForButton($" Add worn customisation ({worn.Count}) ");
+            if (ImGui.Button($" Add worn customisation ({worn.Count}) "))
+            {
+                foreach (var item in worn)
+                    if (!baseChar.ItemIds.Contains(item.Id)) baseChar.ItemIds.Add(item.Id);
+                _config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Add every customisation mod you are wearing right now:\n" +
+                                 string.Join("\n", worn.Select(i => $"  {i.Slot.DisplayName()} — {i.Name}")));
+        }
+    }
+
+    /// <summary>Picks the Glamourer design a base character's customisations come from.</summary>
+    private void DrawBaseDesignPicker(BaseCharacter baseChar)
+    {
+        ImGui.TextUnformatted("Glamourer design");
+        ImGui.TextDisabled("Only its customisations are applied — face, colouring, hairstyle. Its " +
+                           "gear is ignored, or it would put back the clothes a strip just removed.");
+        ImGui.Spacing();
+
+        _settingsDesigns ??= Plugin.Glamourer.GetDesigns();
+
+        var current = baseChar.DesignId.HasValue
+            ? (string.IsNullOrEmpty(baseChar.DesignName) ? "(unnamed design)" : baseChar.DesignName)
+            : "(none)";
+
+        ImGui.SetNextItemWidth(UiScale.S(260));
+        if (ImGui.BeginCombo("##basedesign", current))
+        {
+            if (ImGui.Selectable("(none)", !baseChar.DesignId.HasValue))
+            {
+                baseChar.DesignId   = null;
+                baseChar.DesignName = string.Empty;
+                _config.Save();
+            }
+
+            foreach (var (id, name) in _settingsDesigns)
+            {
+                if (!ImGui.Selectable($"{name}##basedesign_{id}", baseChar.DesignId == id)) continue;
+
+                baseChar.DesignId   = id;
+                baseChar.DesignName = name;
+                _config.Save();
+            }
+            ImGui.EndCombo();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Refresh##basedesigns"))
+            _settingsDesigns = Plugin.Glamourer.GetDesigns();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Re-read the design list from Glamourer.");
+
+        if (_settingsDesigns.Count == 0)
+        {
+            ImGui.TextDisabled("No designs found — create one in Glamourer first.");
+            return;
+        }
+
+        if (!baseChar.DesignId.HasValue) return;
+
+        ImGui.SameLine();
+        if (ImGui.Button("Apply in full##basedesign"))
+            Plugin.Glamourer.ApplyDesignFull(baseChar.DesignId.Value);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Apply this design's gear as well as its customisations, once, now.\n\n" +
+                             "For getting dressed as your character in the first place. Nothing\n" +
+                             "does this on its own — a strip would only take the gear off again.");
     }
 
     /// <summary>
@@ -6575,6 +7666,28 @@ public class PluginUi : Window, IDisposable
                              "screenshot gives about 1080 pixels however large a size is chosen.");
 
         ImGui.TextDisabled("Existing images are left as they are — this applies to shots taken from now on.");
+
+        ImGui.Spacing();
+
+        var portrait = _config.PortraitOutfitPreviews;
+        if (ImGui.Checkbox("Portrait outfit previews (9:16)", ref portrait))
+        {
+            _config.PortraitOutfitPreviews = portrait;
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Outfit previews are full-body shots, and a square crop of one spends\n" +
+                             "most of the frame on the floor either side of the character. Match\n" +
+                             "GPose's own portrait mode and the card grows taller instead.\n\n" +
+                             "Shoot in GPose's portrait mode and the game saves it upright, ready\n" +
+                             "to crop.\n\n" +
+                             "Item previews stay square — they are close-ups of one piece.");
+
+        ImGui.TextDisabled(portrait
+            ? "Outfit cards are taller. Pictures already assigned are centre-cropped to fit, so " +
+              "nothing has to be re-taken."
+            : "Outfit and item previews are both square.");
 
         ImGui.Spacing();
         ImGui.TextUnformatted("During a session");

@@ -87,4 +87,25 @@ public class Outfit
     public List<string> Tags { get; set; } = new();
 
     public DateTime DateAdded { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// 1–20 when this outfit mirrors one of the game's own glamour plates, null for a normal outfit.
+    /// </summary>
+    /// <remarks>
+    /// A plate outfit is an ordinary outfit whose <see cref="VanillaItems"/> were read out of the
+    /// game rather than off the character, which is why it wears and photographs through exactly
+    /// the same paths. What the ID adds is ownership: the contents belong to the plate and are
+    /// edited in-game, so the wardrobe shows them read-only and keeps them in step by resyncing.
+    /// </remarks>
+    public int? GlamourPlateId { get; set; }
+
+    /// <summary>When the contents were last read from the game, for the resync controls to show.</summary>
+    /// <remarks>
+    /// Only the time is stored. Whether the plate has since been changed is answered by comparing
+    /// <see cref="VanillaItems"/> against the live plate, so there is nothing kept here that could
+    /// fall out of step with the pieces it describes.
+    /// </remarks>
+    public DateTime? PlateSyncedAt { get; set; }
+
+    public bool IsGlamourPlate => GlamourPlateId is not null;
 }

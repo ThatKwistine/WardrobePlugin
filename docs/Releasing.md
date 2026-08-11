@@ -1,5 +1,7 @@
 # Releasing
 
+Paths below are relative to the repository root, not to this folder.
+
 The plugin is distributed through a custom Dalamud repository: a single `pluginmaster.json`
 hosted on GitHub, which friends add to Dalamud themselves.
 

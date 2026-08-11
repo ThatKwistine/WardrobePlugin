@@ -236,13 +236,27 @@ public class GlamourerIpc : IDisposable
     /// Customization flag is what makes the design's equipment irrelevant, so a design saved for
     /// this purpose does not disturb whatever the wardrobe currently has equipped.
     /// </remarks>
-    public bool ApplyDesignCustomization(Guid designId)
+    public bool ApplyDesignCustomization(Guid designId) =>
+        ApplyDesign(designId, CustomizationFlag, "customisation only");
+
+    /// <summary>
+    /// Applies a design whole — its equipment as well as its customisations.
+    /// </summary>
+    /// <remarks>
+    /// Only ever from a button the user pressed. Nothing applies a design's equipment on its own:
+    /// the paths that reach for a design are putting a character's face back, and dressing them
+    /// from it at the same time would undo whatever the wardrobe had just equipped.
+    /// </remarks>
+    public bool ApplyDesignFull(Guid designId) =>
+        ApplyDesign(designId, EquipmentFlag | CustomizationFlag, "equipment and customisation");
+
+    private bool ApplyDesign(Guid designId, ulong flags, string what)
     {
         if (_objects.LocalPlayer == null) return false;
         try
         {
-            var ec = _applyDesign.InvokeFunc(designId, PlayerIndex, 0u, CustomizationFlag);
-            _log.Debug($"[Wardrobe] ApplyDesign (customisation only) {designId} → ec={ec}");
+            var ec = _applyDesign.InvokeFunc(designId, PlayerIndex, 0u, flags);
+            _log.Debug($"[Wardrobe] ApplyDesign ({what}) {designId} → ec={ec}");
             return ec == 0;
         }
         catch (Exception ex)

@@ -22,12 +22,13 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] public static IDataManager     DataManager  { get; private set; } = null!;
     [PluginService] public static IFramework       Framework    { get; private set; } = null!;
 
-    public static PenumbraIpc       Penumbra   { get; private set; } = null!;
-    public static GlamourerIpc      Glamourer  { get; private set; } = null!;
-    public static CameraService     Camera     { get; private set; } = null!;
-    public static SlotIconService   SlotIcons  { get; private set; } = null!;
-    public static IconPackService   IconPacks  { get; private set; } = null!;
-    public static ItemLookupService ItemLookup { get; private set; } = null!;
+    public static PenumbraIpc         Penumbra     { get; private set; } = null!;
+    public static GlamourerIpc        Glamourer    { get; private set; } = null!;
+    public static CameraService       Camera       { get; private set; } = null!;
+    public static SlotIconService     SlotIcons    { get; private set; } = null!;
+    public static IconPackService     IconPacks    { get; private set; } = null!;
+    public static ItemLookupService   ItemLookup   { get; private set; } = null!;
+    public static GlamourPlateService GlamourPlates { get; private set; } = null!;
 
     private readonly Configuration            _config;
     private readonly WardrobeService          _wardrobeService;
@@ -59,6 +60,9 @@ public sealed class Plugin : IDalamudPlugin
 
         if (_config.MigrateCameraPresets()) _config.Save();
 
+        // A repair rather than a migration, so it runs every load — see NormaliseBaseCharacters
+        if (_config.NormaliseBaseCharacters()) _config.Save();
+
         // Glamourer state is not persisted across sessions, so nothing is worn on load
         if (_config.WornItems.Count > 0)
         {
@@ -73,6 +77,10 @@ public sealed class Plugin : IDalamudPlugin
         _analysisService   = new ModAnalysisService(Log);
         _itemLookup        = new ItemLookupService(DataManager);
         ItemLookup         = _itemLookup;
+
+        // After ItemLookup, which it resolves item names through when it logs its slot mapping
+        GlamourPlates      = new GlamourPlateService(Log);
+
         _wardrobeService   = new WardrobeService(Penumbra, Glamourer, _config, Log, Framework);
         _screenshotSession = new ScreenshotSessionService(_wardrobeService, _config, Framework, Log, Camera);
         _backupService     = new BackupService(_config, Framework, Log);
