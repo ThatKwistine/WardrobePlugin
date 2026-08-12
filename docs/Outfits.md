@@ -36,6 +36,29 @@ Every item in the outfit is listed as a row with a small thumbnail, its name and
 
 An **Add to outfit** picker at the bottom adds any wardrobe item not already in it, searchable by name.
 
+## Duplicating an outfit
+
+**Duplicate This Outfit**, above Save in the edit panel, makes a copy and opens it. **Right-click
+Edit** on any card does the same from the grid.
+
+The copy takes everything: items, dyes — advanced dye rows included — vanilla pieces, tags and the
+preview image. The original is left exactly as it is.
+
+This is how a variant starts. Three versions of the same look with one piece swapped, or the same
+set dyed three ways, begin as three copies rather than as the same outfit built three times.
+
+Names do not collide: the first copy of *Beach Day* is *Beach Day (copy)*, the next is *Beach Day
+(copy 2)*, and so on. A grid of cards all called the same thing would be useless at exactly the
+point the feature started working.
+
+This is for outfits you made in the wardrobe. A [glamour plate](#vanilla-glamour-plates) has one
+copy option instead — **Duplicate As Editable Outfit** — and it is the only one offered, from the
+plate's panel or by right-clicking its card.
+
+There is no plain copy of a plate because there is nothing sensible for one to be. A plate outfit is
+a mirror of plate N; a second mirror of the same plate would leave two cards claiming it, and only
+one of them would ever be resynced.
+
 ## Dyes
 
 Each row carries **Dye 1** and **Dye 2** pickers, listing the game's dyes with a colour swatch and a
@@ -59,10 +82,10 @@ Glamourer's advanced dyes go further than the game's two channels, editing a mat
 directly — diffuse, specular, emissive, gloss and the rest. Wardrobe does not edit those; Glamourer
 does, and Wardrobe remembers them.
 
-This is **experimental** and off until you turn it on: Settings → **Experimental** → **Keep advanced
-dyes with outfits**. Nothing below appears until you do. Glamourer has no API for advanced dyes, so
-this rides on its state data and is the first thing likely to break when Glamourer updates —
-[Settings](Settings.md#advanced-dyes) has the detail.
+Off until you turn it on: Settings → **Advanced dyes** → **Keep advanced dyes with outfits**. Nothing
+below appears until you do. It stopped being experimental in 1.5.1.1, but stays opt-in — Glamourer has
+no API for advanced dyes, so this rides on its state data and is the first thing likely to break when
+Glamourer updates. [Settings](Settings.md#advanced-dyes) has the detail.
 
 Under the dye pickers sits an **Advanced dyes** tick box, and next to it two icons:
 
@@ -176,8 +199,10 @@ the two do not race.
 Animations, VFX and mounts are left running. A plate has nothing to say about them, and a dance
 stopping because you changed your shirt would be a surprise.
 
-**Show In-Game Look**, next to the apply button, does the same thing on its own — useful for
-answering "what do I actually look like to everyone else?" without taking every item off by hand.
+**Show In-Game Look**, next to the apply button, does the same thing on its own, and the toolbar's
+**In-Game Look** button does it from anywhere — useful for answering "what do I actually look like
+to everyone else?" without taking every item off by hand. See
+[In-Game Look](Wearing-Items.md#in-game-look) for how it sits beside Strip and Unequip All.
 
 ### Keeping your character through the revert
 
@@ -193,7 +218,8 @@ worn in the slots it keeps — the tail on a ring that you never added to its it
 too. The plate is the clothes; the base is still the character wearing them.
 
 Turn it off and the revert is absolute: you see the unmodded character the server sees. The setting
-applies everywhere the wardrobe reverts, not just to this plate.
+applies everywhere the wardrobe reverts, not just to this plate — the same checkbox is in
+**Settings → Base character**, where it can be reached without owning a plate at all.
 
 ### A weapon your job cannot hold will not glamour
 
@@ -218,7 +244,7 @@ What *is* yours: the **name**, the **preview image** and the **tags**. Rename `G
 
 **Duplicate As Editable Outfit** is the way out. It copies the plate's pieces into an ordinary outfit
 you can edit freely and build wardrobe items on top of, and resyncing the plate will never touch the
-copy.
+copy. It is also the only copy a plate offers — see [Duplicating an outfit](#duplicating-an-outfit).
 
 ### Keeping them in step
 

@@ -1817,25 +1817,96 @@ public class WardrobeService : IDisposable
     /// </remarks>
     public Outfit DuplicateAsOutfit(Outfit plate)
     {
-        var copy = new Outfit
-        {
-            Name         = $"{plate.Name} (copy)",
-            Tags         = plate.Tags.Where(t => t != GlamourPlateStyle).ToList(),
-            VanillaItems = plate.VanillaItems.ToDictionary(
-                kv => kv.Key,
-                kv => new VanillaPiece
-                {
-                    ItemId = kv.Value.ItemId,
-                    Name   = kv.Value.Name,
-                    Stain1 = kv.Value.Stain1,
-                    Stain2 = kv.Value.Stain2,
-                }),
-        };
+        // No preview image: the copy exists to be changed, and it is about to stop looking like the
+        // photograph taken of the plate
+        var copy = CopyOutfit(plate, keepImage: false);
+        copy.Tags.Remove(GlamourPlateStyle);
 
         _config.Outfits.Add(copy);
         _config.Save();
         WardrobeChanged?.Invoke();
         _log.Information($"[Wardrobe] Copied plate '{plate.Name}' to editable outfit '{copy.Name}'");
         return copy;
+    }
+
+    /// <summary>
+    /// Copies an outfit, contents and all, as a new outfit of its own.
+    /// </summary>
+    /// <remarks>
+    /// The starting point for a variant: the same look with one piece swapped, or the same set of
+    /// items dyed a different colour. Rebuilding that from scratch is the work the outfit was saved
+    /// to avoid.
+    /// <para>
+    /// For wardrobe outfits only. A copy never carries a plate's identity: two outfits claiming the
+    /// same plate number would leave <see cref="SyncGlamourPlates"/> updating whichever it found
+    /// first and quietly ignoring the other. <see cref="DuplicateAsOutfit"/> is what copies a plate,
+    /// and it cuts the tie to the game rather than cloning it.
+    /// </para>
+    /// </remarks>
+    public Outfit DuplicateOutfit(Outfit source)
+    {
+        var copy = CopyOutfit(source, keepImage: true);
+        _config.Outfits.Add(copy);
+        _config.Save();
+        WardrobeChanged?.Invoke();
+        _log.Information($"[Wardrobe] Duplicated outfit '{source.Name}' as '{copy.Name}'");
+        return copy;
+    }
+
+    /// <summary>
+    /// A deep copy of an outfit's contents under a name not already taken.
+    /// </summary>
+    /// <remarks>
+    /// Every collection is rebuilt rather than shared. Two outfits pointing at one
+    /// <see cref="OutfitDye"/> would re-dye each other, which is the same trap
+    /// <see cref="UpdateOutfitFromWorn"/> avoids when it rebuilds its dye map.
+    /// <para>
+    /// Not added to the config here — the callers differ in what they strip off afterwards, and an
+    /// outfit that appeared in the list before it was finished would be a copy of the wrong thing.
+    /// </para>
+    /// </remarks>
+    private Outfit CopyOutfit(Outfit source, bool keepImage) => new()
+    {
+        Name         = UniqueOutfitName(source.Name),
+        ImagePath    = keepImage ? source.ImagePath : null,
+        ItemIds      = new List<Guid>(source.ItemIds),
+        Tags         = new List<string>(source.Tags),
+        Dyes         = source.Dyes.ToDictionary(
+            kv => kv.Key,
+            kv => new OutfitDye
+            {
+                Stain1   = kv.Value.Stain1,
+                Stain2   = kv.Value.Stain2,
+                Advanced = new Dictionary<string, string>(kv.Value.Advanced),
+            }),
+        VanillaItems = source.VanillaItems.ToDictionary(
+            kv => kv.Key,
+            kv => new VanillaPiece
+            {
+                ItemId = kv.Value.ItemId,
+                Name   = kv.Value.Name,
+                Stain1 = kv.Value.Stain1,
+                Stain2 = kv.Value.Stain2,
+            }),
+    };
+
+    /// <summary>
+    /// "Beach Day" becomes "Beach Day (copy)", then "Beach Day (copy 2)", and so on.
+    /// </summary>
+    /// <remarks>
+    /// Duplicating twice is a normal thing to do — three variants of one look start as three copies
+    /// — and three cards all reading "Beach Day (copy)" would leave the grid unusable at exactly the
+    /// moment the feature was working.
+    /// </remarks>
+    private string UniqueOutfitName(string baseName)
+    {
+        bool Taken(string name) =>
+            _config.Outfits.Any(o => string.Equals(o.Name, name, StringComparison.OrdinalIgnoreCase));
+
+        var candidate = $"{baseName} (copy)";
+        for (var n = 2; Taken(candidate); n++)
+            candidate = $"{baseName} (copy {n})";
+
+        return candidate;
     }
 }

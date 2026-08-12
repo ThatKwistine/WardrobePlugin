@@ -289,6 +289,14 @@ public class ItemImportPanel : IDisposable
                             foreach (var (option, on) in states)
                                 (on ? sel : off).Add(option);
                         }
+                        else if (mod.OptionStates.Count > 0)
+                        {
+                            // This item has tri-states and does not mention this group, so it has no
+                            // opinion about it — which is exactly what wearing it does with the
+                            // group. The editor has to agree, or opening and saving would hand the
+                            // item an opinion it never held. Reached by a group added in a mod
+                            // update, or one stored before empty groups were written down.
+                        }
                         else if (mod.MultiOptions.TryGetValue(g.GroupName, out var stored))
                         {
                             // Saved before tri-states existed, where the list was the exact
@@ -663,8 +671,11 @@ public class ItemImportPanel : IDisposable
                 // an opinion on still has to agree. Items in the same slot are variants — different
                 // option sets for the same mod, never worn at once — and must be allowed to differ.
                 //
-                // Filtered by the receiving item's slot, which is what stops the copy from handing
-                // the legs an opinion about the body and undoing a body variant on the way (#12).
+                // Only the groups the receiving slot is actually named in, and merged into what it
+                // already has rather than replacing it. Anything looser reaches items that have
+                // nothing to do with this one: a group naming no slot looks shared to every slot, so
+                // filtering on "affects" rather than "names" handed the legs, the feet and the
+                // wrists a full copy of the body's options every time the body was saved (#12).
                 var modDir = _editTarget.Mods[i].ModDirectory;
                 var coll   = _editTarget.Mods[i].Collection;
                 foreach (var other in _config.WardrobeItems)
@@ -674,13 +685,18 @@ public class ItemImportPanel : IDisposable
 
                     foreach (var otherMod in other.Mods)
                     {
-                        if (otherMod.ModDirectory.Equals(modDir, StringComparison.OrdinalIgnoreCase) &&
-                            otherMod.Collection.Equals(coll, StringComparison.OrdinalIgnoreCase))
-                        {
-                            otherMod.Options      = ModOptionSets.ForSlot(newSingle, groups, other.Slot);
-                            otherMod.MultiOptions = ModOptionSets.ForSlot(newMulti,  groups, other.Slot);
-                            otherMod.OptionStates = ModOptionSets.ForSlot(newStates, groups, other.Slot);
-                        }
+                        if (!otherMod.ModDirectory.Equals(modDir, StringComparison.OrdinalIgnoreCase) ||
+                            !otherMod.Collection.Equals(coll, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        ModOptionSets.MergeOwned(otherMod.Options,      newSingle, groups, other.Slot);
+                        ModOptionSets.MergeOwned(otherMod.MultiOptions, newMulti,  groups, other.Slot);
+
+                        var copied = ModOptionSets.MergeOwned(otherMod.OptionStates, newStates, groups, other.Slot);
+                        if (copied.Count > 0)
+                            _log.Debug($"[Wardrobe] Edit: '{_editTarget.Name}' also set " +
+                                       $"{string.Join(", ", copied)} on '{other.Name}' — " +
+                                       $"{other.Slot.DisplayName()} is named in those groups");
                     }
                 }
             }
@@ -2110,8 +2126,16 @@ public class ItemImportPanel : IDisposable
     /// Turns the picker's two sets into stored tri-states: on, off, and everything else ignored.
     /// </summary>
     /// <remarks>
-    /// A group where every option is ignored is left out entirely, so the item says nothing about it
-    /// at all rather than saying nothing about it in a longer way.
+    /// A group where every option is ignored is still written, as an empty one. It reads as
+    /// "nothing to say about this group" everywhere it is used — applying skips it, matching skips
+    /// it, propagation skips it — so the empty entry costs nothing and settles the one question the
+    /// absence of an entry could not answer: whether the user left the group alone or never had it.
+    /// <para>
+    /// That ambiguity was the bug. A missing group fell through to the reader's last resort, which
+    /// is to show every option off, so setting a whole group to "leave as is" came back next time as
+    /// "turn all of these off" — and saving again made it true (issue #12, reported again after
+    /// v1.5.0.0).
+    /// </para>
     /// </remarks>
     private static Dictionary<string, Dictionary<string, bool>> BuildOptionStates(
         IReadOnlyList<ModOptionGroup>? groups,
@@ -2132,7 +2156,7 @@ public class ItemImportPanel : IDisposable
                 else if (offSet != null && offSet.Contains(name)) states[name] = false;
             }
 
-            if (states.Count > 0) result[g.GroupName] = states;
+            result[g.GroupName] = states;
         }
 
         return result;

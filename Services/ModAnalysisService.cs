@@ -31,6 +31,19 @@ public record ModOptionGroup(string GroupName, ModGroupType GroupType, IReadOnly
     /// </remarks>
     public bool AffectsSlot(EquipSlot slot) =>
         Slots == null || Slots.Count == 0 || Slots.Contains(slot);
+
+    /// <summary>
+    /// Whether the group's own files <em>name</em> this slot, rather than merely not ruling it out.
+    /// </summary>
+    /// <remarks>
+    /// The stricter question, and the one to ask before writing on another item's behalf.
+    /// <see cref="AffectsSlot"/> answers true for a group that named no slot at all, which is right
+    /// when deciding what an item may assert for itself — a colour or material group belongs to
+    /// whoever is wearing it. It is wrong when copying settings onto a sibling: every such group
+    /// would look like shared business, and one item's options would land on every other item from
+    /// the same mod (issue #12).
+    /// </remarks>
+    public bool NamesSlot(EquipSlot slot) => Slots is { Count: > 0 } && Slots.Contains(slot);
 }
 
 /// <summary>Trimming a mod's option settings down to one slot's business.</summary>
@@ -60,6 +73,46 @@ public static class ModOptionSets
         return settings
             .Where(kv => !byName.TryGetValue(kv.Key, out var g) || g.AffectsSlot(slot))
             .ToDictionary(kv => kv.Key, kv => kv.Value);
+    }
+
+    /// <summary>
+    /// Copies onto another item only the groups its own slot is named in, leaving everything else
+    /// it had exactly as it was.
+    /// </summary>
+    /// <remarks>
+    /// Two items from one mod are worn together and Penumbra holds one option state per mod, so a
+    /// group they are both made of has to agree between them. Everything else is none of the
+    /// editor's business, and this is the difference between keeping those few groups in step and
+    /// what the previous version did — replace the sibling's settings wholesale, so editing the feet
+    /// rewrote the legs, the wrists and both variants of the body (issue #12, reported again after
+    /// v1.5.0.0).
+    /// <para>
+    /// Merged rather than assigned, for the same reason: the receiving item's own groups survive.
+    /// An empty value is skipped — a group the editor left alone is an abstention, and propagating
+    /// one would overwrite the sibling's opinion with the absence of an opinion.
+    /// </para>
+    /// </remarks>
+    /// <returns>The group names actually copied, for logging.</returns>
+    public static IReadOnlyList<string> MergeOwned<T>(Dictionary<string, T> target,
+        Dictionary<string, T> source, IReadOnlyList<ModOptionGroup>? groups, EquipSlot slot)
+    {
+        // No analysis means no way to tell whose group is whose. Copying everything is what caused
+        // the fault, so the safe direction when we cannot tell is to copy nothing.
+        if (groups == null) return Array.Empty<string>();
+
+        var byName = groups.ToDictionary(g => g.GroupName, StringComparer.OrdinalIgnoreCase);
+        var copied = new List<string>();
+
+        foreach (var (group, value) in source)
+        {
+            if (!byName.TryGetValue(group, out var g) || !g.NamesSlot(slot)) continue;
+            if (value is System.Collections.ICollection { Count: 0 }) continue;
+
+            target[group] = value;
+            copied.Add(group);
+        }
+
+        return copied;
     }
 }
 

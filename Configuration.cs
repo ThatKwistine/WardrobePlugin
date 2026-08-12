@@ -283,9 +283,11 @@ public class Configuration : IPluginConfiguration
     /// Keep Glamourer's advanced dyes with an outfit, on top of the game's two dye channels.
     /// </summary>
     /// <remarks>
-    /// Experimental, and off by default. It rides on Glamourer's state JSON rather than on any
-    /// advanced-dye API, because there is not one — so it is the setting most likely to be broken by
-    /// a Glamourer update, and the least proven in the game.
+    /// No longer experimental as of 1.5.1.1 — it has been run against real outfits — but still off
+    /// until asked for. It rides on Glamourer's state JSON rather than on any advanced-dye API,
+    /// because there is not one, so it remains the part most likely to be broken by a Glamourer
+    /// update. Something that reaches into another plugin's internals is worth choosing rather than
+    /// arriving in an update, so the changelog says it is here and this stays where it was.
     /// Turning it off keeps anything already captured — the rows stay on their outfits — but
     /// the wardrobe stops applying them, so a look goes back to plain dyes until it is turned on
     /// again. Nothing already on the character is undone at that moment: switching this off is an
@@ -436,6 +438,27 @@ public class Configuration : IPluginConfiguration
 
     /// <summary>First-run setup has been completed or skipped.</summary>
     public bool OnboardingCompleted { get; set; }
+
+    // ── Changelog ─────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The plugin version whose changelog has already been shown, or empty for none.
+    /// </summary>
+    /// <remarks>
+    /// Written the moment the changelog is shown rather than when it is closed, so an update
+    /// announces itself once even if the window is dismissed by quitting the game. Written on a
+    /// silent update too — someone who turns the notice off and back on months later wants the next
+    /// update's notes, not a backlog.
+    /// </remarks>
+    public string LastSeenVersion { get; set; } = string.Empty;
+
+    /// <summary>Show what changed the first time a new version runs.</summary>
+    /// <remarks>
+    /// On by default, and the one notice this plugin gives itself permission to raise unasked. The
+    /// release page is where the notes live, and almost nobody updating from the plugin installer
+    /// ever sees it — so anything needing doing after an update was only ever said out of sight.
+    /// </remarks>
+    public bool ShowChangelogOnUpdate { get; set; } = true;
 
     /// <summary>
     /// Mods the wardrobe enabled itself, as "collection|directory". Only these are turned off again

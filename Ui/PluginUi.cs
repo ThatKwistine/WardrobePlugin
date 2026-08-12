@@ -165,9 +165,6 @@ public class PluginUi : Window, IDisposable
     /// <summary>Result of the last import or removal, shown under the dropdown until the next one.</summary>
     private string _iconPackStatus = string.Empty;
 
-    /// <summary>Rows found by the last advanced dye probe. Null until it has been run.</summary>
-    private int? _advancedDyeCount;
-
     /// <summary>
     /// The item the last Capture was pressed on, and what it found.
     /// </summary>
@@ -197,6 +194,13 @@ public class PluginUi : Window, IDisposable
 
     // Right panel mode
     private bool _showImageBrowser;
+    /// <summary>
+    /// The changelog window, so settings can reopen it. Set by <see cref="Plugin"/> after
+    /// construction — the window needs no part of the wardrobe, and threading it through the
+    /// constructor would add a parameter to a list that is already long.
+    /// </summary>
+    public ChangelogWindow? Changelog { get; set; }
+
     private bool _showSettings;
     private bool _showTags;
     // Grid shows saved outfits instead of items
@@ -1099,6 +1103,40 @@ public class PluginUi : Window, IDisposable
                              (_config.ActiveBaseCharacter is { } stripBase
                                  ? $"\n\nStrips down to '{stripBase.Name}': its slots and items stay on."
                                  : string.Empty));
+
+        UiLayout.SameLineIfRoomForButton(" In-Game Look ");
+
+        // The counterpart to Strip: that one empties every slot, this one gets out of the way so the
+        // gear the game has on shows through. Blue rather than the reds beside it — nothing is being
+        // taken away here that the server was not already showing everyone else.
+        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.18f, 0.32f, 0.5f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.24f, 0.44f, 0.68f, 1f));
+        if (ImGui.Button(" In-Game Look "))
+        {
+            var removed = _wardrobe.RevertToInGameLook();
+
+            // As Strip does: anything left running keeps its marker, so the grid does not claim the
+            // animation mods that are still enabled were turned off
+            _detectedWorn.RemoveWhere(id =>
+                _config.WardrobeItems.Find(x => x.Id == id) is not { } item || !item.Slot.IsModCategory());
+
+            _scanStatus = removed > 0
+                ? $"Took off {removed} item(s) — showing the game's own look."
+                : "Already showing the game's own look.";
+        }
+        ImGui.PopStyleColor(2);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Take the wardrobe's clothes off and clear Glamourer, so the\n" +
+                             "character shows exactly what the game has on them —\n" +
+                             "including any glamour plate you have applied.\n\n" +
+                             "Animations, VFX and mounts are left running, as with Strip." +
+                             (_config.KeepBaseCharacterOnRevert && _config.ActiveBaseCharacter is { } revertBase
+                                 ? $"\n\n'{revertBase.Name}' goes back on top. Turn that off beside\n" +
+                                   "Show In-Game Look in any glamour plate's edit panel."
+                                 : _config.ActiveBaseCharacter != null
+                                     ? "\n\nYour base character is not held back — the revert is\n" +
+                                       "absolute, showing the unmodded character."
+                                     : string.Empty));
 
         UiLayout.SameLineIfRoomForButton(" Refresh ");
 
@@ -5278,7 +5316,32 @@ public class PluginUi : Window, IDisposable
         if (ImGui.SmallButton("Edit"))
             OpenOutfitEdit(outfit);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Rename it, set a preview, take a photo, and add or remove items.");
+            ImGui.SetTooltip(outfit.IsGlamourPlate
+                ? "Rename it, set a preview, take a photo, and resync it from the game.\n\n" +
+                  "Right-click to copy it into an editable outfit."
+                : "Rename it, set a preview, take a photo, and add or remove items.\n\n" +
+                  "Right-click to duplicate it.");
+
+        // On the Edit button rather than the card body, which is plain text and has no click target
+        // of its own. The grid is where you notice you want a variant of something.
+        if (ImGui.BeginPopupContextItem($"##outfitctx_{outfit.Id}"))
+        {
+            // A plate gets the one copy that makes sense for it: a wardrobe outfit cut loose from
+            // the game. Duplicating it as another plate would only make a second card fighting over
+            // the same plate number.
+            if (outfit.IsGlamourPlate)
+            {
+                if (ImGui.MenuItem("Duplicate as editable outfit"))
+                    OpenOutfitEdit(_wardrobe.DuplicateAsOutfit(outfit));
+            }
+            else if (ImGui.MenuItem("Duplicate"))
+            {
+                OpenOutfitEdit(_wardrobe.DuplicateOutfit(outfit));
+            }
+
+            ImGui.EndPopup();
+        }
+
         ImGui.SameLine();
 
         // A partly-worn outfit shows Wear above, so without this there would be nothing to press to
@@ -5425,6 +5488,32 @@ public class PluginUi : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
+        // Above Save rather than beside it: this makes a second outfit and moves the panel onto it,
+        // which is a different kind of act from the two that close the panel on the one you opened.
+        // Not offered for plates — copying one means cutting it loose from the game, which is what
+        // Duplicate As Editable Outfit does further up. A plain copy would only make a second outfit
+        // claiming the same plate number, which the sync would then quietly ignore.
+        if (!outfit.IsGlamourPlate)
+        {
+            if (ImGui.Button("Duplicate This Outfit", new Vector2(-1, 0)))
+            {
+                // Saved first, so a rename typed but not yet committed is what gets copied — the
+                // panel is about to move to the copy, and the edit would otherwise be thrown away
+                outfit.Name      = string.IsNullOrWhiteSpace(_editOutfitName) ? outfit.Name : _editOutfitName.Trim();
+                outfit.ImagePath = string.IsNullOrWhiteSpace(_editOutfitImage) ? null : _editOutfitImage.Trim();
+
+                OpenOutfitEdit(_wardrobe.DuplicateOutfit(outfit));
+                return;
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Makes a copy of this outfit — items, dyes, vanilla pieces, tags and\n" +
+                                 "preview — and opens it, so a variant starts from the finished look\n" +
+                                 "rather than from nothing.\n\n" +
+                                 "The original is left exactly as it is.");
+
+            ImGui.Spacing();
+        }
+
         var footerW = (ImGui.GetContentRegionAvail().X - 8) / 2;
         if (ImGui.Button("Save", new Vector2(footerW, 0)))
         {
@@ -5551,6 +5640,32 @@ public class PluginUi : Window, IDisposable
         return clicked;
     }
 
+    /// <summary>
+    /// Whether the base character survives a revert to the in-game look.
+    /// </summary>
+    /// <remarks>
+    /// Drawn in two places on purpose. It belongs with the base character in settings, since that is
+    /// what it is about and the toolbar's In-Game Look honours it whether or not you own a single
+    /// glamour plate; and it belongs beside the plate's own revert, where the question actually
+    /// occurs to people. One setting, two doors.
+    /// </remarks>
+    private void DrawKeepBaseOnRevertSetting(BaseCharacter baseChar)
+    {
+        var keep = _config.KeepBaseCharacterOnRevert;
+        if (ImGui.Checkbox($"Keep '{baseChar.Name}' on top##keepBaseOnRevert", ref keep))
+        {
+            _config.KeepBaseCharacterOnRevert = keep;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Puts your base character back on after a revert — the hair, skin,\n" +
+                             "tail and design that make the character yours, over the game's gear.\n\n" +
+                             "Off, the revert is absolute: you see the unmodded character the\n" +
+                             "server sees.\n\n" +
+                             "Applies everywhere the wardrobe reverts: the In-Game Look button\n" +
+                             "in the toolbar, and applying a glamour plate in game.");
+    }
+
     /// <summary>The same apply, with the explanation the edit panel has room for.</summary>
     private void DrawApplyPlateInGame(Outfit outfit)
     {
@@ -5609,24 +5724,8 @@ public class PluginUi : Window, IDisposable
     {
         var baseChar = _config.ActiveBaseCharacter;
 
-        if (baseChar != null)
-        {
-            var keep = _config.KeepBaseCharacterOnRevert;
-            if (ImGui.Checkbox($"Keep '{baseChar.Name}' on top##plateRevertBase", ref keep))
-            {
-                _config.KeepBaseCharacterOnRevert = keep;
-                _config.Save();
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Puts your base character back on after the revert — the hair, skin,\n" +
-                                 "tail and design that make the character yours, over the game's gear.\n\n" +
-                                 "Off, the revert is absolute: you see the unmodded character the\n" +
-                                 "server sees. This setting applies everywhere the wardrobe reverts.");
-        }
-        else
-        {
-            ImGui.TextDisabled("No base character is set, so a revert shows the unmodded character.");
-        }
+        if (baseChar != null) DrawKeepBaseOnRevertSetting(baseChar);
+        else                  ImGui.TextDisabled("No base character is set, so a revert shows the unmodded character.");
 
         ImGui.Spacing();
 
@@ -6681,7 +6780,7 @@ public class PluginUi : Window, IDisposable
             ImGui.EndCombo();
         }
 
-        ImGui.SameLine();
+        UiLayout.SameLineIfRoomForButton("Refresh");
         if (ImGui.Button("Refresh##designs"))
             _settingsDesigns = Plugin.Glamourer.GetDesigns();
         if (ImGui.IsItemHovered())
@@ -6689,6 +6788,40 @@ public class PluginUi : Window, IDisposable
 
         if (_settingsDesigns.Count == 0)
             ImGui.TextDisabled("No designs found — create one in Glamourer first.");
+    }
+
+    /// <summary>
+    /// The changelog shown after an update, and the way back to it.
+    /// </summary>
+    /// <remarks>
+    /// The button matters as much as the switch: the window closes on a click, and "what did that
+    /// last update say about re-saving presets?" is asked a day later, by which time the only copy
+    /// was on a release page nobody bookmarked.
+    /// </remarks>
+    private void DrawChangelogSettings()
+    {
+        ImGui.TextUnformatted("Changelog");
+        ImGui.TextDisabled("What changed, shown once the first time a new version runs.");
+        ImGui.Spacing();
+
+        var show = _config.ShowChangelogOnUpdate;
+        if (ImGui.Checkbox("Show what changed after each update", ref show))
+        {
+            _config.ShowChangelogOnUpdate = show;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Turn this off and updates arrive quietly.\n" +
+                             "The button below still works either way.");
+
+        ImGui.Spacing();
+        if (ImGui.Button(" View changelog "))
+            Changelog?.OpenAll();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Every version's notes, newest first — including the one you are on.");
+
+        ImGui.SameLine();
+        ImGui.TextDisabled($"You are on {Services.Changelog.Current}.");
     }
 
     private void DrawBackupSettings()
@@ -6734,13 +6867,13 @@ public class PluginUi : Window, IDisposable
 
         if (!string.IsNullOrEmpty(_config.BackupFolder))
         {
-            ImGui.SameLine();
+            UiLayout.SameLineIfRoomForButton(" Back Up Now ");
             if (ImGui.Button(" Back Up Now "))
                 _backup.Run();
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Write a backup immediately.\nStill skipped if nothing has changed since the last one.");
 
-            ImGui.SameLine();
+            UiLayout.SameLineIfRoomForButton(" Clear ");
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
             if (ImGui.Button(" Clear##backupFolder "))
@@ -6815,6 +6948,8 @@ public class PluginUi : Window, IDisposable
         SettingsBreak();
         DrawBaseCharacterSettings();
         SettingsBreak();
+        DrawAdvancedDyeSettings();
+        SettingsBreak();
         DrawVariantSettings();
         SettingsBreak();
         DrawSlotIconSettings();
@@ -6829,28 +6964,14 @@ public class PluginUi : Window, IDisposable
         SettingsBreak();
         DrawBackupSettings();
         SettingsBreak();
-        DrawExperimentalSettings();
+        DrawChangelogSettings();
         SettingsBreak();
         DrawSetupSettings();
     }
 
-    /// <summary>
-    /// Features that are finished enough to try but have not been proven in the game yet.
-    /// </summary>
-    /// <remarks>
-    /// Last before Setup, and off by default, because the honest thing to do with something written
-    /// against a plugin's undocumented internals is to say so rather than let it look as settled as
-    /// the rest of the panel. Anything here either graduates into a section of its own or goes.
-    /// </remarks>
-    private void DrawExperimentalSettings()
-    {
-        ImGui.TextUnformatted("Experimental");
-        ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f),
-            "Not fully tested. Turn these on if you want to help find out how well they work.");
-        ImGui.Spacing();
-
-        DrawAdvancedDyeSettings();
-    }
+    // The Experimental section is gone with the graduation of advanced dyes, which was the only
+    // thing in it. Worth putting back the next time something ships that has not been proven in the
+    // game — saying so out loud is better than letting it look as settled as the rest of the panel.
 
     /// <summary>Spacing and a rule between two settings sections.</summary>
     private static void SettingsBreak()
@@ -6894,7 +7015,7 @@ public class PluginUi : Window, IDisposable
             ImGui.EndCombo();
         }
 
-        ImGui.SameLine();
+        UiLayout.SameLineIfRoomForButton("Refresh");
         if (ImGui.Button("Refresh##colls"))
             _settingsCollections = Plugin.Penumbra.GetCollections();
         if (ImGui.IsItemHovered())
@@ -7048,6 +7169,9 @@ public class PluginUi : Window, IDisposable
             _baseNameEditId = null;
             return;
         }
+
+        ImGui.Spacing();
+        DrawKeepBaseOnRevertSetting(active);
 
         // Reloaded whenever the active base changes, or a half-typed name would follow the switch
         // onto whichever one was picked next
@@ -7318,7 +7442,7 @@ public class PluginUi : Window, IDisposable
             ImGui.EndCombo();
         }
 
-        ImGui.SameLine();
+        UiLayout.SameLineIfRoomForButton("Refresh");
         if (ImGui.Button("Refresh##basedesigns"))
             _settingsDesigns = Plugin.Glamourer.GetDesigns();
         if (ImGui.IsItemHovered())
@@ -7332,7 +7456,7 @@ public class PluginUi : Window, IDisposable
 
         if (!baseChar.DesignId.HasValue) return;
 
-        ImGui.SameLine();
+        UiLayout.SameLineIfRoomForButton("Apply in full");
         if (ImGui.Button("Apply in full##basedesign"))
             Plugin.Glamourer.ApplyDesignFull(baseChar.DesignId.Value);
         if (ImGui.IsItemHovered())
@@ -7346,7 +7470,7 @@ public class PluginUi : Window, IDisposable
     /// </summary>
     private void DrawAdvancedDyeSettings()
     {
-        ImGui.TextDisabled("Advanced dyes");
+        ImGui.TextUnformatted("Advanced dyes");
         ImGui.TextDisabled("Glamourer can dye a piece far past the game's two channels, editing a " +
                            "material's colour rows directly. With this on, an outfit can keep those " +
                            "rows for each of its items and put them back when it is worn.");
@@ -7368,46 +7492,7 @@ public class PluginUi : Window, IDisposable
             ImGui.Spacing();
             ImGui.TextDisabled("Anything already captured is kept, and comes back when this is " +
                                "turned on again.");
-            return;
         }
-
-        ImGui.Spacing();
-        DrawAdvancedDyeProbe();
-    }
-
-    /// <summary>
-    /// Reads Glamourer's advanced dyes for the current character and writes them to the log.
-    /// </summary>
-    /// <remarks>
-    /// A diagnostic rather than a control. Advanced dyes are saved per item on an outfit's edit
-    /// panel; this only answers "what does Glamourer actually have on me", which is the first thing
-    /// worth knowing when a captured row does not come back the way it went in.
-    /// </remarks>
-    private void DrawAdvancedDyeProbe()
-    {
-        ImGui.TextDisabled("Advanced dyes");
-        ImGui.TextDisabled("Saved per item in an outfit's edit panel. This writes whatever " +
-                           "Glamourer has on you right now to the log, for when one does not come " +
-                           "back the way it was captured.");
-        ImGui.Spacing();
-
-        if (ImGui.Button(" Log advanced dyes "))
-        {
-            Plugin.Glamourer.LogAdvancedDyes();
-            _advancedDyeCount = Plugin.Glamourer.GetAdvancedDyes()?.Count;
-        }
-
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Advanced dye something in Glamourer first, then press this.\n" +
-                             "The rows go to the Dalamud log.");
-
-        if (_advancedDyeCount is not { } count) return;
-
-        ImGui.SameLine();
-        if (count > 0)
-            ImGui.TextColored(new Vector4(0.5f, 0.85f, 0.6f, 1f), $"{count} row(s) — written to the log.");
-        else
-            ImGui.TextDisabled("Nothing advanced dyed right now.");
     }
 
     /// <summary>
@@ -7618,7 +7703,7 @@ public class PluginUi : Window, IDisposable
 
         if (Directory.Exists(defaultSsFolder) && _config.ScreenshotsFolder != defaultSsFolder)
         {
-            ImGui.SameLine();
+            UiLayout.SameLineIfRoomForButton(" Auto-detect ");
             if (ImGui.Button(" Auto-detect "))
             {
                 _config.ScreenshotsFolder = defaultSsFolder;
@@ -7630,7 +7715,7 @@ public class PluginUi : Window, IDisposable
 
         if (!string.IsNullOrEmpty(_config.ScreenshotsFolder))
         {
-            ImGui.SameLine();
+            UiLayout.SameLineIfRoomForButton(" Clear ");
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
             if (ImGui.Button(" Clear##ssFolder"))
@@ -7770,7 +7855,7 @@ public class PluginUi : Window, IDisposable
 
         if (!string.IsNullOrEmpty(_config.CameraPresetsPath))
         {
-            ImGui.SameLine();
+            UiLayout.SameLineIfRoomForButton(" Load from File ");
             if (ImGui.Button(" Load from File "))
             {
                 _cameraLoadStatus = _config.LoadPresets() ? "Presets loaded." : "Failed to load — check file path.";
@@ -8090,7 +8175,9 @@ public class PluginUi : Window, IDisposable
             ImGui.EndCombo();
         }
 
-        ImGui.SameLine();
+        // Wraps rather than running off the panel: the combo is a fixed 220 and these two buttons
+        // behind it do not fit beside it at every text scale
+        UiLayout.SameLineIfRoomForButton(" Import zip… ");
         if (ImGui.Button(" Import zip… "))
         {
             _fileDialog.OpenFileDialog("Import Icon Pack", "Icon pack{.zip}", (confirmed, path) =>
@@ -8111,7 +8198,7 @@ public class PluginUi : Window, IDisposable
             // The path rather than the folder itself: an installed pack is a folder of ordinary
             // files worth editing, and this plugin does not start processes of its own — see the
             // note in NoteText.Open
-            ImGui.SameLine();
+            UiLayout.SameLineIfRoomForButton(" Copy path ");
             if (ImGui.Button(" Copy path##iconpacks "))
             {
                 Plugin.IconPacks.EnsureRoot();
@@ -8242,7 +8329,7 @@ public class PluginUi : Window, IDisposable
 
         // Files are added to either source outside the game, so there has to be a way to pick them
         // up without changing the setting or restarting
-        ImGui.SameLine();
+        UiLayout.SameLineIfRoomForButton(" Rescan ");
         if (ImGui.Button(" Rescan "))
         {
             Plugin.IconPacks.Refresh();
@@ -8254,7 +8341,7 @@ public class PluginUi : Window, IDisposable
 
         if (string.IsNullOrEmpty(folder)) return;
 
-        ImGui.SameLine();
+        UiLayout.SameLineIfRoomForButton(" Clear ");
         ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
         if (ImGui.Button(" Clear##customIcons "))

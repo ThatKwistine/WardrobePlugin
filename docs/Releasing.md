@@ -27,7 +27,13 @@ hosted on GitHub, which friends add to Dalamud themselves.
    - `WardrobePlugin.csproj` → `<Version>`
    - `WardrobePlugin.json` → `AssemblyVersion`
 2. Update `pluginmaster.json` → `AssemblyVersion` and `TestingAssemblyVersion` to the same value.
-3. Build for distribution:
+3. **Add the version to `Services/Changelog.cs`.** That list is what players actually read — it opens
+   in game the first time the new version runs. Nothing checks it: a version with no entry updates
+   silently, which is the failure to watch for. Anything the player has to *do* — re-save a preset,
+   set a group of options again — goes under **Worth doing once**, because that is the part a release
+   page reaches nobody with. Entries newer than the running build are never shown, so writing it
+   before the version is bumped is safe.
+4. Build for distribution:
 
    ```
    dotnet build --configuration Release

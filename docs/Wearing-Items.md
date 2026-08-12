@@ -79,10 +79,45 @@ missing is when you go looking for it. It lists what the active base keeps.
 Outfit sessions hold the base back too: an outfit shot shows the outfit and nothing else, bar the
 character wearing it.
 
-### Strip and Unequip All
+### Strip, Unequip All and In-Game Look
 
 **Strip** keeps the base character. **Unequip All** does not — that is the wardrobe emptying itself
 rather than a strip, and it is the way to take a base off without changing any setting.
+
+**In-Game Look** keeps it too, unless you say otherwise — see below.
+
+## In-Game Look
+
+The three take-off buttons in the toolbar do different things:
+
+| Button | What you end up looking like |
+| --- | --- |
+| **Unequip All** | The wardrobe's items off, base character included. |
+| **Strip** | Every equipment slot emptied, stripped down to your base character. |
+| **In-Game Look** | Whatever the game actually has on you — your real gear and glamour. |
+
+**In-Game Look** takes the wardrobe's items off *and* clears Glamourer, so nothing is overriding the
+character any more. What you see is what everyone else has been seeing all along, including any
+[glamour plate](Outfits.md#vanilla-glamour-plates) you have applied.
+
+The items are taken off properly — their Penumbra mods disabled, the wardrobe's record updated —
+rather than merely cleared out of Glamourer. A bare revert would leave the mods enabled with nothing
+showing them, which is the state the desync notice exists to complain about.
+
+Animations, VFX and mounts are left running, exactly as with **Strip**.
+
+### Keeping your character through it
+
+Clearing every override means clearing the hair, skin, tail and ears that make the character yours
+rather than the ones on the character sheet.
+
+**Keep '\<name>' on when showing the in-game look**, in **Settings → Base character**, puts the base
+back afterwards over the game's own gear. It is on by default. Turn it off and the revert is
+absolute: the unmodded character the server sees.
+
+The same setting appears beside **Show In-Game Look** in a glamour plate's edit panel, because that
+is where the question tends to occur to people. It is one setting either way, and it also governs
+what happens after applying a plate in game.
 
 ## Linked items
 

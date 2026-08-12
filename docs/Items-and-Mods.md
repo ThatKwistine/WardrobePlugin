@@ -270,6 +270,22 @@ groups and the legs item the legs'. A group that names no slot — meta edits, m
 textures — is kept by both, since there is no honest way to attribute it. Groups belonging elsewhere
 are labelled in the edit panel, so it is clear why they are being left alone.
 
+### What saving one item writes on another
+
+Saving an item's options can also touch the other items from the same mod, and it is deliberately
+narrow about it:
+
+- **Never an item in the same slot.** Those are variants — different option sets for one mod, never
+  worn at once — so they are always allowed to differ.
+- **Only the groups the other item's slot is named in.** A group whose files name the legs is shared
+  business between the body item and the legs item, because Penumbra holds one set of options per mod
+  and both are worn at once. A group that names no slot is nobody's to hand out, and is left to each
+  item's own choice.
+- **Merged, not replaced.** Everything else the other item had set is left exactly as it was.
+
+For a group two items really do share, set it to **Ignore all** on the one that does not care. That
+is the item saying "this belongs to the other one", and nothing will overwrite it afterwards.
+
 Dropdown groups get the middle state too, as a **• Leave alone** entry at the top of the list. They
 hold one option at a time, so there is no per-option cross — "not this one" names nothing for
 Penumbra to switch to — but the group as a whole can still be left out, which is the same idea one
@@ -279,6 +295,11 @@ level up. A dropdown set to leave alone is not written at all when the item is w
 exact selection, turning off anything not listed. They gain the third state when you edit their
 options and save, which is also what re-files the groups by slot. If two items from one mod are
 fighting over a variant, editing and saving either one settles it.
+
+**A group left entirely on • is remembered as left alone.** Earlier builds stored nothing for such a
+group, which reads back the same as never having had one — so the panel showed it as all-off next
+time, and saving again made that true. If you set groups to **Ignore all** before this was fixed,
+set them once more and they will stay.
 
 ## Customisation mods
 

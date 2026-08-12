@@ -611,30 +611,10 @@ public class GlamourerIpc : IDisposable
     private const byte DrawObjectMainhand = 2;
     private const byte DrawObjectOffhand  = 3;
 
-    /// <summary>
-    /// Writes the current advanced dyes to the log, at a level that shows without verbose logging.
-    /// </summary>
-    /// <remarks>
-    /// A diagnostic, not a feature. The shape is undocumented, so one run with something advanced
-    /// dyed settles what to store — the same approach the weapon-visibility lookup took, and for the
-    /// same reason: guessing at an undocumented layout fails silently.
-    /// </remarks>
-    public void LogAdvancedDyes()
-    {
-        var materials = GetAdvancedDyes();
-
-        if (materials == null)
-        {
-            _log.Information("[Wardrobe] Advanced dyes: no Materials block — Glamourer unavailable, " +
-                             "no character loaded, or the state has no such key.");
-            return;
-        }
-
-        _log.Information($"[Wardrobe] Advanced dyes: {materials.Count} row(s)");
-
-        foreach (var prop in materials.Properties())
-            _log.Information($"[Wardrobe]   {prop.Name} = {prop.Value.ToString(Newtonsoft.Json.Formatting.None)}");
-    }
+    // The advanced dye probe that used to live here — a button that wrote Glamourer's Materials
+    // block to the log — is gone with the feature's graduation out of Experimental. It existed to
+    // settle an undocumented layout by reading a real one, and that question is answered. If a
+    // Glamourer update ever unsettles it, it is a dozen lines over GetAdvancedDyes, and git has it.
 
     /// <summary>
     /// Snapshot the local player's current Glamourer state as a base64 blob.

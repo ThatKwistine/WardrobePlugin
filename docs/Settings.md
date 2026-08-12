@@ -236,6 +236,23 @@ turning it on or off never spoils a wardrobe built under the other one — see
 
 ---
 
+## Changelog
+
+**Show what changed after each update** opens a window listing what is new, once, the first time a
+new version runs. It is on by default — the release page is where the notes live, and almost nobody
+updating from the plugin installer ever sees it, so anything needing doing after an update was only
+ever said out of sight.
+
+Skipping two updates shows both sets of notes rather than only the newer one. A fresh install shows
+nothing: the setup that follows is the introduction, and a list of changes to a version you never ran
+is noise in front of it.
+
+**View changelog** opens every version's notes at any time, newest first, whether or not the switch
+above is on. Worth knowing about — the window closes on a click, and "what did that update say about
+re-saving my presets?" tends to be asked the following day.
+
+---
+
 ## Backups
 
 **Enable hourly backups** copies the config to a folder of your choosing, at most once an hour and
@@ -249,30 +266,25 @@ back over `%AppData%\XIVLauncher\pluginConfigs\WardrobePlugin.json`.
 
 ---
 
-## Experimental
-
-Finished enough to try, not proven in the game yet. Everything here is off by default, and either
-graduates into a section of its own or goes.
-
-### Advanced dyes
+## Advanced dyes
 
 **Keep advanced dyes with outfits** adds an **Advanced dyes** tick box to each item's dyes in an
 outfit's edit panel, which stores Glamourer's colour-row edits for that piece and puts them back
 whenever the outfit is worn. Glamourer stays the editor; the wardrobe only remembers. See
 [Outfits and dyes](Outfits.md#advanced-dyes).
 
-It is experimental because Glamourer has no API for advanced dyes at all — they are carried inside
-its state data, so this is the setting most likely to break when Glamourer updates, and the least
-tested.
+No longer experimental as of 1.5.1.1 — it has been used on real outfits — but still **off until you
+turn it on**. Glamourer has no API for advanced dyes at all; they are carried inside its state data,
+so this is the part most likely to break when Glamourer updates, and something reaching that far into
+another plugin is worth choosing rather than having arrive in an update.
 
-Turning it back off keeps everything already captured — the rows stay on their outfits and return
+Turning it off keeps everything already captured — the rows stay on their outfits and return
 when it is switched on again — but the wardrobe stops applying them, so those looks go back to plain
 dyes. Nothing already on your character is undone at that moment: switching it off says stop touching
 advanced dyes, and reverting them would be one more touch. Use Glamourer to clear those.
 
-**Log advanced dyes** writes whatever Glamourer currently has on your character to the Dalamud log.
-It is for when a captured row does not come back the way it went in, and is only shown while the
-setting is on.
+Capturing, re-capturing and clearing rows all happen per item in an outfit's edit panel — see
+[Advanced dyes](Outfits.md#advanced-dyes). This section is only the switch.
 
 ---
 

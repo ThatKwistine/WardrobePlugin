@@ -40,6 +40,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly WindowSystem             _windowSystem;
     private readonly PluginUi                _ui;
     private readonly MassImportPanel         _massImport;
+    private readonly ChangelogWindow         _changelog;
 
     private const string CommandName  = "/wardrobe";
     private const string CommandAlias = "/wr";
@@ -93,8 +94,14 @@ public sealed class Plugin : IDalamudPlugin
         var panel = new ItemImportPanel(_config, _wardrobeService, Penumbra, Glamourer, _analysisService, _itemLookup, _screenshotSession, Log, _italicFont);
         _massImport = new MassImportPanel(_config, Penumbra, _analysisService, _itemLookup, Log, _italicFont);
         _ui = new PluginUi(_config, _wardrobeService, Textures, Log, panel, _screenshotSession, _backupService, _massImport);
+        _changelog = new ChangelogWindow(_config);
+        _ui.Changelog = _changelog;
+
         _windowSystem.AddWindow(_ui);
         _windowSystem.AddWindow(_massImport);
+        _windowSystem.AddWindow(_changelog);
+
+        ShowChangelogIfUpdated();
 
         pi.UiBuilder.DisableGposeUiHide = true;
 
@@ -111,6 +118,32 @@ public sealed class Plugin : IDalamudPlugin
         {
             HelpMessage = "Alias of /wardrobe"
         });
+    }
+
+    /// <summary>
+    /// Shows what changed, the first time a new version runs.
+    /// </summary>
+    /// <remarks>
+    /// A fresh install is marked as having seen the current version without being shown anything:
+    /// someone installing for the first time is told what the plugin does by the setup that follows,
+    /// and a list of what changed since a version they never ran is noise in front of it. Judged the
+    /// same way <see cref="Configuration.MigrateOnboarding"/> judges it — an empty wardrobe that has
+    /// not been set up is a new install, whatever version it happens to be.
+    /// </remarks>
+    private void ShowChangelogIfUpdated()
+    {
+        var fresh = !_config.OnboardingCompleted && _config.WardrobeItems.Count == 0
+                    && string.IsNullOrEmpty(_config.LastSeenVersion);
+
+        if (fresh)
+        {
+            _config.LastSeenVersion = Changelog.Current.ToString();
+            _config.Save();
+            return;
+        }
+
+        if (_changelog.OpenForUpdate())
+            Log.Information($"[Wardrobe] Updated to {Changelog.Current} — showing what changed.");
     }
 
     private void OnCommand(string command, string args)
