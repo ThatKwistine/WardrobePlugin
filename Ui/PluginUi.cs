@@ -4578,7 +4578,7 @@ public class PluginUi : Window, IDisposable
                     ImGui.TextColored(new Vector4(1f, 0.85f, 0.3f, 1f), "Waiting for screenshot…");
                     ImGui.TextDisabled("Position your character, then press your screenshot key.");
                     ImGui.Spacing();
-                    DrawCameraPresetControls(item);
+                    DrawSessionCameraPresets();
                     ImGui.Spacing();
                     if (ImGui.Button("Skip"))
                         _session.Skip();
@@ -4651,11 +4651,19 @@ public class PluginUi : Window, IDisposable
     /// one angle is rarely enough: a full-body shot and a close-up are different pictures of the
     /// same piece, and before this you had to re-aim the camera by hand between them.
     /// </remarks>
-    private void DrawCameraPresetControls(WardrobeItem? item)
+    /// <remarks>
+    /// Whichever list the session is on, exactly as the compact view decides it: an item's slot, or
+    /// the one shared set for outfits. It used to take the item and return when there was not one,
+    /// so an outfit session showed no preset controls at all here while the compact window showed
+    /// them — the angle was adjustable only in the smaller of the two windows.
+    /// </remarks>
+    private void DrawSessionCameraPresets()
     {
-        if (item == null) return;
-        DrawCameraPresetControls(item.Slot.ToString(), item.Slot.DisplayName(),
-            $"for all {item.Slot.DisplayName()} items");
+        if (_session.CurrentItem is { } item)
+            DrawCameraPresetControls(item.Slot.ToString(), item.Slot.DisplayName(),
+                $"for all {item.Slot.DisplayName()} items");
+        else if (_session.CurrentOutfit != null)
+            DrawCameraPresetControls(Configuration.OutfitPresetKey, "Outfits", "for every outfit");
     }
 
     /// <param name="slotKey">Which list to edit — a slot's name, or <see cref="Configuration.OutfitPresetKey"/>.</param>

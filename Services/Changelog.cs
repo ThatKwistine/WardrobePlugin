@@ -41,6 +41,17 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 5, 1, 2), "12 August 2026", new List<ChangelogSection>
+        {
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("Camera presets appear while photographing an outfit.",
+                    "The session window showed none at all for an outfit — only the compact view " +
+                    "had them, so the angle could be changed only in the smaller of the two " +
+                    "windows. Both now offer the outfit preset set."),
+            }),
+        }),
+
         new(new Version(1, 5, 1, 1), "12 August 2026", new List<ChangelogSection>
         {
             new("Fixes", new List<ChangelogNote>
@@ -59,6 +70,12 @@ public static class Changelog
 
             new("What's new", new List<ChangelogNote>
             {
+                new("In-Game Look, in the toolbar.",
+                    "Beside Strip. Takes the wardrobe's clothes off and clears Glamourer, so the " +
+                    "character shows exactly what the game has on them — your real gear and " +
+                    "glamour, including any plate you have applied. Your base character stays on " +
+                    "unless you say otherwise in Settings → Base character."),
+
                 new("What changed, shown in game after each update.",
                     "This window. Turn it off, or open it again for any version, in " +
                     "Settings → Changelog."),
