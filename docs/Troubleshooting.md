@@ -32,6 +32,20 @@ Mods enabled by a version older than this one are not recognised as the wardrobe
 there was nothing tracking that at the time. Those stay on once and are best cleared with **Disable
 Their Mods** on the leftovers notice; after that they are enabled and disabled normally.
 
+## A hair, face or skin mod is enabled but nothing changed
+
+Enabling a mod does not reload what is already drawn on you, so a mod that replaces part of the
+character model can go on correctly and only appear the next time something redraws you — which is
+why redrawing by hand in Penumbra "fixes" it.
+
+**Redraw on apply**, in the item's edit panel, does that redraw for you. It is on by default for
+customisation slots, so check it has not been turned off for that item.
+
+If it is on and the mod still does not appear, the mod is probably built for a different face,
+hairstyle or race than your character has. A face paint made for Face 1 shows nothing on Face 5.
+Match your character to the mod in Glamourer — a [base character](Wearing-Items.md#base-character) is
+a good place to keep that — or use a version of the mod built for what you have.
+
 ## An item is enabled in Penumbra but not showing on my character
 
 The wardrobe flags these as desynced. It usually follows a crash or a manual change made in Penumbra

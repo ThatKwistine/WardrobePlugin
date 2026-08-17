@@ -135,6 +135,21 @@ public static class EquipSlotEx
     public static bool IsModOnly(this EquipSlot s) => s.IsCustomization() || s.IsModCategory();
 
     /// <summary>
+    /// Whether an item in this slot redraws the character on apply unless told otherwise.
+    /// </summary>
+    /// <remarks>
+    /// Enabling a Penumbra mod does not reload what is already drawn on the character, so a mod that
+    /// replaces part of the model — hair, a face, a shared texture — can go on without showing up
+    /// until something else forces a reload. Gear has no such trouble: swapping the Glamourer item
+    /// reloads the piece by itself. Mod categories are not on the character at all, so redrawing it
+    /// for an animation or a mount is a stutter that buys nothing.
+    /// <para>
+    /// The default only — <see cref="WardrobeItem.ForceRedraw"/> overrides it per item.
+    /// </para>
+    /// </remarks>
+    public static bool RedrawsByDefault(this EquipSlot s) => s.IsCustomization();
+
+    /// <summary>
     /// Wording for the buttons that turn an item on and off. Gear is equipped, customisation is
     /// applied over the character you already have, and a mod category is simply switched on —
     /// "Unequip" reads wrong for an animation nobody is wearing.

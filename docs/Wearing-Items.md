@@ -14,7 +14,9 @@ unequipped.
 2. Glamourer's `SetItem.V3` is called *before* any mod is touched
 3. For each mod: the mod is **enabled first**, then its option groups are applied
 4. `SetItem.V3` is called again, in case step 1 overwrote the slot
-5. If any mod was newly enabled, the item is re-applied a few times over the next several seconds
+5. If the item asks for it, Penumbra is told to redraw you — see
+   [Redraw on apply](Items-and-Mods.md#redraw-on-apply)
+6. If any mod was newly enabled, the item is re-applied a few times over the next several seconds
 
 ## Why the order matters
 

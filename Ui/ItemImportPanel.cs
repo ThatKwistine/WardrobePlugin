@@ -36,6 +36,14 @@ public class ItemImportPanel : IDisposable
     private string        _editNotes    = string.Empty;
 
     /// <summary>
+    /// The staged redraw toggle, null while the item has never been given one. Kept nullable rather
+    /// than resolved to a bool on open so an item moved between slots follows its new slot's default
+    /// instead of the one it was drawn with, and so saving an item nobody touched the toggle on does
+    /// not hand it an opinion it never had.
+    /// </summary>
+    private bool?         _editForceRedraw;
+
+    /// <summary>
     /// Slots offered by the slot combos, captured when the panel opens. Snapshotted rather than
     /// rebuilt per frame so the combo index stays pointing at the same slot for the whole edit,
     /// even if the mod-categories setting is toggled in another panel meanwhile.
@@ -125,6 +133,7 @@ public class ItemImportPanel : IDisposable
     private int    _manualSlotIdx  = 0;
     private string _manualName     = string.Empty;
     private string _manualImage    = string.Empty;
+    private bool?  _manualForceRedraw;
 
     // Additional mods beyond the primary
     private readonly List<ExtraMod> _extraMods = new();
@@ -144,6 +153,9 @@ public class ItemImportPanel : IDisposable
         public string?   SourceMod;
         /// <summary>What the mod replaces within its category, for mod-category slots only.</summary>
         public string?   Replaces;
+        /// <summary>Redraw toggle for this row, null until it is clicked — see
+        /// <see cref="WardrobeItem.ForceRedraw"/>.</summary>
+        public bool?     ForceRedraw;
         public string    Name             = string.Empty;
         public string    Image            = string.Empty;
         public ulong?    GlamourerItemId;
@@ -230,6 +242,7 @@ public class ItemImportPanel : IDisposable
         _editTagInput = string.Empty;
         _editReplaces = item.Replaces ?? string.Empty;
         _editNotes    = item.Notes ?? string.Empty;
+        _editForceRedraw = item.ForceRedraw;
         _linkSearch   = string.Empty;
 
         // Needed for the per-mod collection pickers, and for the supplementary-mod picker below;
@@ -427,6 +440,10 @@ public class ItemImportPanel : IDisposable
         if (SelectedSlot(_editSlotIdx).IsModCategory())
             DrawReplacesEditor(SelectedSlot(_editSlotIdx));
 
+        // Follows the slot combo above rather than the item's saved slot: switching an item to Hair
+        // should offer Hair's toggle straight away, not after a save and a re-open
+        DrawForceRedrawToggle("edit", SelectedSlot(_editSlotIdx), ref _editForceRedraw);
+
         ImGui.Spacing();
         ImGui.Separator();
 
@@ -513,6 +530,7 @@ public class ItemImportPanel : IDisposable
                 _editTarget.Slot      = SelectedSlot(_editSlotIdx);
                 _editTarget.Replaces  = EditedReplaces();
                 _editTarget.Notes     = EditedNotes();
+                _editTarget.ForceRedraw = EditedForceRedraw();
                 _editTarget.Tags      = new List<string>(_editTags);
                 _config.Save();
                 _session.StartSingle(_editTarget);
@@ -614,6 +632,7 @@ public class ItemImportPanel : IDisposable
             _editTarget.Slot       = SelectedSlot(_editSlotIdx);
             _editTarget.Replaces   = EditedReplaces();
             _editTarget.Notes      = EditedNotes();
+            _editTarget.ForceRedraw = EditedForceRedraw();
             _editTarget.Tags       = new List<string>(_editTags);
 
             if (wasWorn && _editTarget.WornKey() != oldWornKey)
@@ -790,6 +809,7 @@ public class ItemImportPanel : IDisposable
         source.Slot      = SelectedSlot(_editSlotIdx);
         source.Replaces  = EditedReplaces();
         source.Notes     = EditedNotes();
+        source.ForceRedraw = EditedForceRedraw();
         source.Tags      = new List<string>(_editTags);
 
         var copy = new WardrobeItem
@@ -803,6 +823,7 @@ public class ItemImportPanel : IDisposable
             VariantOfId       = source.VariantOfId ?? source.Id,
             Replaces          = source.Replaces,
             Notes             = source.Notes,
+            ForceRedraw       = source.ForceRedraw,
             ImagePath         = source.ImagePath,
             GlamourerItemId   = source.GlamourerItemId,
             GlamourerItemName = source.GlamourerItemName,
@@ -1183,6 +1204,8 @@ public class ItemImportPanel : IDisposable
             ImGui.SetNextItemWidth(-1);
             ImGui.Combo("##manSlot", ref _manualSlotIdx, slotNames, slotNames.Length);
 
+            DrawForceRedrawToggle("manual", SelectedSlot(_manualSlotIdx), ref _manualForceRedraw);
+
             ImGui.TextDisabled("Name");
             ImGui.SetNextItemWidth(-1);
             ImGui.InputText("##manName", ref _manualName, 128);
@@ -1548,6 +1571,14 @@ public class ItemImportPanel : IDisposable
         string.IsNullOrWhiteSpace(_editNotes) ? null : _editNotes.Trim();
 
     /// <summary>
+    /// The staged redraw toggle, or null when the slot has no use for one — the same reason
+    /// <see cref="EditedReplaces"/> clears itself, so an item moved to a gear slot does not carry a
+    /// setting that only ever applied to the slot it came from.
+    /// </summary>
+    private bool? EditedForceRedraw() =>
+        SelectedSlot(_editSlotIdx).IsModOnly() ? _editForceRedraw : null;
+
+    /// <summary>
     /// Editor for what a mod-category item replaces, which is what decides whether wearing it
     /// displaces something already worn. Free text rather than a picker: it is matched between
     /// items by string, so two mods whose file names differ can be lined up by typing the same
@@ -1574,6 +1605,35 @@ public class ItemImportPanel : IDisposable
                              "import; type the same value into two items to pair them up by hand.");
         ImGui.TextDisabled($"Leave blank to wear this independently of other " +
                            $"{slot.DisplayName()} items.");
+    }
+
+    /// <summary>
+    /// The redraw toggle, drawn wherever an item with no game item behind it is set up.
+    /// </summary>
+    /// <remarks>
+    /// Only for slots with nothing to equip: gear reloads itself when Glamourer swaps the piece, so
+    /// a redraw on top of that is a visible stutter for nothing. Writes an explicit value only when
+    /// clicked — until then <paramref name="value"/> stays null and the slot's own default shows.
+    /// </remarks>
+    private static void DrawForceRedrawToggle(string id, EquipSlot slot, ref bool? value)
+    {
+        if (!slot.IsModOnly()) return;
+
+        ImGui.Spacing();
+        var on = value ?? slot.RedrawsByDefault();
+        if (ImGui.Checkbox($"Redraw on apply##redraw_{id}", ref on))
+            value = on;
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Switching a mod on does not reload what is already drawn on your\n" +
+                             "character, so a hair, face or skin mod can be enabled correctly and\n" +
+                             "still not appear until something redraws you. This does that redraw\n" +
+                             "as the item goes on.\n\n" +
+                             "Leave it on unless the flicker bothers you, or the mod shows up\n" +
+                             "without it — animations, VFX and mounts are not on your character\n" +
+                             "at all and gain nothing from one.\n\n" +
+                             "Taking the item off still redraws when nothing else would make it\n" +
+                             "disappear, whatever this is set to.");
     }
 
     private void DrawSlotRow(SlotConfig cfg)
@@ -1653,6 +1713,8 @@ public class ItemImportPanel : IDisposable
         // so never appears in the picker above — or when detection found nothing at all
         if (!cfg.Slot.IsModOnly())
             DrawSlotManualItemPicker(cfg);
+        else
+            DrawForceRedrawToggle($"slot_{cfg.Slot}", cfg.Slot, ref cfg.ForceRedraw);
 
         ImGui.TextDisabled("Name");
         ImGui.SetNextItemWidth(-1);
@@ -2030,7 +2092,7 @@ public class ItemImportPanel : IDisposable
         var extraRefs           = BuildExtraRefs();
 
         IEnumerable<(EquipSlot slot, string name, string? image, ulong? glamId, string? glamName,
-            ushort? setId, string? replaces)> targets;
+            ushort? setId, string? replaces, bool? forceRedraw)> targets;
 
         if (_slotConfigs.Count > 0)
         {
@@ -2038,7 +2100,7 @@ public class ItemImportPanel : IDisposable
                 .Where(c => c.Include && !string.IsNullOrWhiteSpace(c.Name))
                 .Select(c => (c.Slot, c.Name.Trim(),
                     string.IsNullOrEmpty(c.Image) ? (string?)null : c.Image.Trim(),
-                    c.GlamourerItemId, c.GlamourerItemName, c.SetId, c.Replaces));
+                    c.GlamourerItemId, c.GlamourerItemName, c.SetId, c.Replaces, c.ForceRedraw));
         }
         else
         {
@@ -2049,17 +2111,20 @@ public class ItemImportPanel : IDisposable
                 (SelectedSlot(_manualSlotIdx),
                  _manualName.Trim(),
                  string.IsNullOrEmpty(_manualImage) ? (string?)null : _manualImage.Trim(),
-                 (ulong?)null, (string?)null, (ushort?)null, (string?)null),
+                 (ulong?)null, (string?)null, (ushort?)null, (string?)null, _manualForceRedraw),
             };
         }
 
-        foreach (var (slot, name, image, glamId, glamName, setId, replaces) in targets)
+        foreach (var (slot, name, image, glamId, glamName, setId, replaces, forceRedraw) in targets)
         {
             var item = new WardrobeItem
             {
                 Name              = name,
                 Slot              = slot,
                 Replaces          = slot.IsModCategory() ? replaces : null,
+                // Only where the toggle was actually offered, so a gear item does not carry a
+                // setting that has no meaning for it
+                ForceRedraw       = slot.IsModOnly() ? forceRedraw : null,
                 ImagePath         = image,
                 GlamourerItemId   = glamId,
                 GlamourerItemName = glamName,
@@ -2553,6 +2618,7 @@ public class ItemImportPanel : IDisposable
         _manualSlotIdx  = 0;
         _manualName     = string.Empty;
         _manualImage    = string.Empty;
+        _manualForceRedraw = null;
         _groupSelections.Clear();
         _multiGroupSelections.Clear();
         _editModOptions.Clear();
@@ -2566,6 +2632,7 @@ public class ItemImportPanel : IDisposable
         _editSlotIdx  = 0;
         _editReplaces = string.Empty;
         _editNotes    = string.Empty;
+        _editForceRedraw = null;
         _slotChoices  = EquipSlotEx.Choices(_config.ModCategoriesEnabled);
         _editTags.Clear();
         _editTagInput = string.Empty;

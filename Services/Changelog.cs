@@ -41,6 +41,27 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 5, 1, 3), "17 August 2026", new List<ChangelogSection>
+        {
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("Hair, face and skin mods that needed a redraw to appear.",
+                    "Switching a mod on does not reload what is already drawn on you. Plenty of " +
+                    "these showed up on their own; the ones that did not went on correctly and " +
+                    "stayed invisible until something redrew you, which is why redrawing by hand " +
+                    "in Penumbra was the fix. Applying one now does that redraw for you."),
+            }),
+
+            new("What's new", new List<ChangelogNote>
+            {
+                new("Redraw on apply, per item.",
+                    "In the edit panel and on the import panel, for items with no game item behind " +
+                    "them. On for hair, face, tail, Viera ears, skin and other; off for " +
+                    "animations, VFX and mounts, which are not on your character. Turn it off for " +
+                    "a mod that shows up without it."),
+            }),
+        }),
+
         new(new Version(1, 5, 1, 2), "12 August 2026", new List<ChangelogSection>
         {
             new("Fixes", new List<ChangelogNote>

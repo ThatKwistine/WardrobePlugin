@@ -315,6 +315,21 @@ Note this toggles how a hairstyle *looks*; it cannot switch which hairstyle your
 Glamourer's IPC exposes no customisation setter (only `SetItem`, `SetBonusItem` and `SetMetaState`).
 Pick the matching hairstyle in the character screen or Glamourer yourself.
 
+### Redraw on apply
+
+Switching a mod on redirects files, but it does not reload what is already drawn on your character.
+Gear does not notice, because swapping the Glamourer item reloads the piece anyway — a hair, face or
+skin mod has no item to swap, so it can be enabled perfectly correctly and still not appear until
+something redraws you.
+
+**Redraw on apply**, on the import panel and in the edit panel, does that redraw as the item goes on.
+It is on by default for Hair, Face, Tail, Viera Ears, Skin and Other, and off for Animation, VFX and
+Mount / Minion — those are not on your character, so redrawing it does nothing for them. Items
+imported before the toggle existed follow the same defaults; nothing needs re-importing.
+
+Turn it off for a mod that shows up without it and you would rather not have the flicker. Removing an
+item still redraws when nothing else would make it disappear, whichever way this is set.
+
 ### Reverting customisation mods
 
 Set **Settings → Revert customisation mods to** to a Glamourer design holding your character's normal

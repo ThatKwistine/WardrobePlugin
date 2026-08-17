@@ -158,11 +158,16 @@ public class WardrobeService : IDisposable
                          $"({string.Join(", ", collections)}) — only those in the collection your character " +
                          $"uses will take effect. Edit the item to put them in the same collection.");
 
+        // Whether this ends in a redraw, decided up front because the removal below has to know:
+        // swapping one hair mod for another would otherwise redraw twice, once on the way out and
+        // again on the way in, for a single click
+        var forceRedraw = item.ForcesRedraw();
+
         // Unequip the previous item in this slot, if any
         if (_config.WornItems.TryGetValue(slotKey, out var prevId) && prevId != item.Id)
         {
             var prev = _config.WardrobeItems.Find(x => x.Id == prevId);
-            if (prev != null) UnwearItem(prev, save: false);
+            if (prev != null) UnwearItem(prev, save: false, redraw: !forceRedraw);
         }
 
         // Set Glamourer BEFORE enabling Penumbra mods.
@@ -256,6 +261,17 @@ public class WardrobeService : IDisposable
         }
 
         ApplyHairstyleFor(item);
+
+        // Enabling a mod redirects files but reloads nothing already drawn, so a mod with no
+        // Glamourer item to swap can go on and not appear until something else redraws the
+        // character — which is why hair and face mods so often "did nothing" until Penumbra was
+        // told to redraw by hand (#16). Before the dye rows below: a redraw resets the colour
+        // tables, so putting them back afterwards is what makes them stick.
+        if (forceRedraw)
+        {
+            _log.Debug($"[Wardrobe] WearItem: redrawing for '{item.Name}' — the item asks for one");
+            _penumbra.RedrawPlayer();
+        }
 
         // Advanced dyes go on after the piece, never before: the rows address the material of
         // whatever occupies the slot, so applying them to the outgoing item would colour that
@@ -466,10 +482,14 @@ public class WardrobeService : IDisposable
         // until something else redrew the character.
         RestoreCustomizationFor(item);
 
-        var needsRedraw = disabledAny && !swappedItem;
+        // An item set to force one asks on the way out as well, whether or not a mod was switched
+        // off for it: the mod may have been left enabled because the wardrobe did not turn it on,
+        // and the character still has to be reloaded for the slot to look like itself again.
+        var needsRedraw = item.ForcesRedraw() || (disabledAny && !swappedItem);
         if (redraw && needsRedraw)
         {
-            _log.Debug($"[Wardrobe] UnwearItem: redrawing for '{item.Name}' — no Glamourer item swap to force a reload");
+            _log.Debug($"[Wardrobe] UnwearItem: redrawing for '{item.Name}' — " +
+                       (item.ForcesRedraw() ? "the item asks for one" : "no Glamourer item swap to force a reload"));
             _penumbra.RedrawPlayer();
             needsRedraw = false;
         }

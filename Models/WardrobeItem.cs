@@ -161,6 +161,29 @@ public class WardrobeItem
         return string.Join("\n", parts);
     }
 
+    /// <summary>
+    /// Whether applying this item forces a Penumbra redraw of the character. Null until the toggle
+    /// is touched, which reads as the default for the item's slot.
+    /// </summary>
+    /// <remarks>
+    /// Nullable so items saved before the toggle existed behave as the slot says rather than as a
+    /// stored false — a hair mod imported last month needs the redraw exactly as much as one
+    /// imported today, and neither of them was ever asked. Read through
+    /// <see cref="ForcesRedraw"/>; the raw field is for the editors that set it.
+    /// </remarks>
+    public bool? ForceRedraw { get; set; }
+
+    /// <summary>
+    /// Whether wearing this item redraws the character, taking the slot's default when the item has
+    /// no opinion of its own.
+    /// </summary>
+    /// <remarks>
+    /// Removal is not symmetrical: a removal that switched mods off without swapping a Glamourer
+    /// item redraws whatever this says, or the mod would stay on the character after being taken
+    /// off. Turning this off asks for no redraw on apply, not for the item to linger.
+    /// </remarks>
+    public bool ForcesRedraw() => ForceRedraw ?? Slot.RedrawsByDefault();
+
     /// <summary>Marked as a favourite by the user; can be filtered on in the grid.</summary>
     public bool IsFavorite { get; set; }
 
