@@ -27,6 +27,22 @@ public class CameraPreset
     /// </remarks>
     public bool IsDefault { get; set; }
 
+    /// <summary>
+    /// Take an extra shot at this angle during a screenshot session, on top of the cover shot.
+    /// </summary>
+    /// <remarks>
+    /// The angles worth having of a piece — the side, the back, a close-up of the detail — are already
+    /// saved as presets, so this is all that was missing to photograph them: the session applies each
+    /// ticked preset in turn and files what it gets as another of that item's pictures.
+    /// <para>
+    /// Independent of <see cref="IsDefault"/>, which marks the one shot that becomes the card's cover.
+    /// Ticking this on the default preset would ask for the cover angle twice, so the control is not
+    /// offered there. Off by default, which is what keeps a session exactly one shot per item until
+    /// someone asks for more.
+    /// </para>
+    /// </remarks>
+    public bool CaptureInSession { get; set; }
+
     public float Distance      { get; set; }
     public float FoV           { get; set; }
     public float DirH          { get; set; }

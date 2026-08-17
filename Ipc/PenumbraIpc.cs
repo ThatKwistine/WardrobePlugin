@@ -119,6 +119,56 @@ public class PenumbraIpc : IDisposable
         catch (Exception ex) { _log.Warning(ex, "[Wardrobe] Penumbra GetModList failed"); return Array.Empty<(string, string)>(); }
     }
 
+    /// <summary>
+    /// Every mod, newest first, by when its folder appeared on disk.
+    /// </summary>
+    /// <remarks>
+    /// Penumbra records a real import date per mod, but keeps it in its own <c>mod_data.db</c> and
+    /// exposes nothing for it — <see cref="GetMods"/>'s IPC hands over directory and name and no more.
+    /// Reading another plugin's private database would be a dependency on a format nobody promised to
+    /// keep, so the folder's creation time stands in for it: Penumbra makes that folder when it imports
+    /// the mod, so the two agree for anything installed normally.
+    /// <para>
+    /// Where they part company is a mod folder that was copied rather than imported — moving a mod
+    /// library to another drive gives every folder the date of the copy. That makes this a convenience
+    /// for finding what you just installed, not a record of when you got it, which is why the wardrobe
+    /// offers it as one sort order rather than as a date shown anywhere.
+    /// </para>
+    /// <para>
+    /// Costs one filesystem stat per mod, so it is called when a picker opens rather than per frame.
+    /// Anything that cannot be read sorts as oldest instead of dropping out of the list.
+    /// </para>
+    /// </remarks>
+    public IList<(string ModDirectory, string ModName)> GetModsByInstalled()
+    {
+        var mods = GetMods();
+
+        string? root = null;
+        try { root = _getModDirectory.InvokeFunc(); }
+        catch (Exception ex) { _log.Warning(ex, "[Wardrobe] Penumbra GetModDirectory failed"); }
+
+        if (string.IsNullOrEmpty(root)) return mods;
+
+        DateTime Installed((string Dir, string Name) mod)
+        {
+            try
+            {
+                var path = System.IO.Path.Combine(root, mod.Dir);
+                return System.IO.Directory.Exists(path)
+                    ? System.IO.Directory.GetCreationTimeUtc(path)
+                    : DateTime.MinValue;
+            }
+            catch { return DateTime.MinValue; }
+        }
+
+        return mods
+            .Select(m => (Mod: m, At: Installed(m)))
+            .OrderByDescending(x => x.At)
+            .ThenBy(x => x.Mod.ModName, StringComparer.OrdinalIgnoreCase)
+            .Select(x => x.Mod)
+            .ToList();
+    }
+
     /// <summary>Returns the absolute filesystem path to a specific mod's folder on disk.</summary>
     public string? GetModFolderPath(string modDirectory)
     {

@@ -44,6 +44,10 @@ public class GlamourerIpc : IDisposable
     // ApplyDesign(designId, objectIndex, key, applyFlags) → GlamourerApiEc
     private readonly ICallGateSubscriber<Guid, int, uint, ulong, int> _applyDesign;
 
+    // GetDesignJObject(designId) → JObject? — the design's own data, in the same shape GetState returns
+    // and the same shape a .json design file is written in. Null when the design does not exist.
+    private readonly ICallGateSubscriber<Guid, JObject?> _getDesignJObject;
+
     // ApiVersion.V2() → (major, minor). Throws if Glamourer is not loaded.
     private readonly ICallGateSubscriber<(int Major, int Minor)> _apiVersion;
 
@@ -52,6 +56,7 @@ public class GlamourerIpc : IDisposable
     // last type argument is the return type and InvokeAction ignores it.
     private readonly ICallGateSubscriber<int, object?> _openActorIndex;
 
+    private const ulong HatStateFlag      = 0x02uL;
     private const ulong WeaponStateFlag   = 0x08uL;
     private const ulong CustomizationFlag = 0x04uL;
     private const ulong EquipmentFlag     = 0x02uL;
@@ -78,6 +83,7 @@ public class GlamourerIpc : IDisposable
         _setMetaState   = pi.GetIpcSubscriber<int, ulong, bool, uint, ulong, int>("Glamourer.SetMetaState");
         _getDesignList  = pi.GetIpcSubscriber<Dictionary<Guid, string>>("Glamourer.GetDesignList.V2");
         _applyDesign    = pi.GetIpcSubscriber<Guid, int, uint, ulong, int>("Glamourer.ApplyDesign");
+        _getDesignJObject = pi.GetIpcSubscriber<Guid, JObject?>("Glamourer.GetDesignJObject");
         _apiVersion     = pi.GetIpcSubscriber<(int, int)>("Glamourer.ApiVersion.V2");
         _openActorIndex = pi.GetIpcSubscriber<int, object?>("Glamourer.OpenActorIndex");
     }
@@ -226,6 +232,238 @@ public class GlamourerIpc : IDisposable
             _log.Debug(ex, "[Wardrobe] Glamourer GetDesignList failed");
             return Array.Empty<(Guid, string)>();
         }
+    }
+
+    /// <summary>
+    /// <see cref="GetDesigns"/> held briefly, for callers that ask every frame.
+    /// </summary>
+    /// <remarks>
+    /// The outfits grid compares its design outfits against Glamourer's list while it draws, the way
+    /// the glamour-plate bar compares against the game's plates, and an IPC call per frame for a list
+    /// that changes only when the user edits a design in Glamourer is waste. Half a second, matching
+    /// <see cref="Services.GlamourPlateService"/>, so a design added or renamed shows up as promptly
+    /// as a plate does. <see cref="InvalidateDesigns"/> drops it where the answer must be current.
+    /// </remarks>
+    private IList<(Guid Id, string Name)> _designCache = Array.Empty<(Guid, string)>();
+    private DateTime                      _designCachedAt = DateTime.MinValue;
+    private const int                     DesignCacheMs = 500;
+
+    /// <inheritdoc cref="GetDesigns"/>
+    public IList<(Guid Id, string Name)> GetDesignsCached()
+    {
+        if ((DateTime.UtcNow - _designCachedAt).TotalMilliseconds < DesignCacheMs) return _designCache;
+
+        _designCache    = GetDesigns();
+        _designCachedAt = DateTime.UtcNow;
+        return _designCache;
+    }
+
+    /// <summary>Drops the design caches, so the next reads go to Glamourer.</summary>
+    public void InvalidateDesigns()
+    {
+        _designCachedAt = DateTime.MinValue;
+        _designContents.Clear();
+    }
+
+    // ── Design contents ───────────────────────────────────────────────────────
+
+    /// <summary>One piece a Glamourer design puts in a slot.</summary>
+    /// <remarks>
+    /// Only slots the design actually applies. A design holds an item for every slot whether it means
+    /// to set it or not — the per-slot <c>Apply</c> flag is what separates "this design puts a hat on
+    /// you" from "this design has a hat recorded and ignores it".
+    /// </remarks>
+    public sealed record DesignPiece(EquipSlot Slot, ulong ItemId, string Name, byte Stain1, byte Stain2);
+
+    /// <summary>What a design does, as much of it as the wardrobe shows.</summary>
+    /// <param name="Pieces">The slots it applies, in slot order.</param>
+    /// <param name="AppliesEquipment">
+    /// False for a design that sets no equipment at all — one saved for a face, a body or colouring.
+    /// Those are common and worth saying out loud, because a card showing no pieces otherwise reads as
+    /// a design that failed to load.
+    /// </param>
+    /// <param name="AppliesCustomize">True when it sets any part of the character's appearance.</param>
+    /// <remarks>
+    /// <paramref name="AppliesEquipment"/> is null when it cannot be told: a design saved on a non-human
+    /// form has its equipment written as one packed array rather than as named slots, and reading that
+    /// as "sets no equipment" would put the wrong label on a card. Not the same as the whole read being
+    /// unavailable, which is a null <see cref="DesignContents"/>.
+    /// </remarks>
+    public sealed record DesignContents(
+        IReadOnlyList<DesignPiece> Pieces, bool? AppliesEquipment, bool AppliesCustomize);
+
+    /// <summary>
+    /// The slot names Glamourer writes in a design's Equipment block, mapped to the wardrobe's slots.
+    /// </summary>
+    /// <remarks>
+    /// Glamourer uses Penumbra's <c>EquipSlot</c> enum member names, which differ from the wardrobe's in
+    /// two places: the rings are <c>RFinger</c> and <c>LFinger</c>. Taken from
+    /// <c>DesignBase.SerializeEquipment</c> in Glamourer 1.6.1.7 rather than guessed — the block also
+    /// holds Hat, VieraEars, Visor and Weapon, which are visibility toggles rather than slots and are
+    /// deliberately absent from this map.
+    /// </remarks>
+    private static readonly (string Key, EquipSlot Slot)[] DesignSlotKeys =
+    {
+        ("MainHand", EquipSlot.MainHand), ("OffHand", EquipSlot.OffHand),
+        ("Head", EquipSlot.Head), ("Body", EquipSlot.Body), ("Hands", EquipSlot.Hands),
+        ("Legs", EquipSlot.Legs), ("Feet", EquipSlot.Feet),
+        ("Ears", EquipSlot.Ears), ("Neck", EquipSlot.Neck), ("Wrists", EquipSlot.Wrists),
+        ("RFinger", EquipSlot.RingRight), ("LFinger", EquipSlot.RingLeft),
+    };
+
+    /// <summary>
+    /// Item ids Glamourer uses for "nothing" and "smallclothes", which are not game items at all.
+    /// </summary>
+    /// <remarks>
+    /// Three bands, from <c>ItemManager</c> in Glamourer 1.6.1.7, each counting down from a base 128
+    /// below the last:
+    /// <list type="bullet">
+    /// <item><c>NothingId(EquipSlot slot)</c> = <c>4294967167 - slot</c></item>
+    /// <item><c>SmallclothesId(EquipSlot slot)</c> = <c>4294967039 - slot</c></item>
+    /// <item><c>NothingId(FullEquipType type)</c> = <c>4294966911 - type</c> — the weapon slots, which
+    /// key off the equip type rather than the slot and so land in a band of their own</item>
+    /// </list>
+    /// Because the bases are exactly 128 apart and neither enum has anything like 128 members, the bands
+    /// partition cleanly and a simple threshold per band is exact. Looked up in the item sheet these
+    /// resolve to nothing, which is how an empty off-hand came out as "Item 4294966911" — that is
+    /// <c>NothingId</c> for equip type 0, and the reason this is a band check rather than a list.
+    /// </remarks>
+    private const ulong NothingBase       = 4294967167uL;
+    private const ulong SmallclothesBase  = 4294967039uL;
+    private const ulong WeaponNothingBase = 4294966911uL;
+    private const ulong SentinelBand      = 128uL;
+
+    /// <summary>Parsed design contents, by design id.</summary>
+    private readonly Dictionary<Guid, DesignContents?> _designContents = new();
+
+    /// <summary>When each design was last read, for expiring the entries above.</summary>
+    private readonly Dictionary<Guid, DateTime> _designContentsRead = new();
+
+    /// <summary>
+    /// How long a parsed design is trusted, and how many may be read in one frame.
+    /// </summary>
+    /// <remarks>
+    /// A design's contents change when the user edits it in Glamourer, which nothing notifies us of, so
+    /// they are re-read on a timer rather than cached forever. The budget is what keeps that affordable:
+    /// the outfits grid asks for every card it draws, and a wardrobe linked to sixty designs would
+    /// otherwise serialise sixty designs inside Glamourer in a single frame every time the timer came
+    /// round. Four per frame spreads that over a second or so, which nobody can see.
+    /// </remarks>
+    private const int DesignContentsTtlSeconds = 10;
+    private const int DesignReadsPerFrame      = 4;
+
+    private DateTime _readBudgetWindow;
+    private int      _readBudgetUsed;
+
+    /// <summary>
+    /// What a design contains, or null while that is not known yet.
+    /// </summary>
+    /// <remarks>
+    /// Null means "not read", never "empty" — a design whose read has not come round yet, or whose read
+    /// failed, must not be shown as a design that applies nothing. Callers have to treat the two
+    /// differently, because the second is a real and common kind of design and the first is a blank.
+    /// </remarks>
+    public DesignContents? GetDesignContents(Guid designId)
+    {
+        var fresh = _designContentsRead.TryGetValue(designId, out var read)
+                 && (DateTime.UtcNow - read).TotalSeconds < DesignContentsTtlSeconds;
+
+        if (fresh) return _designContents.GetValueOrDefault(designId);
+
+        // Over budget for this frame: serve what is there, however old. A stale piece list is a far
+        // better answer than a card that flickers between showing pieces and showing none.
+        if (!TakeReadBudget()) return _designContents.GetValueOrDefault(designId);
+
+        var contents = ReadDesignContents(designId);
+        _designContents[designId]     = contents;
+        _designContentsRead[designId] = DateTime.UtcNow;
+        return contents;
+    }
+
+    /// <summary>Whether another design may be read in the current frame.</summary>
+    /// <remarks>
+    /// The window is a frame's worth of milliseconds rather than a real frame boundary, which this class
+    /// has no access to. Slightly generous at high frame rates and slightly mean at low ones, and either
+    /// way the effect is only how quickly a changed design catches up.
+    /// </remarks>
+    private bool TakeReadBudget()
+    {
+        var now = DateTime.UtcNow;
+        if ((now - _readBudgetWindow).TotalMilliseconds > 15)
+        {
+            _readBudgetWindow = now;
+            _readBudgetUsed   = 0;
+        }
+
+        return _readBudgetUsed++ < DesignReadsPerFrame;
+    }
+
+    private DesignContents? ReadDesignContents(Guid designId)
+    {
+        JObject? json;
+        try
+        {
+            json = _getDesignJObject.InvokeFunc(designId);
+        }
+        catch (Exception ex)
+        {
+            // Debug rather than warning: an older Glamourer without this endpoint would otherwise fill
+            // the log with one line per design per ten seconds, and the wardrobe copes without it
+            _log.Debug(ex, "[Wardrobe] Glamourer GetDesignJObject failed");
+            return null;
+        }
+
+        if (json == null) return null;
+
+        var pieces  = new List<DesignPiece>();
+        bool? equips = false;
+
+        if (json["Equipment"] is JObject equipment)
+        {
+            // A design saved on a non-human form writes its equipment as one packed base64 array
+            // instead of named slots — see DesignBase.SerializeEquipment. Nothing can be listed from
+            // that, and calling it "no gear" would be a confident wrong answer.
+            if (equipment["Array"] != null)
+            {
+                equips = null;
+            }
+            else
+            {
+                foreach (var (key, slot) in DesignSlotKeys)
+                {
+                    if (equipment[key] is not JObject entry) continue;
+                    if (entry["Apply"]?.Value<bool>() != true) continue;
+
+                    var itemId = entry["ItemId"]?.Value<ulong>() ?? 0uL;
+                    pieces.Add(new DesignPiece(slot, itemId, DesignItemName(itemId),
+                        entry["Stain"]?.Value<byte>()  ?? 0,
+                        entry["Stain2"]?.Value<byte>() ?? 0));
+                }
+
+                equips = pieces.Count > 0;
+            }
+        }
+
+        // Every customise value Glamourer writes carries its own Apply flag, so "does this design touch
+        // the character's appearance" is whether any of them is set
+        var customize = json["Customize"] is JObject block
+                     && block.Properties().Any(p => p.Value is JObject c && c["Apply"]?.Value<bool>() == true);
+
+        return new DesignContents(pieces, equips, customize);
+    }
+
+    /// <summary>An item id as a design means it, including the ids that are not items.</summary>
+    private static string DesignItemName(ulong itemId)
+    {
+        if (itemId > NothingBase      - SentinelBand) return "Nothing";
+        if (itemId > SmallclothesBase - SentinelBand) return "Smallclothes";
+
+        // Weapons say which hand is empty, because "Nothing" against Off Hand reads as a mistake where
+        // "No off-hand" reads as a two-handed weapon, which is what it usually is
+        if (itemId > WeaponNothingBase - SentinelBand) return "None";
+
+        var name = Plugin.ItemLookup.GetItemName(itemId);
+        return string.IsNullOrEmpty(name) ? $"Item {itemId}" : name;
     }
 
     /// <summary>
@@ -750,13 +988,68 @@ public class GlamourerIpc : IDisposable
         }
     }
 
-    private static bool? FindWeaponVisibility(JToken node)
+    /// <summary>
+    /// Whether the character's hat is being shown, or null when it cannot be read.
+    /// </summary>
+    /// <remarks>
+    /// Read from the known path rather than by searching: <c>Equipment.Hat.Show</c>, which is where
+    /// <c>DesignBase.SerializeEquipment</c> writes it and so where <c>GetState</c> returns it. The
+    /// search below is kept as a fallback in case that moves, which is how the weapon's was written
+    /// before the layout was confirmed against Glamourer's own source.
+    /// </remarks>
+    public bool? GetHatVisible()
+    {
+        if (_objects.LocalPlayer == null) return null;
+        try
+        {
+            var (ec, state) = _getState.InvokeFunc(PlayerIndex, 0u);
+            if (ec != 0 || state == null) return null;
+
+            if (state["Equipment"]?["Hat"]?["Show"] is { Type: JTokenType.Boolean } show)
+                return show.Value<bool>();
+
+            return FindVisibility(state, "hat");
+        }
+        catch (Exception ex)
+        {
+            _log.Debug(ex, "[Wardrobe] Glamourer GetHatVisible failed");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Shows or hides the character's hat.
+    /// </summary>
+    /// <remarks>
+    /// A screenshot session turns this on for a head piece: a hat hidden in Glamourer photographs as a
+    /// bare head, and a session that quietly produced twelve pictures of no hat would be worse than one
+    /// that refused. Everything else in the session leaves it as the user had it.
+    /// </remarks>
+    public bool SetHatVisible(bool visible)
+    {
+        if (_objects.LocalPlayer == null) return false;
+        try
+        {
+            var ec = _setMetaState.InvokeFunc(PlayerIndex, HatStateFlag, visible, 0u, 0uL);
+            _log.Debug($"[Wardrobe] Glamourer SetHatVisible={visible} → ec={ec}");
+            return ec == 0;
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "[Wardrobe] Glamourer SetMetaState (hat) failed");
+            return false;
+        }
+    }
+
+    private static bool? FindWeaponVisibility(JToken node) => FindVisibility(node, "weapon");
+
+    private static bool? FindVisibility(JToken node, string needle)
     {
         if (node is not JObject obj) return null;
 
         foreach (var prop in obj.Properties())
         {
-            if (prop.Name.Contains("weapon", StringComparison.OrdinalIgnoreCase))
+            if (prop.Name.Contains(needle, StringComparison.OrdinalIgnoreCase))
             {
                 if (prop.Value.Type == JTokenType.Boolean)
                     return prop.Value.Value<bool>();
@@ -768,7 +1061,7 @@ public class GlamourerIpc : IDisposable
                 }
             }
 
-            var nested = FindWeaponVisibility(prop.Value);
+            var nested = FindVisibility(prop.Value, needle);
             if (nested.HasValue) return nested;
         }
 

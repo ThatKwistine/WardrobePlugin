@@ -26,7 +26,10 @@ and the slot goes empty.
 - **Outfits.** Save a whole look, wear it in one click, dye it in another.
 - **Your glamour plates.** Sync the game's own plates in as read-only outfits, preview them anywhere
   through Glamourer, photograph them like anything else — or apply one for real, in game.
-- **Pictures.** Drag images onto cards, or let the plugin take the screenshots for you.
+- **Your Glamourer designs.** Show them in the grid as a live link — no syncing — and attach the mods
+  that belong with each one, the part a design cannot do for itself.
+- **Pictures.** Drag images onto cards, or let the plugin take the screenshots for you — several per
+  item if you want the side and the back as well as the front.
 - **Find things.** Nested tags, favourites, search across names and notes, sort by name or date.
 - **Bulk import.** Bring in a batch of mods at once instead of one at a time.
 

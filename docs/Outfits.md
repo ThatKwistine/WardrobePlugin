@@ -142,21 +142,31 @@ item carries its mod and options as well as the game item, so it is always the b
 an item to a slot that used to hold a vanilla piece leaves that piece stored but unused rather than
 having the two fight over the slot.
 
+**Glamour plates and design cards do not use this.** A plate's pieces are the game's own and are shown
+in its place; a [design card](#vanilla-items-are-not-used-here) gets its gear from the design, and
+capturing on one is refused because it would freeze a copy over the top of the live design.
+
 ## Vanilla glamour plates
 
 The game's own twenty glamour plates can be brought into the wardrobe and worn as outfits, so a look
 you already built in-game does not have to be rebuilt here before it can be photographed.
 
-**Sync Glamour Plates**, at the top of the outfits view, reads them and saves each non-empty plate as
-an outfit named `Glamour Plate 1`…`20`, tagged with the **Glamour Plate** style so the whole set can
-be filtered in or out with the styles dropdown. They sit in the same grid as everything else, with a
-blue border and a `Glamour Plate` label on the card.
+**Sync Plates**, on the sources row at the top of the outfits view, reads them and saves each
+non-empty plate as an outfit named `Glamour Plate 1`…`20`, tagged with the **Glamour Plate** style so
+the whole set can be filtered in or out with the styles dropdown. They sit in the same grid as
+everything else, with a blue border and a `Glamour Plate` label on the card.
+
+The counts beside the button say how many are saved and how many the game has that are not here yet.
+Everything else the button does is in its tooltip, because the row is the grid's space rather than the
+feature's.
 
 ### You have to open the plate window first
 
 The game only holds your plates in memory after the server has sent them, which happens when you open
 the **Glamour Plate** window — at a summoning bell, an inn room, or the Glamour Dresser. Until you
-have done that once, there is nothing to read and the sync button says so.
+have done that once there is nothing to read, so the sync button is greyed and its tooltip says what
+it is waiting for. Plates already saved are unaffected and still wearable; they just cannot be checked
+against the game until then.
 
 That is a limit on *reading* them. Once a plate is saved it works anywhere, gpose included, with no
 bell in sight.
@@ -268,6 +278,122 @@ Wearing a plate does not clear the slots the plate leaves empty. A plate with no
 keeps the hat. This is not special to plates — no outfit strips vanilla gear it does not have a piece
 for — but it shows up more often here, because plates are frequently partial.
 
+## Glamourer designs
+
+**Settings → Glamourer Designs → Show Glamourer designs as outfits** gives every one of your Glamourer
+designs a card in the outfits grid, alongside your own, with a violet border and the design's name on a
+badge. That switch is the whole of the setup: there is nothing to sync and nothing to keep up to date.
+
+**The cards are a live link, not a copy.** They are Glamourer's design list as it stands, so a design
+saved there appears here by itself, a rename follows through to the card, and deleting it there removes
+the card. No button to press, nothing that can fall behind.
+
+Wearing one applies the design, then any wardrobe items attached to it over the top. That order is the
+point of the feature: a design carries gear, colouring and customisations but knows nothing about
+Penumbra, so attaching items is how the mods that belong with a look get enabled along with it. An
+attached item always wins the slot it occupies, and the design dresses everything else.
+
+Off by default, because it is a visible change to a grid you have already arranged — a Glamourer with
+sixty designs in it would otherwise become sixty cards on update. Turning it off again hides the cards
+and keeps everything attached to them, ready for turning it back on.
+
+### What the design puts on you
+
+A design card shows the design's own pieces as well as the items attached to it — `4 pieces · 2 items`
+on the card, both lists in its tooltip, and the pieces named slot by slot with their dyes in the edit
+panel under **The design applies**. They are read live from Glamourer and never stored here, so editing
+the design there changes what the card shows.
+
+**A design that sets no gear says so.** Designs saved for a face, a body or colouring are common, and a
+card showing no pieces would otherwise look like one that failed to load. Those are badged
+`Design (looks only)`, read `looks only · 2 items`, and their editor says *No gear — appearance only*.
+Whatever items you attach are then all that gets equipped, and **Apply the design's equipment too** is
+greyed out because there is nothing for it to apply.
+
+Glamourer decides this per slot, not per design: what counts is whether the design is set to *apply*
+each slot, which is the same tick you see against each piece in Glamourer itself. A design holding a hat
+it is not set to apply does not count as applying a hat.
+
+A design saved on a non-human form keeps its equipment packed rather than slot by slot, so its pieces
+cannot be listed. It applies normally; the panel says as much rather than claiming it has no gear.
+
+### Attached mods take the design's dyes
+
+A mod attached to a design card is there to be the piece the design already names, so it starts out dyed
+the colour the design uses in that slot. Attach a body mod to a card whose design has a red jacket and the
+mod arrives red — no reading the dye off one list and hunting for it in another.
+
+**Take dyes from the design** above the item list re-does that for every attached item at once, saying how
+many it will affect. It is a button rather than something continuous, because a design's colours can
+change in Glamourer at any time and following them automatically would overwrite a colour you had chosen
+for a mod on purpose. Press it after editing the design, or to put a colour back after changing one here.
+
+Advanced dye rows are left alone either way — they say nothing about the two dye channels.
+
+### Vanilla items are not used here
+
+The **Vanilla items** section is inert on a design card, and deliberately so. A normal outfit uses it to
+remember the plain gear filling the slots its own mods do not, because otherwise wearing it would leave
+those slots as whatever you happened to have on. A design already supplies gear for every slot it applies,
+and the items you attach cover the rest — so there is nothing for it to remember.
+
+It is also the one thing that could quietly break the link. Vanilla pieces are put on *after* the items, so
+capturing while the design was worn would freeze a copy of the design's own gear and then lay that copy over
+the live design on every wear. The card would look right and stop following the design. Capturing is
+refused on a design card for that reason, including through **Update from what I'm wearing**.
+
+### What the wardrobe keeps, and what Glamourer keeps
+
+Glamourer owns the design: what it contains, what it is called, whether it exists — all of which is read
+from it rather than copied. The wardrobe owns the card around it: its pictures, its tags and styles, its
+dyes, and the wardrobe items attached to it.
+Everything on the wardrobe's side behaves exactly as it does on any other outfit:
+
+- photograph it, or give it several pictures — see [Images](Images-and-Screenshots.md)
+- tag it and style it, and filter on those like anything else
+- attach items and remove them, and **Update** while wearing it to attach what you have on — the
+  quickest way to hang a set of mods on a design you already wear
+
+This is the difference between a design card and a [glamour plate](#vanilla-glamour-plates), whose
+contents belong to the game and are shown read-only.
+
+The card's **name** is the design's name and follows it, since the card is a link rather than a copy of
+one. Rename it in Glamourer if you want it called something else — which is the honest answer, because
+that is the name you will see in Glamourer too.
+
+### How much of the design to apply
+
+**Apply the design's equipment too**, in the edit panel, is on by default: the design goes on whole,
+gear as well as face, body and colouring. That is what you want for a design that *is* the look.
+
+Turn it off for a design that only holds a face, a body or colouring. Its equipment would otherwise
+empty the slots the card's own items and vanilla pieces are there to fill, with nothing on screen to say
+why.
+
+**Apply Design Now** applies the design on its own without touching the attached items — for putting the
+look back after something else has changed the character.
+
+### When a design is deleted in Glamourer
+
+The link takes the card with it — unless the card holds something of yours. A card with pictures, tags
+or attached items is kept and badged **Design missing**, because that content is your work and not
+Glamourer's to take away. It still wears its items; it just no longer applies a design.
+
+The grid says so when it happens, and offers **Forget Them** to delete those cards for good (the
+wardrobe items attached to them are kept, exactly as deleting an outfit keeps its items). Or keep one:
+**Duplicate Without The Design** in its editor makes it an ordinary outfit, which is also the way out
+for a look that has outgrown the design behind it.
+
+Cards holding nothing at all are dropped silently — there was nothing in them to lose, and a wardrobe
+should not accumulate a record for every design ever browsed.
+
+**X on a design card** empties it rather than deleting it: its pictures, tags, dyes and attached items
+go, and the card stays as long as the design exists. Its tooltip says so.
+
+Every design card is tagged with the **Glamourer Design** style, so the whole set can be filtered in or
+out with the controls that already exist. It is an ordinary style — remove it from a card you have filed
+under styles of your own.
+
 ## Tags and styles
 
 Outfits carry tags and styles from the same scheme items use — there is no second vocabulary to keep
@@ -302,3 +428,7 @@ path — enabling each item's Penumbra mods and applying their options. That is 
 design cannot do on its own.
 
 If an item is deleted later, the card shows how many are missing and the rest still work.
+
+This is also why [design cards](#glamourer-designs) attach items rather than replacing them: the design
+brings the look, the items bring the mods, and neither can do the other's half. A design card is a link
+to Glamourer with the wardrobe's half hung on it — not an outfit built out of a design.

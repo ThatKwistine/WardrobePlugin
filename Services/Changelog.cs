@@ -41,6 +41,74 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 5, 2, 0), "17 August 2026", new List<ChangelogSection>
+        {
+            new("What's new", new List<ChangelogNote>
+            {
+                new("Your Glamourer designs, in the outfits grid.",
+                    "Settings → Glamourer Designs turns them on. It is a live link rather than a copy: " +
+                    "a design saved in Glamourer appears by itself, a rename follows through, and " +
+                    "deleting it there removes the card. Wearing one applies the design and then any " +
+                    "wardrobe items you attach to it — which is how the mods that belong with a look " +
+                    "get enabled, since a design knows nothing about Penumbra. Cards take pictures, " +
+                    "tags and dyes like any other outfit."),
+
+                new("Manual mode for screenshot sessions.",
+                    "The session stays on each item for as many screenshots as you want to take. The " +
+                    "first becomes the card's picture and the rest join it, and it moves on when you " +
+                    "press Next Item. Framing a piece well is usually a few attempts rather than one."),
+
+                new("Several pictures per item and outfit.",
+                    "A Pictures row in the edit panel holds as many as you like: drag them in from the " +
+                    "image browser, right-click to choose the cover or take one off. Cards show the " +
+                    "count, and right-clicking the picture pages through them all."),
+
+                new("A shot at each camera angle you tick.",
+                    "Tick any camera preset and a session photographs that angle too, on top of the " +
+                    "cover — the side, the back, a close-up. The angle's name goes in the file name."),
+
+                new("Every slot's camera angles in one panel.",
+                    "Settings → Screenshots → Edit Angles For Every Slot, for framing a whole " +
+                    "wardrobe's angles in one visit to GPose instead of inventing each one while a " +
+                    "session waits."),
+
+                new("Newest installed first, when importing.",
+                    "A tick inside the mod picker lists Penumbra's mods with the most recently " +
+                    "installed at the top, for importing something you have just downloaded."),
+
+                new("Your hat is shown while a head piece is photographed.",
+                    "Hiding hats is a setting plenty of people leave on permanently, and it was " +
+                    "turning a run over your headgear into a folder of bare heads. Put back as you " +
+                    "had it when the session ends, like the weapon already was."),
+            }),
+
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("Hair mods that put on the wrong hairstyle.",
+                    "Which hairstyle a mod replaces is now read from its model, which is the one file " +
+                    "that can only belong to that hairstyle. It used to come from whichever file was " +
+                    "read first, and hair mods routinely ship textures belonging to other hairstyles " +
+                    "— so the wardrobe would switch you to a hairstyle the mod does not touch and the " +
+                    "mod appeared to do nothing."),
+
+                new("Screenshots taken in quick succession are no longer lost.",
+                    "Each takes a moment to crop and save, and any that arrived during that were " +
+                    "dropped. They wait their turn instead — which matters most in manual mode."),
+
+                new("The session's buttons sit on one row.",
+                    "Skip and End Session were on separate lines at different widths, looking like " +
+                    "two unrelated controls rather than the choices they are."),
+            }),
+
+            new("Worth doing once", new List<ChangelogNote>
+            {
+                new("Press Re-detect on a hair mod that has been putting on the wrong hair.",
+                    "Items already imported keep the hairstyle number they were given. Re-detect in " +
+                    "the item's edit panel re-reads the mod and stores the right one. Only the mods " +
+                    "that were actually wrong need it."),
+            }),
+        }),
+
         new(new Version(1, 5, 1, 3), "17 August 2026", new List<ChangelogSection>
         {
             new("Fixes", new List<ChangelogNote>

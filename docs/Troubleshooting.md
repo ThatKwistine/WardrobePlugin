@@ -32,6 +32,18 @@ Mods enabled by a version older than this one are not recognised as the wardrobe
 there was nothing tracking that at the time. Those stay on once and are best cleared with **Disable
 Their Mods** on the leftovers notice; after that they are enabled and disabled normally.
 
+## A hair mod puts on the wrong hairstyle, or none
+
+The wardrobe switches you to the hairstyle a hair mod replaces, working that out from the mod's files.
+It reads the **model** to decide, because that is the one file that can only belong to the hairstyle
+being replaced — hair mods routinely ship textures belonging to other hairstyles alongside it, and an
+earlier version could take the number from one of those. The result was a mod enabled correctly with
+your hair unchanged, since you had been switched to a hairstyle it does not touch.
+
+If an item was imported before that fix, press **Re-detect** in its edit panel: it re-reads the mod and
+stores the right numbers. The log line `'<item>': hairstyle N for race code NNNN` says which one it is
+using, so it can be checked against the mod's own description.
+
 ## A hair, face or skin mod is enabled but nothing changed
 
 Enabling a mod does not reload what is already drawn on you, so a mod that replaces part of the

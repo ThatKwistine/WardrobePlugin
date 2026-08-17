@@ -143,6 +143,36 @@ public class ModAnalysisService
 
     public ModAnalysisService(IPluginLog? log = null) => _log = log;
 
+    /// <summary>An id found in a path, and whether the path that gave it was a model.</summary>
+    /// <remarks>
+    /// Which file the id came from decides which answer wins. A hair mod ships the model of the
+    /// hairstyle it replaces, and often textures belonging to entirely different hairstyles alongside —
+    /// shared masks, patches for the vanilla hair it sits under. Taking whichever path was read first
+    /// meant a texture could name the hairstyle, and the wardrobe would then switch the character to a
+    /// hairstyle the mod does not replace: the mod enabled, the hair unchanged, and nothing on screen
+    /// saying why. The model is the one file that can only belong to the hairstyle being replaced.
+    /// </remarks>
+    private readonly record struct Detected(ushort Id, bool FromModel);
+
+    /// <summary>Records an id, letting a model's answer replace one a texture gave first.</summary>
+    private static void Record<TKey>(Dictionary<TKey, Detected> map, TKey key, ushort id, bool fromModel)
+        where TKey : notnull
+    {
+        // First answer wins among equals, so a mod with two models for one race keeps the earlier —
+        // there is nothing to choose between them and the order is at least stable
+        if (map.TryGetValue(key, out var seen) && (seen.FromModel || !fromModel)) return;
+
+        map[key] = new Detected(id, fromModel);
+    }
+
+    /// <summary>Drops the provenance, leaving the ids the rest of the plugin works in.</summary>
+    private static Dictionary<TKey, ushort> Ids<TKey>(Dictionary<TKey, Detected> map) where TKey : notnull =>
+        map.ToDictionary(kv => kv.Key, kv => kv.Value.Id);
+
+    /// <summary>Whether a game path points at a model rather than a material or texture.</summary>
+    private static bool IsModelPath(string gamePath) =>
+        gamePath.EndsWith(".mdl", StringComparison.OrdinalIgnoreCase);
+
     // chara/equipment/e{SetId}/{model|material|texture}/…c{race}e{SetId}_{slot}…
     // Group 1 = SetId, group 2 = slot suffix.
     //
@@ -257,13 +287,13 @@ public class ModAnalysisService
     {
         _pathsSeen  = 0;
         var slots   = new HashSet<EquipSlot>();
-        var setIds  = new Dictionary<EquipSlot, ushort>();
-        var hairIds = new Dictionary<int, ushort>();
+        var setIds  = new Dictionary<EquipSlot, Detected>();
+        var hairIds = new Dictionary<int, Detected>();
         var replace = new Dictionary<EquipSlot, string>();
         var groups  = new List<ModOptionGroup>();
 
         if (!Directory.Exists(modFolderPath))
-            return new ModAnalysisResult(slots, groups, setIds, hairIds, replace);
+            return new ModAnalysisResult(slots, groups, Ids(setIds), Ids(hairIds), replace);
 
         // default_mod.json
         var defaultFile = Path.Combine(modFolderPath, "default_mod.json");
@@ -309,7 +339,7 @@ public class ModAnalysisService
         if (slots.Any(s => !Auxiliary.Contains(s)))
             slots.ExceptWith(Auxiliary);
 
-        return new ModAnalysisResult(slots, groups, setIds, hairIds, replace);
+        return new ModAnalysisResult(slots, groups, Ids(setIds), Ids(hairIds), replace);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -391,8 +421,8 @@ public class ModAnalysisService
     }
 
     /// <summary>Records a group's option names and classifies every game path it references.</summary>
-    private void AddGroup(GroupJson g, HashSet<EquipSlot> slots, Dictionary<EquipSlot, ushort> setIds,
-        Dictionary<int, ushort> hairIds, Dictionary<EquipSlot, string> replace, List<ModOptionGroup> groups)
+    private void AddGroup(GroupJson g, HashSet<EquipSlot> slots, Dictionary<EquipSlot, Detected> setIds,
+        Dictionary<int, Detected> hairIds, Dictionary<EquipSlot, string> replace, List<ModOptionGroup> groups)
     {
         var optNames = new List<string>();
 
@@ -416,8 +446,8 @@ public class ModAnalysisService
             groups.Add(new ModOptionGroup(g.Name, ClassifyGroupType(g.Type, g.Name), optNames, groupSlots));
     }
 
-    private void ClassifyPath(string gamePath, HashSet<EquipSlot> slots, Dictionary<EquipSlot, ushort> setIds,
-        Dictionary<int, ushort> hairIds, Dictionary<EquipSlot, string> replace)
+    private void ClassifyPath(string gamePath, HashSet<EquipSlot> slots, Dictionary<EquipSlot, Detected> setIds,
+        Dictionary<int, Detected> hairIds, Dictionary<EquipSlot, string> replace)
     {
         _pathsSeen++;
 
@@ -435,7 +465,7 @@ public class ModAnalysisService
             };
             slots.Add(slot);
             if (slot != EquipSlot.Unknown && ushort.TryParse(m.Groups[1].Value, out var id))
-                setIds.TryAdd(slot, id);
+                Record(setIds, slot, id, IsModelPath(gamePath));
             return;
         }
 
@@ -453,7 +483,7 @@ public class ModAnalysisService
             };
             slots.Add(slot);
             if (slot != EquipSlot.Unknown && ushort.TryParse(m.Groups[1].Value, out var id))
-                setIds.TryAdd(slot, id);
+                Record(setIds, slot, id, IsModelPath(gamePath));
             return;
         }
 
@@ -462,7 +492,7 @@ public class ModAnalysisService
         {
             slots.Add(EquipSlot.MainHand);
             if (ushort.TryParse(m.Groups[1].Value, out var id))
-                setIds.TryAdd(EquipSlot.MainHand, id);
+                Record(setIds, EquipSlot.MainHand, id, IsModelPath(gamePath));
             return;
         }
 
@@ -485,12 +515,17 @@ public class ModAnalysisService
             if (slot == EquipSlot.Unknown) return;
             if (!ushort.TryParse(m.Groups[3].Value, out var customizeId)) return;
 
+            // The model is what says which hairstyle (or face, or tail) is being replaced. A texture
+            // under another id is a supporting file — see Detected — so it only answers when no model
+            // does, which is what keeps a plain retexture working.
+            var fromModel = IsModelPath(gamePath);
+
             // Kept as a fallback for when the player's race is unknown or the mod covers only one
-            setIds.TryAdd(slot, customizeId);
+            Record(setIds, slot, customizeId, fromModel);
 
             // Hairstyle numbers differ per race, so record which race each one belongs to
             if (slot == EquipSlot.Hair && int.TryParse(m.Groups[1].Value, out var raceCode))
-                hairIds.TryAdd(raceCode, customizeId);
+                Record(hairIds, raceCode, customizeId, fromModel);
             return;
         }
 

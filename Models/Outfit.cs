@@ -55,11 +55,14 @@ public class VanillaPiece
 }
 
 [Serializable]
-public class Outfit
+public class Outfit : IImageOwner
 {
     public Guid    Id        { get; set; } = Guid.NewGuid();
     public string  Name      { get; set; } = "New Outfit";
     public string? ImagePath { get; set; }
+
+    /// <inheritdoc cref="IImageOwner.ExtraImages"/>
+    public List<string> ExtraImages { get; set; } = new();
 
     /// <summary>Wardrobe item IDs in this outfit. Items deleted since are skipped when worn.</summary>
     public List<Guid> ItemIds { get; set; } = new();
@@ -108,4 +111,51 @@ public class Outfit
     public DateTime? PlateSyncedAt { get; set; }
 
     public bool IsGlamourPlate => GlamourPlateId is not null;
+
+    /// <summary>
+    /// The Glamourer design this card is linked to, or null for an outfit built out of items.
+    /// </summary>
+    /// <remarks>
+    /// Not a copy of the design and not a sync of one — a link. Glamourer owns which designs exist and
+    /// what they are called, so the card is created, renamed and removed by
+    /// <see cref="Services.WardrobeService.ReconcileDesignCards"/> following the design list rather than
+    /// by anyone pressing a button. What this record holds is the wardrobe's side of the card: the
+    /// pictures, the tags, the dyes, and above all the <see cref="ItemIds"/> — a design carries gear and
+    /// colouring but knows nothing about Penumbra, so attaching items is how the mods that belong with a
+    /// look get enabled along with it.
+    /// <para>
+    /// Wearing one applies the design first and the items over the top, so an item always wins the slot
+    /// it occupies. A design deleted in Glamourer takes an empty card with it and leaves a card with
+    /// anything attached behind, for
+    /// <see cref="Services.WardrobeService.StrandedDesignCards"/> to report.
+    /// </para>
+    /// <para>
+    /// The whole feature is behind <see cref="Configuration.ShowGlamourerDesigns"/>, which is the only
+    /// choice there is to make about it.
+    /// </para>
+    /// </remarks>
+    public Guid? DesignId { get; set; }
+
+    /// <summary>
+    /// The design's name in Glamourer, for showing the card's badge without an IPC call.
+    /// </summary>
+    /// <remarks>
+    /// Kept in step with the live name, as <see cref="Name"/> is: the card is a link, so its title is
+    /// the design's title and follows it. Someone who wants a card called something else renames the
+    /// design — which is the honest answer, since that name is what they will see in Glamourer too.
+    /// </remarks>
+    public string DesignName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Apply the design's equipment as well as its customisations when this outfit is worn.
+    /// </summary>
+    /// <remarks>
+    /// True because a design usually is the look, gear included, and an outfit is a look. Turned off
+    /// for a design that only holds a face, a body or colouring: applying its equipment would empty
+    /// the slots the outfit's own items and vanilla pieces are there to fill, and there would be
+    /// nothing on screen to say why.
+    /// </remarks>
+    public bool DesignAppliesEquipment { get; set; } = true;
+
+    public bool IsDesign => DesignId is not null;
 }

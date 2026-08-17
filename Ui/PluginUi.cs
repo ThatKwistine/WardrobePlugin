@@ -203,6 +203,22 @@ public class PluginUi : Window, IDisposable
 
     private bool _showSettings;
     private bool _showTags;
+
+    /// <summary>
+    /// The all-slots camera preset panel, opened from Settings → Screenshots.
+    /// </summary>
+    /// <remarks>
+    /// Its own panel rather than a section inside settings: the point of it is to be open in GPose while
+    /// the camera is being moved around, and everything else in settings is a distraction at that moment.
+    /// </remarks>
+    private bool _showCameraPresets;
+
+    /// <summary>Which slot's preset list is expanded in that panel, or null for none.</summary>
+    /// <remarks>
+    /// One at a time. Eighteen slots' worth of preset rows open at once is a panel nobody can find
+    /// anything in, and the list being edited is always the one just clicked.
+    /// </remarks>
+    private string? _presetSlotOpen;
     // Grid shows saved outfits instead of items
     private bool _outfitsView;
 
@@ -223,6 +239,12 @@ public class PluginUi : Window, IDisposable
     private string _plateApplyStatus = string.Empty;
     private bool   _plateNoticeIgnored;
     private readonly HashSet<Guid> _platesOutOfSync = new();
+
+    // Glamourer designs: the message under the stranded-cards notice, and which design cards the last
+    // draw found no design for. Far less state than the plates need, because a linked design has
+    // nothing to keep in step — no sync, no drift, and so nothing to report but a deletion.
+    private string _designStatus = string.Empty;
+    private readonly HashSet<Guid> _designsMissing = new();
 
     // Base character editor: the name being typed, whose name it is, and the add-item search. The id
     // is kept so switching base characters reloads the field instead of renaming the new one to the
@@ -362,6 +384,11 @@ public class PluginUi : Window, IDisposable
         // here, over the whole window rather than inside a panel that is 360px wide
         _panel.QuickViewRequested = item => _quickViewItem = item.Id;
 
+        // The cache keys on the item's cover path, so it would catch up by itself next frame — but the
+        // gallery can change the cover, and a card showing the old one while the panel shows the new
+        // one is exactly the sort of disagreement that reads as a bug
+        _panel.ImagesChanged = item => _imageCache.Remove(item.Id);
+
 
         // Size and constraints are set in PreDraw rather than here, because both scale with
         // Dalamud's Global Font Scale and that can be changed while the plugin is running. Read once
@@ -469,6 +496,7 @@ public class PluginUi : Window, IDisposable
         var totalW  = ImGui.GetContentRegionAvail().X;
         var totalH  = ImGui.GetContentRegionAvail().Y;
         var rightOpen = _panel.IsOpen || _showImageBrowser || _showSettings || _showTags
+                        || _showCameraPresets
                         || _editingOutfit != null || (_selectMode && _bulkPanelOpen);
         var panelW    = rightOpen ? UiScale.S(360f) : 0f;
         var gridW     = totalW - panelW - (rightOpen ? 8f : 0f);
@@ -520,6 +548,10 @@ public class PluginUi : Window, IDisposable
                 DrawTagFilter();
             else if (_showImageBrowser)
                 DrawImageBrowser();
+            // Before settings, since that is where it is opened from: leaving settings above it would
+            // have the panel close itself the moment it was asked for
+            else if (_showCameraPresets)
+                DrawCameraPresetsPanel();
             else if (_showSettings)
                 DrawSettings();
 
@@ -3957,11 +3989,52 @@ public class PluginUi : Window, IDisposable
     {
         if (!hasImage) return;
 
+        var count = item.ImageCount();
+
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Right-click to view full size.");
+            ImGui.SetTooltip(count > 1
+                ? $"{count} pictures. Right-click to view them full size."
+                : "Right-click to view full size.");
 
         if (ImGui.IsItemClicked(ImGuiMouseButton.Right))
             _quickViewItem = item.Id;
+
+        // A count in the corner of the thumbnail, and only when there is more than one. Nothing else
+        // on the card could say that a piece has a back view, and a gallery nobody knows about is a
+        // gallery nobody opens.
+        if (count > 1) DrawImageCountBadge(thumbTop, count);
+    }
+
+    /// <summary>
+    /// The small "3" over the corner of a card's picture, saying how many there are.
+    /// </summary>
+    /// <remarks>
+    /// Drawn over the picture rather than under it: the cards are sized to the pixel and a badge on a
+    /// line of its own would cost every card in the grid a row of height to serve the few that have
+    /// several pictures. Not a click target — the right-click that opens the viewer is on the whole
+    /// picture already, and a button here would only steal from it.
+    /// </remarks>
+    private static void DrawImageCountBadge(Vector2 thumbTop, int count)
+    {
+        var text = count.ToString();
+        var pad  = UiScale.S(3f);
+        var size = ImGui.CalcTextSize(text);
+
+        var restore = ImGui.GetCursorPos();
+
+        // Top-left, where a wardrobe's pictures are least likely to have anything worth covering — the
+        // subject of a centre-cropped shot of a character sits in the middle
+        ImGui.SetCursorPos(new Vector2(thumbTop.X + pad, thumbTop.Y + pad));
+
+        var min = ImGui.GetCursorScreenPos();
+        var max = new Vector2(min.X + size.X + pad * 2, min.Y + size.Y + pad);
+        ImGui.GetWindowDrawList().AddRectFilled(min, max,
+            ImGui.ColorConvertFloat4ToU32(new Vector4(0f, 0f, 0f, 0.62f)), UiScale.S(3f));
+
+        ImGui.SetCursorPos(new Vector2(thumbTop.X + pad * 2, thumbTop.Y + pad));
+        ImGui.TextUnformatted(text);
+
+        ImGui.SetCursorPos(restore);
     }
 
     /// <summary>Item being shown full size, or null. Cleared by closing the popup.</summary>
@@ -4001,29 +4074,12 @@ public class PluginUi : Window, IDisposable
 
         var side = Math.Min(vp.Size.Y * 0.7f, vp.Size.X * 0.5f);
 
-        if (!string.IsNullOrEmpty(outfit.ImagePath) && File.Exists(outfit.ImagePath))
-        {
-            try
-            {
-                if (_textures.GetFromFile(outfit.ImagePath).GetWrapOrDefault() is { } wrap)
-                {
-                    // Fitted to the height available rather than the width, since a portrait is tall
-                    // and the point of viewing one full size is to see all of it at once
-                    if (_config.PortraitOutfitPreviews)
-                        ImageDraw.Portrait(wrap, Math.Min(side, vp.Size.Y * 0.75f / ImageDraw.PortraitRatio));
-                    else
-                        ImageDraw.Square(wrap, side);
-                }
-            }
-            catch (Exception ex)
-            {
-                _log.Warning(ex, $"[Wardrobe] Could not load '{outfit.ImagePath}' for quick view");
-            }
-        }
-        else
-        {
-            ImGui.TextDisabled("This outfit has no picture.");
-        }
+        // Fitted to the height available rather than the width for a portrait, since a portrait is
+        // tall and the point of viewing one full size is to see all of it at once
+        var portrait = _config.PortraitOutfitPreviews;
+        DrawQuickViewPictures(outfit.Id, outfit,
+            portrait ? Math.Min(side, vp.Size.Y * 0.75f / ImageDraw.PortraitRatio) : side,
+            portrait, "This outfit has no picture.");
 
         var items = _wardrobe.ResolveOutfit(outfit);
 
@@ -4109,22 +4165,7 @@ public class PluginUi : Window, IDisposable
         // Loaded from the path rather than read out of the card cache. The cache is cleared whenever
         // an item is opened for editing, which is one of the two places this is reached from — taking
         // it from there would show an empty square exactly where the picture was asked for.
-        if (!string.IsNullOrEmpty(item.ImagePath) && File.Exists(item.ImagePath))
-        {
-            try
-            {
-                if (_textures.GetFromFile(item.ImagePath).GetWrapOrDefault() is { } wrap)
-                    ImageDraw.Square(wrap, side);
-            }
-            catch (Exception ex)
-            {
-                _log.Warning(ex, $"[Wardrobe] Could not load '{item.ImagePath}' for quick view");
-            }
-        }
-        else
-        {
-            ImGui.TextDisabled("This item has no picture.");
-        }
+        DrawQuickViewPictures(item.Id, item, side, portrait: false, "This item has no picture.");
 
         ImGui.Spacing();
         ImGui.TextUnformatted(item.Name);
@@ -4163,6 +4204,86 @@ public class PluginUi : Window, IDisposable
         if (ImGui.IsKeyPressed(ImGuiKey.Escape)) CloseQuickView();
 
         ImGui.EndPopup();
+    }
+
+    /// <summary>Which picture the quick view is showing, and whose set it is counting through.</summary>
+    /// <remarks>
+    /// The id is kept alongside the number so opening the viewer on something else starts at its cover
+    /// rather than at page three of the last thing looked at. Tracked here rather than reset at every
+    /// place that opens the viewer, of which there are several.
+    /// </remarks>
+    private int   _quickViewPage;
+    private Guid? _quickViewPageOf;
+
+    /// <summary>
+    /// The picture, and the controls for paging through the others when there are any.
+    /// </summary>
+    /// <remarks>
+    /// Shared by the item and outfit viewers, which differ only in the shape they draw and in what
+    /// they say when there is nothing to show. Arrow keys work as well as the buttons: this is a
+    /// picture viewer, and reaching for the keyboard at one is instinct.
+    /// </remarks>
+    private void DrawQuickViewPictures(Guid id, IImageOwner owner, float side, bool portrait,
+        string noneText)
+    {
+        var images = ImageGallery.Viewable(owner);
+
+        if (_quickViewPageOf != id)
+        {
+            _quickViewPageOf = id;
+            _quickViewPage   = 0;
+        }
+
+        if (images.Count == 0)
+        {
+            // Says which of the two it is: a set whose files have all been moved away is a different
+            // problem from never having taken a picture, and the fix is not the same either
+            ImGui.TextDisabled(owner.ImageCount() > 0
+                ? "None of this one's pictures could be loaded — check the files are still there."
+                : noneText);
+            return;
+        }
+
+        _quickViewPage = Math.Clamp(_quickViewPage, 0, images.Count - 1);
+        var path = images[_quickViewPage];
+
+        try
+        {
+            if (_textures.GetFromFile(path).GetWrapOrDefault() is { } wrap)
+            {
+                if (portrait) ImageDraw.Portrait(wrap, side);
+                else          ImageDraw.Square(wrap, side);
+            }
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, $"[Wardrobe] Could not load '{path}' for quick view");
+        }
+
+        if (images.Count == 1) return;
+
+        // Under the picture, centred on it as far as the layout allows: a pager beside the frame would
+        // push the frame off centre in a popup that sizes itself to its contents
+        if (GlyphButton(FontAwesomeIcon.ChevronLeft, "qvprev", "Previous picture (left arrow)."))
+            _quickViewPage--;
+
+        ImGui.SameLine();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted($"{_quickViewPage + 1} / {images.Count}");
+
+        ImGui.SameLine();
+        if (GlyphButton(FontAwesomeIcon.ChevronRight, "qvnext", "Next picture (right arrow)."))
+            _quickViewPage++;
+
+        UiLayout.SameLineIfRoomForText(Path.GetFileName(path));
+        ImGui.TextDisabled(Path.GetFileName(path));
+
+        if (ImGui.IsKeyPressed(ImGuiKey.LeftArrow))  _quickViewPage--;
+        if (ImGui.IsKeyPressed(ImGuiKey.RightArrow)) _quickViewPage++;
+
+        // Wraps rather than stopping, so a set of four can be gone round without hunting for the end
+        if (_quickViewPage < 0)              _quickViewPage = images.Count - 1;
+        if (_quickViewPage >= images.Count)  _quickViewPage = 0;
     }
 
     private void CloseQuickView()
@@ -4386,6 +4507,16 @@ public class PluginUi : Window, IDisposable
         }
 
         ImGui.TextUnformatted(_session.CurrentName);
+
+        // As in the full HUD: what the session is waiting for is the thing the window has to say, and
+        // this is the window most of a session is actually watched in
+        if (_session.MultiShot)
+            ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f),
+                $"Shot {_session.ShotIndex} of {_session.ShotCount} — {_session.ShotLabel}");
+        else if (_session.Manual)
+            ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f),
+                $"{_session.TakenForTarget} taken  ·  manual");
+
         ImGui.Spacing();
 
         switch (_session.State)
@@ -4406,16 +4537,9 @@ public class PluginUi : Window, IDisposable
         else if (_session.CurrentOutfit != null)
             DrawCompactCameraPresets(Configuration.OutfitPresetKey, "Outfits");
 
-        if (_session.State == SessionState.WaitingForShot)
-        {
-            if (ImGui.Button("Skip")) _session.Skip();
-            ImGui.SameLine();
-        }
-
-        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
-        if (ImGui.Button("End Session")) _session.Stop();
-        ImGui.PopStyleColor(2);
+        ImGui.Separator();
+        ImGui.Spacing();
+        DrawSessionActionRow(_session.CurrentItem != null ? "Item" : "Outfit");
         UiLayout.PopWrap();
     }
 
@@ -4534,6 +4658,16 @@ public class PluginUi : Window, IDisposable
 
         UiLayout.PushWrap();
 
+        var manual = _session.Manual;
+        if (ImGui.Checkbox("Manual mode", ref manual))
+            _session.Manual = manual;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The session stays on each item, however many screenshots you take.\n" +
+                             "The first becomes the card's picture and the rest join it.\n\n" +
+                             "Press Next Item when you are happy with it, or End Session to stop.\n\n" +
+                             "Off, the session moves on as soon as a screenshot lands — one per\n" +
+                             "item, plus any camera angles you have ticked.");
+
         var stripOthers = _session.StripOthers;
         if (ImGui.Checkbox("Strip other items before each shot", ref stripOthers))
             _session.StripOthers = stripOthers;
@@ -4571,40 +4705,121 @@ public class PluginUi : Window, IDisposable
             ImGui.TextDisabled($"{label} {_session.CompletedCount + 1} of {_session.TotalCount}");
             ImGui.TextUnformatted(_session.CurrentName);
 
+            // Which angle, when there is more than one. The camera has already moved to it, so
+            // without this the only clue about what the session wants is where it is pointing.
+            if (_session.MultiShot)
+                ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f),
+                    $"Shot {_session.ShotIndex} of {_session.ShotCount} — {_session.ShotLabel}");
+            // A count and nothing more. It used to explain what the first picture was for — which the
+            // line below already does, so the two said one thing twice in different words, and the
+            // shorter of them ("1 picture taken — the card's.") read as a riddle.
+            else if (_session.Manual)
+                ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f),
+                    _session.TakenForTarget switch
+                    {
+                        0 => "No pictures of this one yet.",
+                        1 => "1 picture taken.",
+                        _ => $"{_session.TakenForTarget} pictures taken.",
+                    });
+
             ImGui.Spacing();
             switch (_session.State)
             {
                 case SessionState.WaitingForShot:
                     ImGui.TextColored(new Vector4(1f, 0.85f, 0.3f, 1f), "Waiting for screenshot…");
-                    ImGui.TextDisabled("Position your character, then press your screenshot key.");
+                    ImGui.TextDisabled(_session.Manual
+                        ? "Take as many as you like. The first is the card's picture and the rest join it."
+                        : "Position your character, then press your screenshot key.");
                     ImGui.Spacing();
                     DrawSessionCameraPresets();
-                    ImGui.Spacing();
-                    if (ImGui.Button("Skip"))
-                        _session.Skip();
-                    if (ImGui.IsItemHovered())
-                        ImGui.SetTooltip("Skip this item and move on to the next without taking a screenshot.");
-                    ImGui.SameLine();
                     break;
                 case SessionState.Processing:
                     ImGui.TextColored(new Vector4(0.5f, 0.8f, 1f, 1f), "Processing image…");
-                    ImGui.Spacing();
                     break;
             }
 
+            ImGui.Spacing();
             ImGui.Separator();
             ImGui.Spacing();
 
-            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
-            if (ImGui.Button("End Session")) _session.Stop();
-            ImGui.PopStyleColor(2);
+            DrawSessionActionRow(label);
         }
 
         UiLayout.PopWrap();
         ImGui.End();
 
         if (!open) _session.Stop();
+    }
+
+    /// <summary>
+    /// The session's buttons — the skips and End Session — as one row of equal widths.
+    /// </summary>
+    /// <remarks>
+    /// One row, and shared by both session windows so the two cannot drift apart. They were laid out
+    /// separately before: a <c>SameLine</c> after Skip, then a separator, which cancels it — so Skip sat
+    /// alone on one row and End Session below it at a different width, looking like two unrelated
+    /// controls rather than the choices they are.
+    /// <para>
+    /// Widths are divided out of what the window actually has rather than fixed, because the two windows
+    /// are different sizes and the compact one follows the main window's width.
+    /// </para>
+    /// </remarks>
+    /// <param name="targetLabel">"Item" or "Outfit", for naming the skip that abandons the whole thing.</param>
+    private void DrawSessionActionRow(string targetLabel)
+    {
+        var waiting = _session.State == SessionState.WaitingForShot;
+        var manual  = _session.Manual;
+        var noun    = targetLabel.ToLowerInvariant();
+
+        // Manual mode has one button before End Session and only when there is something to move on to;
+        // automatic has a skip, and a second one for the angle when several are queued
+        var others  = !waiting ? 0
+                    : manual   ? (_session.HasMoreTargets ? 1 : 0)
+                    : _session.MultiShot ? 2 : 1;
+
+        var spacing = ImGui.GetStyle().ItemSpacing.X;
+        var size    = new Vector2((ImGui.GetContentRegionAvail().X - spacing * others) / (others + 1), 0);
+
+        if (waiting && manual && _session.HasMoreTargets)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.18f, 0.32f, 0.5f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.24f, 0.44f, 0.68f, 1f));
+            if (ImGui.Button($"Next {targetLabel}", size))
+                _session.NextTarget();
+            ImGui.PopStyleColor(2);
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"Finished with this {noun} — keep what you have taken of it and move\n" +
+                                 "on to the next.\n\n" +
+                                 "Nothing is lost by taking none: the pictures already filed stay, and a\n" +
+                                 $"{noun} you took none of is simply left as it was.");
+            ImGui.SameLine();
+        }
+
+        if (waiting && !manual && _session.MultiShot)
+        {
+            if (ImGui.Button("Skip Angle", size))
+                _session.SkipShot();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"Skip this angle and move on to the next one of this {noun}.");
+            ImGui.SameLine();
+        }
+
+        if (waiting && !manual)
+        {
+            if (ImGui.Button(_session.MultiShot ? $"Skip {targetLabel}" : "Skip", size))
+                _session.Skip();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(_session.MultiShot
+                    ? $"Skip this {noun} entirely, remaining angles included."
+                    : $"Skip this {noun} and move on to the next without taking a screenshot.");
+            ImGui.SameLine();
+        }
+
+        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
+        if (ImGui.Button("End Session", size)) _session.Stop();
+        ImGui.PopStyleColor(2);
     }
 
     /// <summary>
@@ -4666,6 +4881,112 @@ public class PluginUi : Window, IDisposable
             DrawCameraPresetControls(Configuration.OutfitPresetKey, "Outfits", "for every outfit");
     }
 
+    /// <summary>
+    /// Every slot's camera presets in one panel, for setting angles up before a session runs.
+    /// </summary>
+    /// <remarks>
+    /// Until now the only place to edit a slot's presets was a session that had reached an item in it,
+    /// which is the wrong moment: a session over a whole wardrobe stops at each slot in turn and waits,
+    /// so the angles have to be invented one at a time with the run already going. This is where they
+    /// can be framed in advance — go into GPose, work down the list, then start the session and let it
+    /// run.
+    /// <para>
+    /// One slot expanded at a time. The controls inside are exactly the ones the session HUD shows, so
+    /// there is one set of behaviour to learn and no second implementation to keep in step.
+    /// </para>
+    /// </remarks>
+    private void DrawCameraPresetsPanel()
+    {
+        if (DrawPanelHeader("Camera Presets"))
+        {
+            _showCameraPresets = false;
+            return;
+        }
+
+        ImGui.Spacing();
+        ImGui.TextWrapped("Angles for a screenshot session, per slot. Frame the camera in GPose, then " +
+                          "save it here — a session loads each slot's cover angle by itself, plus any " +
+                          "extra angles you tick.");
+
+        ImGui.Spacing();
+
+        // Slots the wardrobe actually holds something for come first in the reader's mind, so the count
+        // of what still has no angle is the useful summary — it is the list of work left to do
+        var slots = SlotsForPresets();
+        var without = slots.Count(s => _config.PresetsFor(s.Key).Count == 0);
+
+        ImGui.TextDisabled(without == 0
+            ? $"All {slots.Count} have at least one angle."
+            : $"{slots.Count - without} of {slots.Count} have an angle. {without} still to do.");
+
+        if (!Plugin.Camera.InGpose)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
+                "Not in GPose — saving an angle needs the GPose camera.");
+            ImGui.TextDisabled("The lists below can still be renamed, reordered and tidied.");
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+
+        foreach (var (key, label, scope, items) in slots)
+        {
+            ImGui.PushID($"presetslot_{key}");
+
+            var open  = _presetSlotOpen == key;
+            var count = _config.PresetsFor(key).Count;
+            var extra = _config.ExtraShotPresetsFor(key).Count;
+
+            // The header says what the slot has without being opened: how many angles, how many of them
+            // a session will shoot, and how many items would be photographed with them
+            var summary = count == 0 ? "no angles" : extra > 0 ? $"{count} · {extra + 1} shots" : $"{count}";
+            var heading = $"{label}  ({summary})";
+
+            if (ImGui.Selectable(heading, open))
+                _presetSlotOpen = open ? null : key;
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(items >= 0
+                    ? $"{items} item(s) in this slot.\nClick to {(open ? "close" : "edit")} its angles."
+                    : $"Shared by every outfit.\nClick to {(open ? "close" : "edit")} its angles.");
+
+            if (open)
+            {
+                ImGui.Indent();
+                DrawCameraPresetControls(key, label, scope);
+                ImGui.Unindent();
+                ImGui.Separator();
+            }
+
+            ImGui.PopID();
+        }
+    }
+
+    /// <summary>
+    /// The preset lists a wardrobe has: one per equipment slot it uses, plus the shared outfit set.
+    /// </summary>
+    /// <remarks>
+    /// Slots with no items are still listed — a wardrobe grows, and an angle saved before the first pair
+    /// of boots arrives is exactly the preparation this panel is for. Mod categories are left out: an
+    /// animation or a mount is photographed deliberately from its own edit panel, and a session skips
+    /// them precisely because one angle of a dance says nothing.
+    /// </remarks>
+    private List<(string Key, string Label, string Scope, int Items)> SlotsForPresets()
+    {
+        var list = new List<(string, string, string, int)>
+        {
+            // First, because it is the one set that is not per slot and the one most people set up first
+            (Configuration.OutfitPresetKey, "Outfits", "for every outfit", -1),
+        };
+
+        foreach (var slot in EquipSlotEx.All)
+            list.Add((slot.ToString(), slot.DisplayName(), $"for all {slot.DisplayName()} items",
+                _config.WardrobeItems.Count(i => i.Slot == slot)));
+
+        return list;
+    }
+
     /// <param name="slotKey">Which list to edit — a slot's name, or <see cref="Configuration.OutfitPresetKey"/>.</param>
     /// <param name="label">What the list is called on screen.</param>
     /// <param name="scope">Who the presets apply to, for the Save button's tooltip.</param>
@@ -4683,13 +5004,15 @@ public class PluginUi : Window, IDisposable
         }
 
         if (presets.Count > 1)
-            ImGui.TextDisabled("The ticked one loads during screenshot sessions.");
+            ImGui.TextDisabled("The selected one is the cover shot. Tick any others to photograph " +
+                               "those angles too.");
 
         // Deferred so the list is not mutated while it is being walked
         var applyIdx   = -1;
         var updateIdx  = -1;
         var deleteIdx  = -1;
         var defaultIdx = -1;
+        var captureIdx = -1;
 
         // Which row draws as the default. Read once rather than per row, so a slot with nothing
         // marked shows the fallback ticked instead of showing nothing ticked while still loading one
@@ -4713,9 +5036,25 @@ public class PluginUi : Window, IDisposable
             if (ImGui.RadioButton("##default", ReferenceEquals(preset, defaultPreset)))
                 defaultIdx = i;
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Load this one automatically during screenshot sessions.");
+                ImGui.SetTooltip("Take the cover shot from this angle — the picture that ends up on the card.\n" +
+                                 "A session loads it automatically.");
 
             ImGui.SameLine();
+
+            // Not offered on the cover's own row: the session photographs that angle regardless, and a
+            // tick there would only ask for the same picture twice
+            if (!ReferenceEquals(preset, defaultPreset))
+            {
+                var capture = preset.CaptureInSession;
+                if (ImGui.Checkbox("##capture", ref capture)) captureIdx = i;
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Take an extra shot from this angle too, on top of the cover.\n\n" +
+                                     "A session waits for a screenshot at each ticked angle in turn and\n" +
+                                     "files them as this item's other pictures — the side, the back, a\n" +
+                                     "close-up of the detail.");
+
+                ImGui.SameLine();
+            }
 
             var presetLabel = string.IsNullOrWhiteSpace(preset.Name) ? "(unnamed)" : preset.Name;
             if (ImGui.SmallButton(presetLabel)) applyIdx = i;
@@ -4771,7 +5110,16 @@ public class PluginUi : Window, IDisposable
         if (applyIdx >= 0) Plugin.Camera.Apply(presets[applyIdx]);
         if (updateIdx >= 0) OverwritePreset(slotKey, updateIdx);
         if (defaultIdx >= 0) SetPresetDefault(slotKey, defaultIdx);
+        if (captureIdx >= 0) TogglePresetCapture(slotKey, captureIdx);
         if (deleteIdx >= 0) DeletePreset(slotKey, deleteIdx);
+
+        // Said once under the list rather than per row: how many shots a session will ask for is the
+        // thing worth knowing before starting one, and it is not obvious from a column of ticks
+        var extras = _config.ExtraShotPresetsFor(slotKey).Count;
+        if (extras > 0)
+            ImGui.TextDisabled($"Sessions take {extras + 1} shots: cover, then " +
+                               string.Join(", ", _config.ExtraShotPresetsFor(slotKey)
+                                   .Select(p => string.IsNullOrWhiteSpace(p.Name) ? "(unnamed)" : p.Name)) + ".");
 
         // Saving a new one. The name is optional — an unnamed save is numbered, so the camera can be
         // caught quickly in GPose without stopping to think of a word for it.
@@ -4884,6 +5232,27 @@ public class PluginUi : Window, IDisposable
         for (var i = 0; i < list.Count; i++)
             list[i].IsDefault = i == index;
 
+        // The cover angle is photographed because it is the cover, so a tick left on it from before it
+        // was promoted would ask a session for the same picture twice — and the row it was ticked on
+        // no longer shows the control that could untick it
+        list[index].CaptureInSession = false;
+
+        _config.Save();
+        _config.SavePresets();
+    }
+
+    /// <summary>
+    /// Turns a preset's extra-shot tick on or off.
+    /// </summary>
+    /// <remarks>
+    /// The cover's own tick is cleared as it becomes the cover, in <see cref="SetPresetDefault"/> —
+    /// not here — because that is where a preset can gain the role while already ticked.
+    /// </remarks>
+    private void TogglePresetCapture(string slotKey, int index)
+    {
+        var list = _config.SlotCameraPresetLists[slotKey];
+        list[index].CaptureInSession = !list[index].CaptureInSession;
+
         _config.Save();
         _config.SavePresets();
     }
@@ -4958,7 +5327,7 @@ public class PluginUi : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
-        DrawGlamourPlatesBar();
+        DrawOutfitSourcesBar();
 
         if (_config.Outfits.Count == 0)
         {
@@ -4969,6 +5338,9 @@ public class PluginUi : Window, IDisposable
         // The same filter row drives both grids, so a style ticked while looking at outfits narrows
         // the outfits rather than quietly doing nothing
         var outfits = _config.Outfits
+            // Design cards are hidden rather than deleted while the setting is off, exactly as items in
+            // a switched-off mod category are — so turning it back on brings them back untouched
+            .Where(o => _config.ShowGlamourerDesigns || !o.IsDesign)
             .Where(OutfitMatchesTagFilters)
             .OrderBy(o => o.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -4995,6 +5367,11 @@ public class PluginUi : Window, IDisposable
         if (outfits.Any(o => o.IsGlamourPlate))
             cardH += ImGui.GetFrameHeightWithSpacing();
 
+        // A design card carries a badge line naming the design, and the same rule applies to it: paid
+        // for once across the grid, or the button row would be pushed off the bottom of those cards
+        if (outfits.Any(o => o.IsDesign))
+            cardH += ImGui.GetTextLineHeightWithSpacing();
+
         var avail   = ImGui.GetContentRegionAvail().X;
         var columns = Math.Max(1, (int)((avail + CardPad) / (cardW + CardPad)));
         var col     = 0;
@@ -5018,74 +5395,116 @@ public class PluginUi : Window, IDisposable
     }
 
     /// <summary>
-    /// Sync controls and the out-of-step notice for the game's own glamour plates.
+    /// One row for what the outfits grid pulls in from elsewhere — the game's glamour plates — and the
+    /// notices for that and for the linked Glamourer designs.
     /// </summary>
     /// <remarks>
-    /// Plates are edited in-game and often, so a stored copy going stale is the normal case rather
-    /// than the exception. That makes the notice the important half of this: a plate that silently
-    /// serves last week's gear is worse than no plate at all, because nothing on screen says so.
+    /// One row because the space is the grid's. This used to be a block per source, each with a button,
+    /// a sentence of explanation and a separator, which between them pushed the first card most of a
+    /// screen down the window on a wardrobe that had never touched either. The explanation is in the
+    /// button's tooltip now and the counts are chips beside it.
+    /// <para>
+    /// Designs have no controls here at all: they are linked rather than synced, so there is nothing to
+    /// press. Whether they appear is one switch in Settings, and
+    /// <see cref="WardrobeService.ReconcileDesignCards"/> keeps up with Glamourer on its own.
+    /// </para>
+    /// <para>
+    /// The notices below are not compressed the same way. They are the half of this that matters: a
+    /// plate quietly serving last week's gear, or a card whose design has been deleted from under the
+    /// mods attached to it, is worth the lines it takes to say so — and unlike controls, neither is on
+    /// screen unless it has actually happened.
+    /// </para>
     /// </remarks>
-    private void DrawGlamourPlatesBar()
+    private void DrawOutfitSourcesBar()
     {
-        var loaded = Plugin.GlamourPlates.PlatesLoaded;
-        var plates = _wardrobe.PlateOutfits();
+        // Recomputed every frame so the cards below and the notices here cannot disagree. Cheap: the
+        // plate read is cached for half a second in its service, the design read in the IPC.
+        var platesLoaded = Plugin.GlamourPlates.PlatesLoaded;
+        var plates       = _wardrobe.PlateOutfits();
+        var desynced     = platesLoaded ? _wardrobe.DesyncedPlates() : new List<Outfit>();
+        var orphanPlates = platesLoaded ? _wardrobe.OrphanedPlates() : new List<Outfit>();
+        var newPlates    = platesLoaded ? _wardrobe.UnsyncedPlateCount() : 0;
 
-        // Recomputed every frame so the cards below and the notice here cannot disagree. Cheap:
-        // the service caches its read of the game for half a second.
         _platesOutOfSync.Clear();
-        var desynced = loaded ? _wardrobe.DesyncedPlates() : new List<Outfit>();
         foreach (var o in desynced) _platesOutOfSync.Add(o.Id);
 
-        var orphaned = loaded ? _wardrobe.OrphanedPlates() : new List<Outfit>();
-        var unsynced = loaded ? _wardrobe.UnsyncedPlateCount() : 0;
+        // The link keeps itself current; this is the one call that makes that true, and it saves only
+        // when Glamourer's list has actually changed
+        _wardrobe.ReconcileDesignCards();
 
-        if (!loaded)
-        {
-            // Nothing is claimed about drift here on purpose. With no plate data in the client
-            // nothing has been compared, and "up to date" would be a guess dressed as a fact.
-            if (plates.Count == 0)
-            {
-                ImGui.TextDisabled("Glamour plates: open your Glamour Plate window once — at a summoning bell, " +
-                                   "an inn or the Glamour Dresser — then come back to sync them.");
-            }
-            else
-            {
-                ImGui.TextDisabled($"{plates.Count} glamour plate(s) saved. Open your Glamour Plate window " +
-                                   "to check them against the game.");
-            }
+        var stranded = _config.ShowGlamourerDesigns
+            ? _wardrobe.StrandedDesignCards()
+            : new List<Outfit>();
 
-            ImGui.Spacing();
-            ImGui.Separator();
-            ImGui.Spacing();
-            return;
-        }
+        _designsMissing.Clear();
+        foreach (var o in stranded) _designsMissing.Add(o.Id);
 
-        var syncLabel = plates.Count == 0 ? " Sync Glamour Plates " : " Resync Glamour Plates ";
-        if (ImGui.Button(syncLabel))
+        DrawPlateSyncControls(platesLoaded, plates.Count, newPlates);
+
+        DrawPlateNotices(orphanPlates, desynced);
+        DrawStrandedDesignNotice(stranded);
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+    }
+
+    /// <summary>The plate half of the sources row: one button and its counts.</summary>
+    /// <remarks>
+    /// Disabled rather than replaced by a sentence when the client is holding no plate data. The
+    /// tooltip is what explains the wait, and it is asked for with <c>AllowWhenDisabled</c> — a
+    /// disabled item does not register as hovered otherwise, so the explanation would never appear.
+    /// </remarks>
+    private void DrawPlateSyncControls(bool loaded, int saved, int unsynced)
+    {
+        if (!loaded) ImGui.BeginDisabled();
+
+        var label = saved == 0 ? " Sync Plates " : " Resync Plates ";
+        if (ImGui.Button(label))
         {
             var (created, updated) = _wardrobe.SyncGlamourPlates();
             _plateSyncStatus = created == 0 && updated == 0
-                ? "Glamour plates were already up to date."
-                : $"Glamour plates: {created} added, {updated} updated.";
+                ? "Plates already up to date."
+                : $"Plates: {created} added, {updated} updated.";
             _plateNoticeIgnored = false;
         }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Reads your glamour plates from the game and saves each one as an outfit.\n\n" +
-                             "Their contents are the game's and cannot be edited here — resync after\n" +
-                             "changing a plate in-game. Names, previews and tags you set are kept.");
 
-        if (unsynced > 0)
+        if (!loaded) ImGui.EndDisabled();
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(loaded
+                ? "Reads your glamour plates from the game and saves each one as an outfit.\n\n" +
+                  "Their contents are the game's and cannot be edited here — resync after\n" +
+                  "changing a plate in-game. Names, previews and tags you set are kept."
+                : "Waiting on the game for your plates.\n\n" +
+                  "Open your Glamour Plate window once — at a summoning bell, an inn or\n" +
+                  "the Glamour Dresser — and they can be read from then on." +
+                  (saved > 0
+                      ? "\n\nThe plates already saved are unaffected and still wearable. They\n" +
+                        "just cannot be checked against the game until then."
+                      : string.Empty));
+
+        // Both counts as one chip, and nothing at all when there is nothing to count
+        var chip = saved > 0 && unsynced > 0 ? $"{saved} plates · {unsynced} new"
+                 : saved > 0                 ? $"{saved} plates"
+                 : unsynced > 0              ? $"{unsynced} to add"
+                                             : string.Empty;
+
+        if (chip.Length > 0)
         {
-            UiLayout.SameLineIfRoomForText($"{unsynced} not saved yet");
-            ImGui.TextDisabled($"{unsynced} not saved yet");
+            UiLayout.SameLineIfRoomForText(chip);
+            ImGui.TextDisabled(chip);
         }
 
-        if (!string.IsNullOrEmpty(_plateSyncStatus))
-        {
-            UiLayout.SameLineIfRoomForText(_plateSyncStatus);
-            ImGui.TextDisabled(_plateSyncStatus);
-        }
+        if (string.IsNullOrEmpty(_plateSyncStatus)) return;
 
+        UiLayout.SameLineIfRoomForText(_plateSyncStatus);
+        ImGui.TextDisabled(_plateSyncStatus);
+    }
+
+    /// <summary>The plate notices: plates emptied in the game, and plates that have drifted.</summary>
+    private void DrawPlateNotices(List<Outfit> orphaned, List<Outfit> desynced)
+    {
         if (orphaned.Count > 0)
         {
             ImGui.Spacing();
@@ -5142,10 +5561,48 @@ public class PluginUi : Window, IDisposable
                 _plateSyncStatus = $"Resynced '{resync.Name}'.";
             }
         }
+    }
+
+    /// <summary>
+    /// The one design notice: cards whose design has been deleted from under them.
+    /// </summary>
+    /// <remarks>
+    /// The only thing about a linked design that can go wrong. There is no drift to report — Glamourer
+    /// owns the design and applies it as it stands, and a rename follows through to the card by itself —
+    /// but a card holding pictures and mods whose design has gone is worth saying out loud, because
+    /// nothing else on screen would explain why it no longer changes your appearance.
+    /// <para>
+    /// Cards holding nothing are not reported: <see cref="WardrobeService.ReconcileDesignCards"/> has
+    /// already dropped those, since there was nothing in them to lose.
+    /// </para>
+    /// </remarks>
+    private void DrawStrandedDesignNotice(List<Outfit> stranded)
+    {
+        if (stranded.Count == 0) return;
 
         ImGui.Spacing();
-        ImGui.Separator();
+        ImGui.TextColored(new Vector4(0.78f, 0.6f, 0.95f, 1f),
+            $"● {stranded.Count} card(s) have lost their Glamourer design: " +
+            string.Join(", ", stranded.Select(o => o.Name)));
+        ImGui.TextDisabled("Their pictures, tags and attached items are kept, and the items can still be " +
+                           "worn — wearing one just no longer applies a design. Keep them as ordinary " +
+                           "outfits from Edit, or forget the cards.");
+
         ImGui.Spacing();
+        if (UiLayout.DeleteButton(" Forget Them ",
+                $"Deletes {stranded.Count} card(s) whose design is gone. The wardrobe items " +
+                "attached to them are kept, exactly as deleting an outfit keeps its items.",
+                UiScale.S(140, 0)))
+        {
+            var forgotten = _wardrobe.ForgetStrandedDesignCards();
+            _designStatus = $"Forgot {forgotten} card(s).";
+        }
+
+        if (!string.IsNullOrEmpty(_designStatus))
+        {
+            UiLayout.SameLineIfRoomForText(_designStatus);
+            ImGui.TextDisabled(_designStatus);
+        }
     }
 
     /// <summary>
@@ -5155,20 +5612,44 @@ public class PluginUi : Window, IDisposable
     /// A plate has no wardrobe items at all, so the ordinary listing would leave its card as the one
     /// thing in the grid that says nothing about its own contents.
     /// </remarks>
-    private static string OutfitCardTooltip(Outfit outfit, List<WardrobeItem> items)
+    private string OutfitCardTooltip(Outfit outfit, List<WardrobeItem> items)
     {
         if (outfit.IsGlamourPlate)
         {
-            var pieces = outfit.VanillaItems
+            var plate = outfit.VanillaItems
                 .Select(kv => (Slot: Enum.TryParse<EquipSlot>(kv.Key, out var s) ? s : EquipSlot.Unknown, kv.Value))
                 .OrderBy(p => (int)p.Slot)
                 .Select(p => $"{p.Slot.DisplayName()} — {p.Value.Name}");
-            return $"{outfit.Name}\n\n" + string.Join("\n", pieces);
+            return $"{outfit.Name}\n\n" + string.Join("\n", plate);
         }
 
-        return items.Count > 0
-            ? $"{outfit.Name}\n\n" + string.Join("\n", items.Select(i => $"{i.Slot.DisplayName()} — {i.Name}"))
-            : outfit.Name;
+        var listing = items.Count > 0
+            ? string.Join("\n", items.Select(i => $"{i.Slot.DisplayName()} — {i.Name}"))
+            : string.Empty;
+
+        if (!outfit.IsDesign)
+            return listing.Length > 0 ? $"{outfit.Name}\n\n{listing}" : outfit.Name;
+
+        // A design card's two halves are worth keeping apart: the pieces are Glamourer's and the items
+        // are the wardrobe's, and someone reading the card wants to know which is doing what
+        var text = outfit.Name;
+
+        if (_wardrobe.DesignContents(outfit) is { } contents)
+        {
+            text += contents.AppliesEquipment switch
+            {
+                true  => "\n\nThe design applies:\n" + string.Join("\n",
+                             contents.Pieces.Select(p => $"{p.Slot.DisplayName()} — {p.Name}")),
+                false => "\n\nThe design applies no gear — appearance only.",
+                // A non-human design keeps its equipment packed, so there is nothing to list
+                null  => "\n\nThe design's equipment cannot be listed (saved on a non-human form).",
+            };
+        }
+
+        if (listing.Length > 0)
+            text += "\n\nWith these items:\n" + listing;
+
+        return text;
     }
 
     private void DrawOutfitCard(Outfit outfit, float cardW, float cardH, ref Outfit? pendingDelete)
@@ -5193,6 +5674,13 @@ public class PluginUi : Window, IDisposable
         // not be able to disguise one — it still tints the background, just not the edge.
         if (outfit.IsGlamourPlate)
             border = new Vector4(0.38f, 0.58f, 0.75f, 1f);
+
+        // Violet for a design, for the same reason and by the same rule: the edge says at a glance
+        // that something outside the wardrobe decides what this card is, and a style tint must not be
+        // able to disguise that. A different hue from the plates' blue, since they are not the same
+        // kind of card — a plate's contents are read-only, a design outfit's items are not.
+        if (outfit.IsDesign)
+            border = new Vector4(0.6f, 0.44f, 0.82f, 1f);
 
         ImGui.PushID(outfit.Id.ToString());
         ImGui.PushStyleColor(ImGuiCol.ChildBg,
@@ -5240,13 +5728,51 @@ public class PluginUi : Window, IDisposable
             }
         }
 
+        // Read once and used twice below — for the badge, and for the piece count on the line after it
+        var design = outfit.IsDesign ? _wardrobe.DesignContents(outfit) : null;
+
+        if (outfit.IsDesign)
+        {
+            var designGone = _designsMissing.Contains(outfit.Id);
+            var noGear     = design is { AppliesEquipment: false };
+
+            // Said in words as the plate badge is: the border colour explains itself only to someone
+            // who already knows what it means. An appearance-only design says so here rather than
+            // leaving a card with no pieces looking like one that failed to load.
+            ImGui.PushStyleColor(ImGuiCol.Text, designGone
+                ? new Vector4(0.78f, 0.6f, 0.95f, 1f)
+                : new Vector4(0.72f, 0.56f, 0.92f, 1f));
+            ImGui.TextUnformatted(CardName(designGone ? $"Design missing: {outfit.DesignName}"
+                                         : noGear     ? $"Design (looks only): {outfit.DesignName}"
+                                                      : $"Design: {outfit.DesignName}"));
+            ImGui.PopStyleColor();
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(designGone
+                    ? $"'{outfit.DesignName}' no longer exists in Glamourer.\n" +
+                      "Wearing this still applies the items attached to it, but no design."
+                    : noGear
+                    ? $"'{outfit.DesignName}' sets no equipment at all — a face, a body or\n" +
+                      "colouring. Wearing this changes your appearance and leaves your\n" +
+                      "clothes to the items attached to it."
+                    : $"Wearing this applies the Glamourer design '{outfit.DesignName}'" +
+                      (outfit.DesignAppliesEquipment ? " in full,\n" : " — customisations only —\n") +
+                      "then any items attached to it over the top.");
+        }
+
         // A deleted item leaves a gap in the outfit; say so rather than quietly wearing fewer
         var missing = outfit.ItemIds.Count - items.Count;
         ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.55f, 0.75f, 0.95f, 1f));
+
+        // A design card counts both halves: the pieces the design puts on you, and the items whose mods
+        // the wardrobe enables with it. Nothing about the pieces while they are still being read —
+        // an unread design is not a design with nothing in it.
+        var counts = $"{items.Count} items" + (missing > 0 ? $" · {missing} missing" : string.Empty);
         ImGui.TextUnformatted(
-            outfit.IsGlamourPlate ? $"{outfit.VanillaItems.Count} pieces"
-            : missing > 0         ? $"{items.Count} items · {missing} missing"
-                                  : $"{items.Count} items");
+            outfit.IsGlamourPlate            ? $"{outfit.VanillaItems.Count} pieces"
+            : design is { AppliesEquipment: true } d ? $"{d.Pieces.Count} pieces · {counts}"
+            : design is { AppliesEquipment: false }  ? $"looks only · {counts}"
+                                                    : counts);
         ImGui.PopStyleColor();
 
         DrawOutfitStyleLabels(outfit, cardW);
@@ -5286,6 +5812,10 @@ public class PluginUi : Window, IDisposable
                       "This is not the game applying the plate: your real glamour and equipment are\n" +
                       "untouched and only you see the change. In exchange it works anywhere — no\n" +
                       "summoning bell, no gearset — including gpose."
+                    : outfit.IsDesign
+                    ? $"Applies the design '{outfit.DesignName}', then any items attached to it.\n\n" +
+                      "The design goes on first, so an attached item always wins the slot it\n" +
+                      "occupies and the design dresses everything else."
                     : "Wear these items, leaving anything else you have on in place.");
         }
 
@@ -5327,6 +5857,10 @@ public class PluginUi : Window, IDisposable
             ImGui.SetTooltip(outfit.IsGlamourPlate
                 ? "Rename it, set a preview, take a photo, and resync it from the game.\n\n" +
                   "Right-click to copy it into an editable outfit."
+                : outfit.IsDesign
+                ? "Rename it, set a preview, take a photo, and attach the mods that\n" +
+                  "belong with this design.\n\n" +
+                  "Right-click to copy it into an outfit with no design attached."
                 : "Rename it, set a preview, take a photo, and add or remove items.\n\n" +
                   "Right-click to duplicate it.");
 
@@ -5341,6 +5875,17 @@ public class PluginUi : Window, IDisposable
             {
                 if (ImGui.MenuItem("Duplicate as editable outfit"))
                     OpenOutfitEdit(_wardrobe.DuplicateAsOutfit(outfit));
+            }
+            else if (outfit.IsDesign)
+            {
+                // The same one copy that makes sense for a plate, for the same reason: a second card
+                // claiming the same design would leave the sync refreshing one and ignoring the other.
+                // What the copy is for here is a look that has outgrown its design.
+                if (ImGui.MenuItem("Duplicate without the design"))
+                    OpenOutfitEdit(_wardrobe.DuplicateAsOutfit(outfit));
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Copies the items, dyes and tags into an ordinary outfit.\n" +
+                                     "The copy applies no design, and resyncing never touches it.");
             }
             else if (ImGui.MenuItem("Duplicate"))
             {
@@ -5367,7 +5912,14 @@ public class PluginUi : Window, IDisposable
             ImGui.SameLine();
         }
 
-        if (DeleteButton("X", "Deletes the outfit only. The items themselves are kept."))
+        // A design card cannot be deleted while its design exists — the link would put it straight back
+        // — so the button is described as what it actually does there: empties the card out
+        if (DeleteButton("X", outfit.IsDesign && !_designsMissing.Contains(outfit.Id)
+                ? "Clears everything the wardrobe keeps for this design: its pictures, tags, dyes and " +
+                  "attached items. The card itself stays while the design exists in Glamourer, and the " +
+                  "items themselves are kept.\n\nTo remove the card, delete the design in Glamourer — or " +
+                  "turn the whole set off in Settings."
+                : "Deletes the outfit only. The items themselves are kept."))
             pendingDelete = outfit;
 
         ImGui.EndChild();
@@ -5425,11 +5977,22 @@ public class PluginUi : Window, IDisposable
         ImGui.SetNextItemWidth(-1);
         ImGui.InputText("##outfitEditImage", ref _editOutfitImage, 512);
 
+        // As in the item editor: applied to the outfit as they are made rather than staged for Save,
+        // since dropping a picture on and pressing Cancel should not undo the picture
+        ImGui.Spacing();
+        ImageGallery.Draw($"outfit_{outfit.Id}", outfit, _textures, UiScale.S(56f), () =>
+        {
+            _editOutfitImage = outfit.ImagePath ?? string.Empty;
+            _outfitImageCache.Remove(outfit.Id);
+            _config.Save();
+        });
+
         var items = _wardrobe.ResolveOutfit(outfit);
 
         // Duplicating swaps the panel to the copy, so the rest of this frame would be drawing
         // controls for an outfit the editor no longer points at
         if (outfit.IsGlamourPlate && DrawGlamourPlateEditHeader(outfit)) return;
+        if (outfit.IsDesign      && DrawDesignEditHeader(outfit)) return;
 
         // Vanilla pieces count as something to photograph. Without them the check hid the button on
         // any outfit made only of plain gear — every glamour plate, and every look saved before a
@@ -5537,6 +6100,116 @@ public class PluginUi : Window, IDisposable
         {
             CloseOutfitEdit();
         }
+    }
+
+    /// <summary>
+    /// Says what a design card is, and offers what can be done to one: apply the design now, choose how
+    /// much of it to apply, or keep the card as an ordinary outfit with no design behind it.
+    /// </summary>
+    /// <remarks>
+    /// Shorter than the plate header has to be, because nothing here is read-only in the way a plate's
+    /// pieces are: the items below are the wardrobe's own. That is the whole point of a design card — a
+    /// design carries gear and colouring but knows nothing about Penumbra, so attaching items here is
+    /// what makes the mods that belong with the look go on with it.
+    /// <para>
+    /// No resync control, and no name field worth offering: the card is a live link, so its name is the
+    /// design's name and follows it. Someone who wants it called something else renames the design.
+    /// </para>
+    /// </remarks>
+    /// <returns>True when the panel has moved to a different outfit and should stop drawing.</returns>
+    private bool DrawDesignEditHeader(Outfit outfit)
+    {
+        var missing = !_wardrobe.DesignIsLive(outfit);
+
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(0.72f, 0.56f, 0.92f, 1f),
+            $"● Linked to the Glamourer design '{outfit.DesignName}'.");
+
+        if (missing)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
+                "That design no longer exists in Glamourer.");
+            ImGui.TextWrapped("Wearing this still applies the items attached to it, but no design. Nothing " +
+                              "here has been deleted — keep it as an ordinary outfit below, or delete the " +
+                              "card from the grid.");
+        }
+        else
+        {
+            ImGui.TextWrapped("Glamourer owns the design and applies it as it stands there, so there is nothing " +
+                              "to sync and nothing here that can go stale — rename it in Glamourer and this " +
+                              "card follows. The items below are the wardrobe's: attach the mods that belong " +
+                              "with this look and they go on over the top, so an item always wins the slot it " +
+                              "occupies.");
+        }
+
+        // What the design actually puts on the character, above the switch that decides how much of it
+        // to apply — the answer to "should I turn this off" is the list itself
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        DrawDesignPieces(outfit);
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        // A design with no gear in it has nothing for this switch to act on, so it is disabled rather
+        // than left as a control that appears to do something
+        var noGear = _wardrobe.DesignContents(outfit) is { AppliesEquipment: false };
+
+        if (noGear) ImGui.BeginDisabled();
+
+        var equipment = outfit.DesignAppliesEquipment;
+        if (ImGui.Checkbox("Apply the design's equipment too", ref equipment))
+        {
+            outfit.DesignAppliesEquipment = equipment;
+            _config.Save();
+        }
+
+        if (noGear) ImGui.EndDisabled();
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(noGear
+                ? "This design sets no equipment, so there is nothing for this to apply\n" +
+                  "either way. Whatever you attach below is all that will be worn."
+                : "On: the design is applied whole — its gear as well as its face,\n" +
+                  "body and colouring. This is what you want for a design that is\n" +
+                  "the whole look.\n\n" +
+                  "Off: only its customisations are applied, so it can carry a face\n" +
+                  "or a body without emptying the slots this card's own items and\n" +
+                  "vanilla pieces are there to fill.");
+
+        ImGui.Spacing();
+
+        if (missing) ImGui.BeginDisabled();
+        if (ImGui.Button("Apply Design Now", new Vector2(-1, 0)))
+            _designStatus = _wardrobe.ApplyOutfitDesign(outfit)
+                ? $"Applied '{outfit.DesignName}'."
+                : $"Glamourer would not apply '{outfit.DesignName}'.";
+        if (missing) ImGui.EndDisabled();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(missing
+                ? "The design is gone from Glamourer, so there is nothing to apply."
+                : "Applies the design on its own, without touching the items attached to it.\n" +
+                  "For putting the look back after something else has changed the character.");
+
+        if (ImGui.Button("Duplicate Without The Design", new Vector2(-1, 0)))
+        {
+            OpenOutfitEdit(_wardrobe.DuplicateAsOutfit(outfit));
+            return true;
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Copies the items, dyes and tags into an ordinary outfit that applies\n" +
+                             "no design. For a look that has outgrown the design behind it.\n\n" +
+                             "This card is left exactly as it is.");
+
+        if (!string.IsNullOrEmpty(_designStatus))
+        {
+            ImGui.Spacing();
+            ImGui.TextWrapped(_designStatus);
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -5934,6 +6607,42 @@ public class PluginUi : Window, IDisposable
     }
 
     /// <summary>
+    /// Takes the design's own dyes onto the mods attached to a design card.
+    /// </summary>
+    /// <remarks>
+    /// A mod attached to a design card is there to make sure the look's mods are enabled, so the colour
+    /// it should be dyed is the one the design already uses in that slot. Getting that by hand means
+    /// reading the design's dye off the list above and finding it again in the picker below, for every
+    /// piece — and a wrong colour is the mistake least visible on screen, because the piece is right.
+    /// <para>
+    /// A button rather than continuous inheritance: the design's colours can change in Glamourer at any
+    /// time, and following them automatically would overwrite a colour deliberately chosen for a mod.
+    /// New items inherit as they are attached, which covers the case that matters without ever
+    /// overwriting anything.
+    /// </para>
+    /// </remarks>
+    private void DrawInheritDesignDyes(Outfit outfit)
+    {
+        if (!outfit.IsDesign) return;
+
+        var count = _wardrobe.DesignDyeableCount(outfit);
+        if (count == 0) return;
+
+        if (ImGui.Button($"Take dyes from the design  ({count})", new Vector2(-1, 0)))
+        {
+            var applied = _wardrobe.InheritDesignDyes(outfit);
+            _designStatus = $"{applied} item(s) took the design's dyes.";
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Dyes each attached item the colour the design uses in its slot.\n\n" +
+                             "Items inherit that colour as you attach them, so this is for catching up\n" +
+                             "after the design's own dyes have changed in Glamourer — or for putting a\n" +
+                             "colour back after changing one here.");
+
+        ImGui.Spacing();
+    }
+
+    /// <summary>
     /// Dye pickers that set one channel across every dyeable item in the outfit at once.
     /// </summary>
     /// <remarks>
@@ -5945,6 +6654,8 @@ public class PluginUi : Window, IDisposable
     {
         // With nothing dyeable in the outfit there is nothing for these to act on
         if (!items.Any(i => !i.Slot.IsModOnly())) return;
+
+        DrawInheritDesignDyes(outfit);
 
         ImGui.TextDisabled("Dye all items");
         if (ImGui.IsItemHovered())
@@ -6146,6 +6857,31 @@ public class PluginUi : Window, IDisposable
         UiLayout.DeleteButton(label, tooltip, size);
 
     /// <summary>
+    /// An ordinary-sized button carrying a Font Awesome glyph instead of a label.
+    /// </summary>
+    /// <remarks>
+    /// Icons come from Font Awesome rather than from characters typed into a string. Dalamud's default
+    /// font carries a subset of Unicode, and the shapes that look right in an editor — arrows, ticks,
+    /// crosses — are mostly outside it and render as empty boxes in game. This has caught the plugin out
+    /// before, which is why the icon font is the rule for anything that is a picture rather than words.
+    /// <para>
+    /// The tooltip is set outside the font scope on purpose: pushed inside it, the tooltip's own text
+    /// would be drawn in the icon font and come out as nonsense.
+    /// </para>
+    /// </remarks>
+    private static bool GlyphButton(FontAwesomeIcon icon, string id, string tooltip)
+    {
+        bool clicked;
+
+        using (Plugin.PluginInterface.UiBuilder.IconFontHandle?.Push())
+            clicked = ImGui.Button($"{icon.ToIconString()}##{id}");
+
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(tooltip);
+
+        return clicked;
+    }
+
+    /// <summary>
     /// A square button drawn with a Font Awesome glyph, sized to sit level with a checkbox.
     /// </summary>
     /// <remarks>
@@ -6261,6 +6997,20 @@ public class PluginUi : Window, IDisposable
             return;
         }
 
+        // A design card has no use for these and is actively harmed by them. The design already supplies
+        // gear for every slot it applies, and vanilla pieces are put on *after* the items — so capturing
+        // while the design is worn would freeze a copy of the design's own gear and then apply that copy
+        // over the top of the live design every time, which is the snapshot the link exists to avoid.
+        // The design's pieces are listed in its header instead.
+        if (outfit.IsDesign)
+        {
+            ImGui.TextDisabled("Vanilla items");
+            ImGui.TextDisabled("Not used on a design card: the design already supplies the gear for every " +
+                               "slot it applies, and the items you attach cover the rest. Its pieces are " +
+                               "listed under The design applies, above.");
+            return;
+        }
+
         ImGui.TextDisabled("Vanilla items");
         ImGui.TextDisabled("Plain gear in the slots this outfit's own items do not fill. Saved with " +
                            "the outfit and put back when it is worn.");
@@ -6371,6 +7121,79 @@ public class PluginUi : Window, IDisposable
 
             ImGui.PopID();
         }
+    }
+
+    /// <summary>
+    /// The pieces a linked design puts on the character, read live from Glamourer.
+    /// </summary>
+    /// <remarks>
+    /// The design's half of the card, and read-only for the same reason a plate's pieces are: Glamourer
+    /// owns them, and they are changed by editing the design there. Not stored anywhere — a copy of this
+    /// list would be exactly the stale snapshot the link exists to avoid, so it is asked for each time
+    /// and served from a rationed cache.
+    /// <para>
+    /// A design that sets no equipment is the case this exists to make legible. Those are common — a
+    /// design saved for a face or a body — and without a word here their card would show an empty list
+    /// and look broken.
+    /// </para>
+    /// </remarks>
+    private void DrawDesignPieces(Outfit outfit)
+    {
+        ImGui.TextDisabled("The design applies");
+
+        var contents = _wardrobe.DesignContents(outfit);
+
+        if (contents == null)
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled(_wardrobe.DesignIsLive(outfit)
+                ? "Reading it from Glamourer…"
+                : "Glamourer no longer has this design, so there is nothing to read.");
+            return;
+        }
+
+        ImGui.Spacing();
+
+        if (contents.AppliesEquipment == null)
+        {
+            // Not "no gear": a design saved on a non-human form keeps its equipment packed, so the
+            // honest answer is that it cannot be listed rather than that there is none
+            ImGui.TextDisabled("This design was saved on a non-human form, so Glamourer stores its " +
+                               "equipment packed rather than slot by slot. It applies normally — it " +
+                               "just cannot be listed here.");
+            return;
+        }
+
+        if (contents.AppliesEquipment == false)
+        {
+            ImGui.TextColored(new Vector4(0.72f, 0.56f, 0.92f, 1f), "No gear — appearance only.");
+            ImGui.TextWrapped(contents.AppliesCustomize
+                ? "This design sets your face, body or colouring and leaves your clothes alone. Attach " +
+                  "items below to dress it, and they are all that will be equipped."
+                : "This design sets no equipment and no appearance either. Wearing it changes nothing " +
+                  "on its own — whatever you attach below is the whole of it.");
+            return;
+        }
+
+        foreach (var piece in contents.Pieces)
+        {
+            ImGui.PushID($"designPiece_{piece.Slot}");
+
+            ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f), piece.Slot.DisplayName());
+
+            ImGui.SameLine();
+            ImGui.TextUnformatted(piece.Name);
+
+            DrawStainSwatch(piece.Stain1);
+            DrawStainSwatch(piece.Stain2);
+
+            ImGui.PopID();
+        }
+
+        if (!contents.AppliesCustomize) return;
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("It also sets your appearance — face, body or colouring.");
     }
 
     /// <summary>
@@ -6638,6 +7461,15 @@ public class PluginUi : Window, IDisposable
                 if (!ImGui.Selectable($"{item.Slot.DisplayName()} — {item.Name}##add_{item.Id}")) continue;
 
                 outfit.ItemIds.Add(item.Id);
+
+                // On a design card, a mod attached to a slot the design fills starts out dyed the colour
+                // the design uses there — the whole reason the mod is being attached is to be that piece
+                if (outfit.IsDesign && _wardrobe.DesignDyeFor(outfit, item.Slot) is { } dye)
+                {
+                    outfit.Dyes[item.Id.ToString()] = dye;
+                    _designStatus = $"'{item.Name}' took the design's dye for {item.Slot.DisplayName()}.";
+                }
+
                 _config.Save();
                 _addToOutfitSearch = string.Empty;
             }
@@ -6721,6 +7553,8 @@ public class PluginUi : Window, IDisposable
             _outfitImageCache[outfit.Id] = entry;
         }
 
+        var top = ImGui.GetCursorPos();
+
         if (entry.Texture?.GetWrapOrDefault() is { } wrap)
         {
             if (_config.PortraitOutfitPreviews) ImageDraw.Portrait(wrap, thumbSize);
@@ -6730,11 +7564,16 @@ public class PluginUi : Window, IDisposable
 
             // The same right-click as an item card's picture. An outfit preview is a full-body shot,
             // which is the one that suffers most from being looked at in a card.
+            var count = outfit.ImageCount();
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Right-click to view full size.");
+                ImGui.SetTooltip(count > 1
+                    ? $"{count} pictures. Right-click to view them full size."
+                    : "Right-click to view full size.");
 
             if (ImGui.IsItemClicked(ImGuiMouseButton.Right))
                 _quickViewOutfit = outfit.Id;
+
+            if (count > 1) DrawImageCountBadge(top, count);
 
             return;
         }
@@ -6951,6 +7790,8 @@ public class PluginUi : Window, IDisposable
         DrawImportSettings();
         SettingsBreak();
         DrawModCategorySettings();
+        SettingsBreak();
+        DrawGlamourerDesignSettings();
         SettingsBreak();
         DrawWearingSettings();
         SettingsBreak();
@@ -7786,6 +8627,22 @@ public class PluginUi : Window, IDisposable
         ImGui.TextUnformatted("During a session");
         ImGui.Spacing();
 
+        var manualSession = _session.Manual;
+        if (ImGui.Checkbox("Manual mode", ref manualSession))
+            _session.Manual = manualSession;
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The session stays on each item however many screenshots you take: the\n" +
+                             "first becomes the card's picture and the rest join it, and it moves on\n" +
+                             "when you press Next Item.\n\n" +
+                             "Off, it moves on as soon as a screenshot lands — one per item, plus any\n" +
+                             "camera angles you have ticked.\n\n" +
+                             "Set here, this applies from the very first item of a session.\n" +
+                             "The same checkbox is on the session HUD.");
+
+        ImGui.TextDisabled(manualSession
+            ? "Framing a piece well usually takes a few attempts, and this is the mode for that."
+            : "One screenshot per item, plus a shot at each camera angle you have ticked.");
+
         var stripDuringSession = _session.StripOthers;
         if (ImGui.Checkbox("Strip other items before each shot", ref stripDuringSession))
             _session.StripOthers = stripDuringSession;
@@ -7808,11 +8665,57 @@ public class PluginUi : Window, IDisposable
                              "The same checkbox is on the session HUD, and the compact view\n" +
                              "has an Expand button for a one-off return to the full window.");
 
-        // Not a setting, but a visible change to the character while a session runs
+        // Not settings, but visible changes to the character while a session runs
         ImGui.Spacing();
         ImGui.TextDisabled("Your weapon is hidden in Glamourer for each shot regardless of the " +
-                           "above, unless the item being photographed is the weapon. It is put " +
-                           "back as you had it when the session ends.");
+                           "above, unless the item being photographed is the weapon. Your hat is " +
+                           "shown while a head piece is being photographed, since a hidden one would " +
+                           "give you a folder of bare heads. Both are put back as you had them when " +
+                           "the session ends.");
+
+        // No setting of its own, because the angles live on the presets — which is the point. Said
+        // here because this is where someone reads about sessions, and a session that could have taken
+        // a back view of everything is worth knowing about before running one over a whole wardrobe.
+        ImGui.Spacing();
+        ImGui.TextDisabled("A session takes one shot per item by default. Tick a camera preset in a " +
+                           "slot's list and it takes a shot at that angle too, filed as another of " +
+                           "that item's pictures — a side, a back, a close-up. The preset selected " +
+                           "with the button on its left is the cover.");
+
+        if (_config.SlotCameraPresetLists.Values.Any(list => list.Any(p => p.CaptureInSession)))
+        {
+            var slots = _config.SlotCameraPresetLists
+                .Where(kv => _config.ExtraShotPresetsFor(kv.Key).Count > 0)
+                .Select(kv => $"{kv.Key} ({_config.ExtraShotPresetsFor(kv.Key).Count + 1})")
+                .OrderBy(s => s, StringComparer.OrdinalIgnoreCase);
+
+            ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f),
+                "Extra angles set for: " + string.Join(", ", slots) + ".");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Shots per item, the cover included, for every slot that has more\n" +
+                                 "than one. Every other slot still takes a single shot.");
+        }
+
+        ImGui.Spacing();
+        ImGui.TextUnformatted("Camera presets");
+        ImGui.TextDisabled("Angles a session shoots from, per slot. Set them up before a run rather " +
+                           "than inventing each one while the session waits.");
+        ImGui.Spacing();
+
+        if (ImGui.Button("Edit Angles For Every Slot", new Vector2(-1, 0)))
+        {
+            _showCameraPresets = true;
+            _showSettings      = false;
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Opens every slot's preset list in one panel, so a whole wardrobe's angles\n" +
+                             "can be framed in one visit to GPose.\n\n" +
+                             "The same controls the session HUD shows for whichever slot it is on.");
+
+        var slotsWithPresets = _config.SlotCameraPresetLists.Count(kv => kv.Value.Count > 0);
+        ImGui.TextDisabled(slotsWithPresets == 0
+            ? "No angles saved yet."
+            : $"{slotsWithPresets} slot(s) have an angle saved.");
 
         ImGui.Spacing();
         ImGui.TextUnformatted("Camera presets file");
@@ -7952,6 +8855,77 @@ public class PluginUi : Window, IDisposable
         ImGui.TextDisabled("Animation mods replacing the same animation swap each other out, like " +
                            "two body mods. What each one replaces is detected on import, and can " +
                            "be changed when editing it.");
+    }
+
+    /// <summary>
+    /// The one switch behind design cards: whether your Glamourer designs appear in the outfits grid.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately the whole of it. There is nothing to sync and nothing to keep up to date, so there
+    /// is nothing else to decide — the cards are Glamourer's design list as it stands, and everything
+    /// per-card lives on the card. Modelled on <see cref="DrawModCategorySettings"/>, which is the other
+    /// switch in here that decides what the grid contains rather than how it behaves.
+    /// </remarks>
+    private void DrawGlamourerDesignSettings()
+    {
+        ImGui.TextUnformatted("Glamourer Designs");
+        ImGui.TextDisabled("Show your Glamourer designs in the outfits grid, so each one can carry " +
+                           "pictures, tags and the mods that belong with it.");
+        ImGui.Spacing();
+
+        var show = _config.ShowGlamourerDesigns;
+        if (ImGui.Checkbox("Show Glamourer designs as outfits", ref show))
+        {
+            _config.ShowGlamourerDesigns = show;
+            _config.Save();
+
+            // Straight away rather than on the next visit to the grid, so the count below is the truth
+            // by the time the checkbox has finished being clicked — and from Glamourer rather than from
+            // the half-second cache, since this is the one moment the answer is being asked for
+            if (show)
+            {
+                Plugin.Glamourer.InvalidateDesigns();
+                _wardrobe.ReconcileDesignCards();
+            }
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("A card per design, alongside your own outfits.\n\n" +
+                             "This is a live link, not a copy: a design saved in Glamourer appears\n" +
+                             "here on its own, a rename follows through, and deleting it there\n" +
+                             "removes the card. Nothing to sync, nothing to keep up to date.\n\n" +
+                             "Wearing one applies the design, then any wardrobe items attached to\n" +
+                             "it — which is how the mods that belong with a look get enabled, since\n" +
+                             "a design knows nothing about Penumbra.\n\n" +
+                             "Turning this off hides the cards and keeps everything attached to them.");
+
+        var live  = Plugin.Glamourer.GetDesignsCached().Count;
+        var cards = _wardrobe.DesignOutfits().Count;
+
+        if (!show)
+        {
+            if (cards > 0)
+                ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f),
+                    $"{cards} design card(s) are currently hidden. Nothing attached to them is lost.");
+            else if (live > 0)
+                ImGui.TextDisabled($"Glamourer has {live} design(s) to show.");
+            return;
+        }
+
+        ImGui.TextDisabled(live == 0
+            ? "Glamourer has no designs to show, or is not answering."
+            : $"{live} design(s) linked. Renames and deletions in Glamourer follow through by themselves.");
+
+        // The one thing that can go wrong, offered here as well as in the grid: someone who turned the
+        // cards off is exactly the person who will not see the notice there
+        var stranded = _wardrobe.StrandedDesignCards();
+        if (stranded.Count == 0) return;
+
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(0.78f, 0.6f, 0.95f, 1f),
+            $"{stranded.Count} card(s) have lost their design: " +
+            string.Join(", ", stranded.Select(o => o.Name)));
+        ImGui.TextDisabled("Their pictures, tags and attached items are kept. Cards holding nothing are " +
+                           "dropped by themselves — these are the ones with something in them.");
     }
 
     private static readonly (VariantNameStyle Style, string Label)[] VariantNameStyles =

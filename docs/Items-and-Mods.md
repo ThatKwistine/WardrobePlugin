@@ -26,6 +26,10 @@ and **Edit**.
 Right-click rather than a button on the card: at small card sizes anything drawn over the thumbnail
 covers the very thing it exists to show you.
 
+An item or outfit with [several pictures](Images-and-Screenshots.md#several-pictures-per-item) shows
+the count in the corner of its thumbnail, and the viewer pages through them with **◄ ►** or the arrow
+keys.
+
 ## Deleting things
 
 **Every control that takes something away needs Ctrl held.** They are greyed out until you hold it,
@@ -55,6 +59,12 @@ options enabled the lists show only mods the wardrobe does not reference at all.
 
 All of this applies identically to the **+ Add Supplementary Mod** picker — both pickers render their
 rows through the same code path.
+
+The list is A–Z by default. **Newest installed first**, a checkbox inside the picker itself, puts what
+you most recently installed at the top — the other way anyone looks for a mod, when you have just
+downloaded something and do not know its exact name. The order in use is named beside **Mod**, and Mass
+Import follows the same choice. See
+[Newest installed first](Settings.md#newest-installed-first) for what the date actually measures.
 
 A **Tags & Notes** section sits above the **Import** button. Whatever is set there is applied to
 every item the import creates. **Mass Import** has a **Tags** button beside **Import Mods** doing the

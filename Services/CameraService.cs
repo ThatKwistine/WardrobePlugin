@@ -51,6 +51,16 @@ public unsafe class CameraService : IDisposable
     private static float* PanH(Camera* cam) => (float*)((byte*)cam + PanHOffset);
     private static float* PanV(Camera* cam) => (float*)((byte*)cam + PanVOffset);
 
+    /// <summary>
+    /// Whether GPose is active, and so whether an angle can be saved or applied at all.
+    /// </summary>
+    /// <remarks>
+    /// Presets only work against the native GPose camera — outside it there is nothing to read a
+    /// meaningful angle from, and nothing that would hold one if it were applied. Asked so the preset
+    /// panel can say that before the button is pressed rather than after it silently does nothing.
+    /// </remarks>
+    public bool InGpose => Plugin.ClientState.IsGPosing;
+
     public CameraPreset? Capture()
     {
         var mgr = CameraManager.Instance();

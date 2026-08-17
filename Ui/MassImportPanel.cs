@@ -190,7 +190,11 @@ public class MassImportPanel : Window, IDisposable
             for (var m = 0; m < item.Mods.Count; m++)
                 (m == 0 ? primaryDirs : supportDirs).Add(item.Mods[m].ModDirectory);
 
-        var mods = _penumbra.GetMods();
+        // The same order the single-mod picker uses, so "newest first" means one thing in the plugin
+        var mods = _config.ImportListNewestFirst
+            ? _penumbra.GetModsByInstalled()
+            : _penumbra.GetMods();
+
         for (var i = 0; i < mods.Count; i++)
         {
             var (dir, name) = mods[i];

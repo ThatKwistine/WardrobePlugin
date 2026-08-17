@@ -246,8 +246,72 @@ public class Configuration : IPluginConfiguration
         return list[0];
     }
 
+    /// <summary>
+    /// The presets a session takes extra shots at for a slot, in list order.
+    /// </summary>
+    /// <remarks>
+    /// The cover shot is not among them: <see cref="DefaultPresetFor"/> answers that, and a preset
+    /// that is both the default and ticked here would have the session photograph one angle twice.
+    /// Filtered on that rather than trusted, since the default falls back to the first in the list and
+    /// so can become a preset nobody marked.
+    /// </remarks>
+    public List<CameraPreset> ExtraShotPresetsFor(string slotKey)
+    {
+        var cover = DefaultPresetFor(slotKey);
+        return PresetsFor(slotKey)
+            .Where(p => p.CaptureInSession && !ReferenceEquals(p, cover))
+            .ToList();
+    }
+
     /// <summary>Path to the JSON file used for exporting/importing camera presets.</summary>
     public string CameraPresetsPath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// A session waits on each item until you say to move on, taking as many pictures as you like.
+    /// </summary>
+    /// <remarks>
+    /// The other way of running a session, and for a lot of people the only sensible one: framing a
+    /// piece properly is a few attempts, not one, and an automatic run that moves on the instant a
+    /// screenshot lands turns every misjudged angle into a re-shoot later. Here the first picture
+    /// becomes the cover, every one after it joins the set, and nothing advances until <b>Next Item</b>.
+    /// <para>
+    /// Persisted, like <see cref="StripOthersDuringSession"/>, so it is already in effect for the first
+    /// item of a session rather than from whenever the HUD checkbox is noticed.
+    /// </para>
+    /// </remarks>
+    public bool ManualScreenshotMode { get; set; }
+
+    /// <summary>
+    /// List Penumbra's mods newest first when importing, instead of alphabetically.
+    /// </summary>
+    /// <remarks>
+    /// Off by default, because a list of several hundred mods is searched by name far more often than
+    /// it is browsed. On, it puts what you just installed at the top, which is the other way anyone
+    /// looks for a mod: you have downloaded three things and want to import them.
+    /// <para>
+    /// "Newest" is the mod folder's creation date — see
+    /// <see cref="Ipc.PenumbraIpc.GetModsByInstalled"/> for why Penumbra's own import date is not
+    /// available and what that costs.
+    /// </para>
+    /// </remarks>
+    public bool ImportListNewestFirst { get; set; }
+
+    /// <summary>
+    /// Show your Glamourer designs in the outfits grid, as cards of their own.
+    /// </summary>
+    /// <remarks>
+    /// The whole of the choice. There is no syncing and nothing to keep up to date: the cards are
+    /// Glamourer's design list as it stands, so a design added, renamed or deleted there shows up here
+    /// without anyone pressing anything. What the wardrobe keeps for each one is its own side of the
+    /// card — the pictures, the tags, and the wardrobe items whose mods should be enabled along with
+    /// it — and that is written the first time a design is seen rather than by a sync step.
+    /// <para>
+    /// Off by default because it is a visible change to a grid people have already arranged, and a
+    /// wardrobe with sixty designs in Glamourer would otherwise gain sixty cards on update. Turning it
+    /// off again keeps everything attached to them, ready for turning it back on.
+    /// </para>
+    /// </remarks>
+    public bool ShowGlamourerDesigns { get; set; }
 
     /// <summary>
     /// Manage mods that are not equipment — animations, VFX, mounts and minions.

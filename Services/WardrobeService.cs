@@ -1393,6 +1393,19 @@ public class WardrobeService : IDisposable
     /// </remarks>
     public int CaptureVanillaItems(Outfit outfit)
     {
+        // Never on a design card. The design supplies the gear for every slot it applies, and vanilla
+        // pieces go on after the items — so a capture taken while the design was worn would freeze a
+        // copy of the design's own gear and then lay that copy over the live design on every wear. That
+        // is precisely the snapshot the link exists to avoid, and it would be invisible: the card would
+        // look right and quietly stop following the design. Reached from Update from worn as well as
+        // from the button, which is why the guard is here rather than only in the UI.
+        if (outfit.IsDesign)
+        {
+            _log.Debug($"[Wardrobe] '{outfit.Name}' is a design card — skipping the vanilla capture, " +
+                       $"since the design already supplies its gear");
+            return 0;
+        }
+
         var covered = ResolveOutfit(outfit).Select(i => i.Slot).ToHashSet();
         var live    = _glamourer.GetEquippedPieces();
         var vanilla = new Dictionary<string, VanillaPiece>();
@@ -1494,6 +1507,11 @@ public class WardrobeService : IDisposable
                 UnwearItem(worn, save: false, redraw: false);
             }
         }
+
+        // Before the items, so the design is the layer they go on over: an item in the outfit wins
+        // the slot it occupies, and the design dresses everything the outfit has nothing for. The
+        // other way round, the design's gear would replace the very pieces the outfit is made of.
+        if (outfit.IsDesign) ApplyOutfitDesign(outfit);
 
         foreach (var item in items)
             WearItem(item, GetDye(outfit, item.Id));
@@ -1713,6 +1731,299 @@ public class WardrobeService : IDisposable
         return Plugin.GlamourPlates.ReadPlates().Count(p => !known.Contains(p.PlateId));
     }
 
+    // ── Glamourer designs ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The style every design card is tagged with, so the whole set can be filtered in or out with the
+    /// control that already exists — the same trick <see cref="GlamourPlateStyle"/> plays.
+    /// </summary>
+    /// <remarks>
+    /// Given on creation and then the user's to remove: it is an ordinary style, and a card that has
+    /// been filed under styles of its own has no need of it. Removing it is also what tells
+    /// <see cref="HoldsUserContent"/> that a card has been looked after.
+    /// </remarks>
+    public static readonly string DesignStyle = TagTree.StylePath("Glamourer Design");
+
+    /// <summary>Design cards, whether or not Glamourer is currently answering.</summary>
+    public List<Outfit> DesignOutfits() =>
+        _config.Outfits.Where(o => o.IsDesign)
+                       .OrderBy(o => o.Name, StringComparer.OrdinalIgnoreCase)
+                       .ToList();
+
+    /// <summary>
+    /// Brings the design cards in line with Glamourer's design list, which is their only authority.
+    /// </summary>
+    /// <remarks>
+    /// A design is not copied into the wardrobe and then kept up to date — it is linked. Glamourer owns
+    /// which designs exist and what they are called, so this runs off the design list every time the
+    /// outfits grid draws: a design saved there gains a card without anyone pressing sync, a rename
+    /// follows through to the card, and a deletion takes the card with it.
+    /// <para>
+    /// What the wardrobe keeps is the card's own side — pictures, tags, dyes, and the items whose mods
+    /// should go on with the design. So a card holding any of that is <b>never</b> deleted when its
+    /// design disappears: it is left behind for <see cref="StrandedDesignCards"/> to report, because
+    /// that content is the user's work and not Glamourer's to take away. A card holding nothing but the
+    /// link is deleted, since there is nothing in it to lose and a wardrobe should not accumulate a
+    /// record for every design ever browsed.
+    /// </para>
+    /// <para>
+    /// Called from the draw loop, so it saves only when something actually changed — and reads the
+    /// design list through the IPC's half-second cache rather than asking Glamourer every frame.
+    /// </para>
+    /// </remarks>
+    /// <returns>True when the card list changed, so the caller can redraw or report.</returns>
+    public bool ReconcileDesignCards()
+    {
+        if (!_config.ShowGlamourerDesigns) return false;
+
+        var live = _glamourer.GetDesignsCached();
+
+        // Nothing to reconcile against. An empty list means Glamourer is not answering or holds no
+        // designs, and treating that as "every design was deleted" would clear every card on a frame
+        // where the answer is simply not in yet.
+        if (live.Count == 0) return false;
+
+        var changed = false;
+        var known   = new Dictionary<Guid, Outfit>();
+
+        foreach (var card in _config.Outfits.Where(o => o.IsDesign))
+            known.TryAdd(card.DesignId!.Value, card);
+
+        foreach (var (id, name) in live)
+        {
+            if (known.TryGetValue(id, out var card))
+            {
+                // The name is Glamourer's, so it follows without asking. Nothing else here is.
+                if (string.Equals(card.Name, name, StringComparison.Ordinal) &&
+                    string.Equals(card.DesignName, name, StringComparison.Ordinal))
+                    continue;
+
+                _log.Debug($"[Wardrobe] Design card '{card.Name}' follows its design's new name '{name}'");
+                card.Name       = name;
+                card.DesignName = name;
+                changed         = true;
+                continue;
+            }
+
+            _config.Outfits.Add(new Outfit
+            {
+                Name       = name,
+                DesignId   = id,
+                DesignName = name,
+                Tags       = new List<string> { DesignStyle },
+            });
+            changed = true;
+        }
+
+        // Designs that have gone from Glamourer. Only the empty cards go with them.
+        var ids = live.Select(d => d.Id).ToHashSet();
+        foreach (var (id, card) in known)
+        {
+            if (ids.Contains(id) || HoldsUserContent(card)) continue;
+
+            _log.Debug($"[Wardrobe] Dropping empty design card '{card.Name}' — its design is gone " +
+                       $"from Glamourer and there was nothing attached to it");
+            _config.Outfits.Remove(card);
+            changed = true;
+        }
+
+        if (!changed) return false;
+
+        _config.Save();
+        WardrobeChanged?.Invoke();
+        return true;
+    }
+
+    /// <summary>
+    /// Whether anything on this card came from the user rather than from the link.
+    /// </summary>
+    /// <remarks>
+    /// What decides between forgetting a card and keeping it when its design disappears. The design
+    /// style tag is not counted: every card is given it on creation, so counting it would make every
+    /// card look hand-edited and nothing would ever be tidied away.
+    /// </remarks>
+    private static bool HoldsUserContent(Outfit card) =>
+        card.ItemIds.Count > 0
+        || card.Dyes.Count > 0
+        || card.VanillaItems.Count > 0
+        || card.ImageCount() > 0
+        || card.Tags.Any(t => !string.Equals(t, DesignStyle, StringComparison.Ordinal))
+        || !card.DesignAppliesEquipment;
+
+    /// <summary>
+    /// Design cards whose design no longer exists in Glamourer, but which hold something worth keeping.
+    /// </summary>
+    /// <remarks>
+    /// Reported rather than deleted, and never while Glamourer is answering with nothing at all — an
+    /// empty design list means the plugin is not there or has none, which is not the same as every
+    /// design having been deleted. The same silence <see cref="DesyncedPlates"/> keeps when the client
+    /// holds no plate data.
+    /// </remarks>
+    public List<Outfit> StrandedDesignCards()
+    {
+        var live = _glamourer.GetDesignsCached();
+        if (live.Count == 0) return new List<Outfit>();
+
+        var ids = live.Select(d => d.Id).ToHashSet();
+        return DesignOutfits().Where(o => !ids.Contains(o.DesignId!.Value)).ToList();
+    }
+
+    /// <summary>
+    /// Deletes the stranded cards, for someone who has decided their designs are gone for good.
+    /// </summary>
+    /// <remarks>
+    /// Only ever from a button. The items attached to them are kept — this deletes the cards, exactly
+    /// as deleting an outfit does, and the wardrobe items themselves are untouched.
+    /// </remarks>
+    public int ForgetStrandedDesignCards()
+    {
+        var stranded = StrandedDesignCards();
+        if (stranded.Count == 0) return 0;
+
+        foreach (var card in stranded)
+        {
+            _log.Information($"[Wardrobe] Forgetting design card '{card.Name}' — its design is gone " +
+                             $"from Glamourer");
+            _config.Outfits.Remove(card);
+        }
+
+        _config.Save();
+        WardrobeChanged?.Invoke();
+        return stranded.Count;
+    }
+
+    /// <summary>
+    /// What a design card's design contains, or null while Glamourer has not been asked yet.
+    /// </summary>
+    /// <remarks>
+    /// Read live rather than stored on the card. A design's gear is Glamourer's, and copying it here
+    /// would be the sync model again — a list that quietly went stale the moment the design was edited.
+    /// The read is cached and rationed inside <see cref="GlamourerIpc"/>, so asking once per card per
+    /// frame is what it is built for.
+    /// </remarks>
+    public GlamourerIpc.DesignContents? DesignContents(Outfit card) =>
+        card.DesignId is { } id ? _glamourer.GetDesignContents(id) : null;
+
+    /// <summary>
+    /// The dyes the design puts on a slot, or null when it fills that slot with nothing dyed.
+    /// </summary>
+    /// <remarks>
+    /// What a mod attached to a design card should be dyed. The card exists to make sure the mods behind
+    /// a look are enabled, so the colour that look was built in belongs to the design rather than being
+    /// chosen again by hand — and getting it wrong is not obvious on screen, because the piece is right
+    /// and only the colour is off.
+    /// <para>
+    /// Null for an undyed piece as well as for a slot the design leaves alone: storing two zeroes would
+    /// write an <see cref="OutfitDye"/> that says nothing, which the rest of the dye code treats as
+    /// absent anyway.
+    /// </para>
+    /// </remarks>
+    public OutfitDye? DesignDyeFor(Outfit card, EquipSlot slot)
+    {
+        if (DesignContents(card) is not { } contents) return null;
+
+        foreach (var piece in contents.Pieces)
+        {
+            if (piece.Slot != slot) continue;
+            if (piece.Stain1 == 0 && piece.Stain2 == 0) return null;
+
+            return new OutfitDye { Stain1 = piece.Stain1, Stain2 = piece.Stain2 };
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gives each of a design card's items the dyes the design uses in its slot.
+    /// </summary>
+    /// <remarks>
+    /// Explicit rather than continuous. The design's colours can change in Glamourer at any time, and
+    /// re-reading them onto the items every frame would quietly overwrite a colour the user had chosen
+    /// for a mod on purpose — which is the one thing they cannot undo. So it is a button, and pressing it
+    /// again after editing the design is how the two are brought back together.
+    /// </remarks>
+    /// <returns>How many items were given a dye.</returns>
+    public int InheritDesignDyes(Outfit card)
+    {
+        if (!card.IsDesign) return 0;
+
+        var applied = 0;
+
+        foreach (var item in ResolveOutfit(card))
+        {
+            if (DesignDyeFor(card, item.Slot) is not { } dye) continue;
+
+            var key = item.Id.ToString();
+
+            // The advanced rows are the user's and say nothing about the two dye channels, so they are
+            // kept exactly as SetDyeAll keeps them
+            var advanced = GetDye(card, item.Id)?.Advanced ?? new Dictionary<string, string>();
+
+            card.Dyes[key] = new OutfitDye
+            {
+                Stain1   = dye.Stain1,
+                Stain2   = dye.Stain2,
+                Advanced = advanced,
+            };
+            applied++;
+        }
+
+        if (applied == 0) return 0;
+
+        _config.Save();
+        WardrobeChanged?.Invoke();
+        _log.Information($"[Wardrobe] '{card.Name}': {applied} item(s) took their dyes from the design");
+        return applied;
+    }
+
+    /// <summary>
+    /// How many of a design card's items the design has a dye for, for a control to say so before it is
+    /// pressed.
+    /// </summary>
+    public int DesignDyeableCount(Outfit card) =>
+        card.IsDesign ? ResolveOutfit(card).Count(i => DesignDyeFor(card, i.Slot) != null) : 0;
+
+    /// <summary>True when this card's design is still in Glamourer's list.</summary>
+    /// <remarks>
+    /// Answers "no" only when Glamourer has answered with a list that does not contain it — a silent
+    /// Glamourer means unknown, which is reported as still linked rather than as gone.
+    /// </remarks>
+    public bool DesignIsLive(Outfit card)
+    {
+        if (card.DesignId is not { } id) return false;
+
+        var live = _glamourer.GetDesignsCached();
+        if (live.Count == 0) return true;
+
+        foreach (var (designId, _) in live)
+            if (designId == id) return true;
+
+        return false;
+    }
+
+    /// <summary>
+    /// Applies a design outfit's design, as much of it as the outfit asks for.
+    /// </summary>
+    /// <remarks>
+    /// Called on the way into <see cref="WearOutfit"/>, before the items, so the design is the layer
+    /// underneath and any item in the outfit wins the slot it occupies. Also on its own from the
+    /// editor, for putting a design back after something else has changed the character.
+    /// </remarks>
+    public bool ApplyOutfitDesign(Outfit outfit)
+    {
+        if (outfit.DesignId is not { } id) return false;
+
+        var ok = outfit.DesignAppliesEquipment
+            ? _glamourer.ApplyDesignFull(id)
+            : _glamourer.ApplyDesignCustomization(id);
+
+        if (!ok)
+            _log.Warning($"[Wardrobe] '{outfit.Name}': could not apply Glamourer design " +
+                         $"'{outfit.DesignName}' — it may have been deleted in Glamourer.");
+
+        return ok;
+    }
+
     /// <summary>
     /// Drops every override the wardrobe is holding, so the character shows what the game has on.
     /// </summary>
@@ -1828,24 +2139,27 @@ public class WardrobeService : IDisposable
     }
 
     /// <summary>
-    /// Copies a plate into an ordinary, editable outfit.
+    /// Copies a plate or a design into an ordinary outfit that owes nothing to its source.
     /// </summary>
     /// <remarks>
-    /// The way out of read-only. A plate is a fine starting point for a modded look, and this gives
-    /// somewhere to build it that resyncing will never overwrite. The preview image is deliberately
-    /// left behind: the copy is about to stop looking like the plate.
+    /// The way out of a card the wardrobe does not own. A plate is a fine starting point for a modded
+    /// look, and this gives somewhere to build it that resyncing will never overwrite. For a design
+    /// outfit the tie itself is what is being cut: the copy keeps the items and dyes and stops
+    /// applying the design, which is what someone wants when a look has outgrown the design behind it.
+    /// The preview image is deliberately left behind — the copy is about to stop looking like it.
     /// </remarks>
-    public Outfit DuplicateAsOutfit(Outfit plate)
+    public Outfit DuplicateAsOutfit(Outfit source)
     {
         // No preview image: the copy exists to be changed, and it is about to stop looking like the
-        // photograph taken of the plate
-        var copy = CopyOutfit(plate, keepImage: false);
+        // photograph taken of the original
+        var copy = CopyOutfit(source, keepImage: false);
         copy.Tags.Remove(GlamourPlateStyle);
+        copy.Tags.Remove(DesignStyle);
 
         _config.Outfits.Add(copy);
         _config.Save();
         WardrobeChanged?.Invoke();
-        _log.Information($"[Wardrobe] Copied plate '{plate.Name}' to editable outfit '{copy.Name}'");
+        _log.Information($"[Wardrobe] Copied '{source.Name}' to editable outfit '{copy.Name}'");
         return copy;
     }
 
@@ -1857,10 +2171,10 @@ public class WardrobeService : IDisposable
     /// items dyed a different colour. Rebuilding that from scratch is the work the outfit was saved
     /// to avoid.
     /// <para>
-    /// For wardrobe outfits only. A copy never carries a plate's identity: two outfits claiming the
-    /// same plate number would leave <see cref="SyncGlamourPlates"/> updating whichever it found
-    /// first and quietly ignoring the other. <see cref="DuplicateAsOutfit"/> is what copies a plate,
-    /// and it cuts the tie to the game rather than cloning it.
+    /// For wardrobe outfits only. A copy never carries a plate's or a design's identity: two outfits
+    /// claiming the same plate number, or the same design, would leave the sync updating whichever it
+    /// found first and quietly ignoring the other. <see cref="DuplicateAsOutfit"/> is what copies
+    /// either of those, and it cuts the tie to the source rather than cloning it.
     /// </para>
     /// </remarks>
     public Outfit DuplicateOutfit(Outfit source)
@@ -1889,6 +2203,9 @@ public class WardrobeService : IDisposable
     {
         Name         = UniqueOutfitName(source.Name),
         ImagePath    = keepImage ? source.ImagePath : null,
+        // The other angles go with the cover or not at all: a copy holding four pictures of a look it
+        // no longer has would be worse than a copy holding none
+        ExtraImages  = keepImage ? new List<string>(source.ExtraImages) : new List<string>(),
         ItemIds      = new List<Guid>(source.ItemIds),
         Tags         = new List<string>(source.Tags),
         Dyes         = source.Dyes.ToDictionary(

@@ -41,12 +41,15 @@ public enum ItemSortMode
 }
 
 [Serializable]
-public class WardrobeItem
+public class WardrobeItem : IImageOwner
 {
     public Guid          Id       { get; set; } = Guid.NewGuid();
     public string        Name     { get; set; } = "New Item";
     public EquipSlot     Slot     { get; set; } = EquipSlot.Unknown;
     public string?       ImagePath { get; set; }
+
+    /// <inheritdoc cref="IImageOwner.ExtraImages"/>
+    public List<string>  ExtraImages { get; set; } = new();
 
     /// <summary>
     /// All mods required for this item.

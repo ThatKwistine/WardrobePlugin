@@ -202,7 +202,7 @@ public class ItemImportPanel : IDisposable
         _editTarget  = null;
         _slotChoices = EquipSlotEx.Choices(_config.ModCategoriesEnabled);
         _collections = _penumbra.GetCollections();
-        _mods        = _penumbra.GetMods();
+        _mods        = LoadModList();
 
         // Pre-select the configured default collection. ResetImport() leaves _collectionIdx at 0,
         // which is whichever collection sorts first and is rarely the one the character uses.
@@ -224,6 +224,16 @@ public class ItemImportPanel : IDisposable
     /// shown full size inside it would be no larger than the preview already there.
     /// </remarks>
     public Action<WardrobeItem>? QuickViewRequested { get; set; }
+
+    /// <summary>
+    /// Raised when an item's pictures were changed from here, so the grid can drop its cached texture.
+    /// </summary>
+    /// <remarks>
+    /// The card cache keys on the item and its path together, so it notices a new cover on its own —
+    /// but only on the next frame it draws that card, and the panel is often over the top of it. Set by
+    /// <see cref="PluginUi"/>, which owns the cache.
+    /// </remarks>
+    public Action<WardrobeItem>? ImagesChanged { get; set; }
 
     public void OpenEdit(WardrobeItem item)
     {
@@ -249,7 +259,7 @@ public class ItemImportPanel : IDisposable
         // edit mode may be opened without import mode ever having run, so neither list is
         // guaranteed to be loaded yet.
         _collections = _penumbra.GetCollections();
-        _mods        = _penumbra.GetMods();
+        _mods        = LoadModList();
         _editModCollections.Clear();
         foreach (var mod in item.Mods)
             _editModCollections.Add(mod.Collection);
@@ -257,6 +267,17 @@ public class ItemImportPanel : IDisposable
         // _editModOptions is populated lazily when the Mod Options section is first expanded
         IsOpen = true;
     }
+
+    /// <summary>
+    /// Penumbra's mods in whichever order the wardrobe is set to list them.
+    /// </summary>
+    /// <remarks>
+    /// Read when a panel opens rather than per frame: sorting by install date stats a folder per mod,
+    /// and a picker redrawing sixty times a second must not do that. The order is therefore whatever
+    /// was true when the panel was opened, which is also why the picker offers a reload.
+    /// </remarks>
+    private IList<(string Dir, string Name)> LoadModList() =>
+        _config.ImportListNewestFirst ? _penumbra.GetModsByInstalled() : _penumbra.GetMods();
 
     // Called the first time the Mod Options section is opened, and when the user clicks Reload.
     private void LoadEditModOptions()
@@ -429,6 +450,24 @@ public class ItemImportPanel : IDisposable
         ImGui.TextDisabled("Image path");
         ImGui.SetNextItemWidth(-1);
         ImGui.InputText("##eimage", ref _editImage, 512);
+
+        // The other pictures of this item, under the box that holds the cover's path. Writes straight
+        // to the item rather than staging like the fields above: a picture is added by dropping one on
+        // or by removing one, and neither is an edit anybody expects to have to press Save for — nor
+        // to lose by pressing Cancel.
+        // Captured locally: the callback below runs while this frame is still being drawn, but reading
+        // the field inside it would leave a null dereference waiting for whoever moves this line
+        var edited = _editTarget!;
+
+        ImGui.Spacing();
+        ImageGallery.Draw($"edit_{edited.Id}", edited, Plugin.Textures, UiScale.S(56f), () =>
+        {
+            // The cover may have changed hands, so the staged path has to follow or saving would put
+            // the old one back
+            _editImage = edited.ImagePath ?? string.Empty;
+            _config.Save();
+            ImagesChanged?.Invoke(edited);
+        });
 
         ImGui.Spacing();
         ImGui.TextDisabled("Slot");
@@ -825,6 +864,9 @@ public class ItemImportPanel : IDisposable
             Notes             = source.Notes,
             ForceRedraw       = source.ForceRedraw,
             ImagePath         = source.ImagePath,
+            // Copied with the cover, since a variant starts out looking like what it came from. A new
+            // list, not the same one — sharing it would have both items re-photographed as one
+            ExtraImages       = new List<string>(source.ExtraImages),
             GlamourerItemId   = source.GlamourerItemId,
             GlamourerItemName = source.GlamourerItemName,
             ModelSetId        = source.ModelSetId,
@@ -1477,6 +1519,13 @@ public class ItemImportPanel : IDisposable
             : "(pick a mod)";
 
         ImGui.TextDisabled("Mod");
+
+        // The order the list is in, said where the list is — a sort you cannot see the state of is a
+        // sort you have to remember having set
+        var newest = _config.ImportListNewestFirst;
+        UiLayout.SameLineIfRoomForText(newest ? "newest first" : "A–Z");
+        ImGui.TextDisabled(newest ? "newest first" : "A–Z");
+
         ImGui.SetNextItemWidth(-1);
         if (ImGui.BeginCombo("##mod", label, ImGuiComboFlags.HeightLarge))
         {
@@ -1485,6 +1534,23 @@ public class ItemImportPanel : IDisposable
             ImGui.SetNextItemWidth(-1);
             if (ImGui.InputText("##msearch", ref _modSearch, 256))
             { /* filter applied below */ }
+
+            // Inside the combo, where the list it reorders is: switching it out here would mean
+            // closing the picker to change how the picker is sorted
+            if (ImGui.Checkbox("Newest installed first", ref newest))
+            {
+                _config.ImportListNewestFirst = newest;
+                _config.Save();
+                _mods = LoadModList();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Lists Penumbra's mods with the most recently installed at the top,\n" +
+                                 "for importing something you have just downloaded.\n\n" +
+                                 "Taken from when each mod's folder was created, which is when Penumbra\n" +
+                                 "imported it — a folder copied from elsewhere carries the date of the\n" +
+                                 "copy instead. Off lists them A–Z.");
+
+            ImGui.Separator();
             ImGui.Separator();
 
             for (var i = 0; i < _mods.Count; i++)

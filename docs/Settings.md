@@ -48,6 +48,22 @@ Both are also exposed as checkboxes at the top of the **Mass Import** window, wh
 They are the same two settings, not copies — changing either one in either place changes it
 everywhere.
 
+### Newest installed first
+
+**Newest installed first**, inside the mod picker when importing, lists Penumbra's mods with the most
+recently installed at the top instead of A–Z. It is off by default — a list of several hundred mods is
+searched by name far more often than it is browsed — and on when you have just downloaded something and
+want to import it without knowing its exact name. The order the list is in is named beside **Mod**, and
+the Mass Import window uses whichever you chose.
+
+The date is when each mod's folder was created, which is when Penumbra imported it. Penumbra does keep
+a proper import date, but only in its own database and with nothing exposed to read it from, so a folder
+copied from somewhere else — a mod library moved to another drive — carries the date of the copy rather
+than of the download. It is a way of finding what you just installed, not a record of when you got it.
+
+Reading it costs one filesystem check per mod, so the order is worked out when a picker opens rather
+than continuously.
+
 ---
 
 ## Other Mod Types
@@ -65,6 +81,27 @@ back on restores them intact. A warning shows the count while any are hidden.
 
 Animation mods that replace the same animation swap each other out, like two body mods do. Which
 animation an item replaces is detected on import and can be changed when editing it.
+
+---
+
+## Glamourer Designs
+
+**Show Glamourer designs as outfits** gives each of your Glamourer designs a card in the outfits grid.
+It is the only setting the feature has, because the cards are a live link rather than a copy: a design
+saved in Glamourer appears by itself, a rename follows through, and deleting it there removes the card.
+
+Wearing one applies the design, then any wardrobe items attached to it — which is how the mods that
+belong with a look get enabled, since a design knows nothing about Penumbra. Each card also takes
+pictures, tags and styles like any other outfit, and shows the design's own pieces beside them. A design
+that sets no gear — one saved for a face or a body — is labelled as such rather than shown empty.
+
+Off by default: it is a visible change to a grid you have already arranged, and a Glamourer holding
+sixty designs would otherwise become sixty cards. Turning it off hides the cards and keeps everything
+attached to them, with a count shown while any are hidden.
+
+The panel also reports cards whose design has been deleted in Glamourer while something of yours was
+attached to them — those are kept rather than dropped. See
+[Glamourer designs](Outfits.md#glamourer-designs).
 
 ---
 
@@ -217,14 +254,17 @@ Where the image browser looks for pictures to drag onto cards. See
 
 ## Screenshots
 
-The folder FFXIV saves screenshots to, which sessions watch for new files, plus two session
+The folder FFXIV saves screenshots to, which sessions watch for new files, plus three session
 options:
 
+- **Manual mode** keeps the session on each item for as many screenshots as you
+  want to take, moving on only when you press **Next Item**. See
+  [Manual mode](Images-and-Screenshots.md#manual-mode)
 - **Strip other items before each shot** removes everything else the wardrobe has on, so only the
   queued item is showing
 - **Compact main window during session** shrinks the plugin window to keep it out of the shot
 
-Both persist between sessions. Stripping stops at your
+All three persist between sessions. Stripping stops at your
 [base character](Wearing-Items.md#base-character) if one is active, so the slots and customisation
 mods you marked as part of the character survive every shot.
 
@@ -233,6 +273,10 @@ GPose's own portrait mode, and captures them that way. Outfit cards grow taller 
 previews stay square. Pictures already assigned are centre-cropped to whichever shape is in use, so
 turning it on or off never spoils a wardrobe built under the other one — see
 [Portrait outfit previews](Images-and-Screenshots.md#portrait-outfit-previews).
+
+**Edit Angles For Every Slot** opens every slot's camera presets in one panel, for framing a whole
+wardrobe's angles in one visit to GPose instead of inventing each one while a session waits. See
+[Setting them up before a session](Images-and-Screenshots.md#setting-them-up-before-a-session).
 
 ---
 

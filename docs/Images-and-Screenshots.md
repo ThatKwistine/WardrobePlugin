@@ -5,6 +5,82 @@
 Open **Images** in the toolbar, point Settings at a folder of images, then drag a thumbnail onto any
 item or outfit card.
 
+## Several pictures per item
+
+An item or outfit can hold as many pictures as you like. The first is the **cover** — the one on the
+card, in tooltips and everywhere else a single picture is shown — and the rest sit behind it.
+
+The **Pictures** row in the edit panel is where they are managed, on items and outfits alike:
+
+- **Drag a picture from the Image Browser** onto the row's **+** box to add it. Dropping one on a card
+  still sets the cover, as it always did.
+- **Right-click a thumbnail** for **Make this the cover** and **Remove from this item**. The cover is
+  ringed in gold.
+- Removing a picture never deletes the file. It stays in your images folder, ready to be dragged back
+  on. Removing the cover promotes the next picture rather than leaving the card blank.
+- A picture whose file has gone keeps its place in the row as a red **?**, because the one you need to
+  remove is exactly the one that cannot be shown.
+
+A card with more than one picture shows the count in the corner of its thumbnail. **Right-click the
+picture** to open the viewer, which pages through the whole set with the **◄ ►** buttons or the arrow
+keys, naming each file as it goes.
+
+Duplicating an outfit, or making a variant of an item, copies the whole set along with the cover.
+
+## Manual mode
+
+**Manual mode**, on the session HUD and in Settings → Screenshots, stops a session
+advancing by itself. It stays on the item in front of you for as many screenshots as you care to take:
+the first becomes the card's picture and every one after it joins the set behind it.
+
+Framing a piece well is usually a few attempts rather than one, and without this the session moves on the
+instant the first screenshot lands — turning every misjudged angle into a re-shoot later.
+
+- **Next Item** keeps what you have taken and moves to the next thing in the queue. It only appears when
+  there is something to move on to, so a single-item shoot from an edit panel does not show it.
+- **End Session** stops, keeping everything already filed.
+- Taking no pictures of an item costs nothing: **Next Item** leaves it exactly as it was.
+
+The HUD counts what you have taken of the current item, and the compact window shows the same. The
+camera preset controls are there throughout, so you can jump between saved angles between shots.
+
+Fire off as many as you like in a row. Each takes a moment to crop and save, and any that arrive while
+one is being written wait their turn rather than being lost. A picture taken for an item the session has
+already moved past is discarded rather than filed against whatever came next.
+
+Turning it on mid-session takes effect from the next shot; turning it off hands the item back to the
+automatic behaviour below.
+
+## Extra angles in a session
+
+This is the automatic alternative to [manual mode](#manual-mode) — useful when you want the same set of
+angles from every item without deciding each time.
+
+A session takes one shot per item by default. To have it photograph the side, the back or a close-up as
+well, tick those [camera presets](#choosing-the-cover-and-the-extra-angles) — the session then waits
+for a screenshot at each ticked angle in turn and files them as that item's other pictures.
+
+Ticks count immediately, including on the item the session is already waiting on: what is left to shoot
+is read from the preset list each time a picture lands rather than being fixed when the item was worn.
+
+The HUD says which angle it is waiting for — *Shot 2 of 3 — Back* — and the camera has already moved
+there. Two skips replace the one:
+
+- **Skip Angle** gives up on this angle only and moves to the next one of the same item, for a back
+  view of something with nothing on its back.
+- **Skip Item** gives up on the item entirely, remaining angles included.
+
+The angle's name goes into the file name, so a folder of pictures says which is which without opening
+them. The cover keeps the plain name it always had.
+
+Re-shooting an item replaces its pictures: the cover shot overwrites the cover, and the first new angle
+to arrive clears the old angles out. End the session after the cover shot and the old angles are left
+alone — nothing is thrown away for an angle that was never re-taken. The files themselves are never
+deleted from your images folder.
+
+A session over the whole wardrobe still only queues items with **no picture at all**, angles or not.
+Use a [selection](#a-session-over-just-the-items-you-pick) to re-shoot items that already have one.
+
 ## Screenshot sessions
 
 A session queues every item that has no preview image, equips each in turn, and picks up new
@@ -20,6 +96,15 @@ Options during a session:
 Stripping stops at the active [base character](Wearing-Items.md#base-character), which is re-applied
 before every shot — so the hair, skin, tail and ear mods that make the character yours are in each
 picture rather than stripped out of it.
+
+Two things are set in Glamourer for you while a session runs, and put back as you had them when it ends:
+
+- **Your weapon is hidden**, unless the item being photographed is the weapon.
+- **Your hat is shown** while a head piece is being photographed. Hiding hats is a setting plenty of
+  people leave on permanently, and without this a run over your headgear would produce a folder of
+  pictures of a bare head. For every other slot the hat goes back to whatever you had.
+
+If either could not be read from Glamourer it is left alone rather than forced to a guess.
 
 **Screenshot Outfits** starts a session covering every outfit without a preview, exactly like the
 item sessions. [Synced glamour plates](Outfits.md#vanilla-glamour-plates) are outfits like any other,
@@ -97,6 +182,23 @@ single write is overwritten by the game's own per-frame camera update.
 They only work with the **native GPose camera**. If BRIO's free camera is active it drives the camera
 independently and presets will have no visible effect.
 
+### Setting them up before a session
+
+**Settings → Screenshots → Edit Angles For Every Slot** opens every slot's preset list in one panel. This
+is the place to prepare a run: go into GPose once, work down the slots framing an angle for each, then
+start the session and let it go.
+
+Without it the only place to edit a slot's presets was a session that had already reached an item in that
+slot — which is the wrong moment, because the session is sitting there waiting while you invent the angle.
+
+Each slot's row says how many angles it has, how many shots a session will take for it, and how many
+wardrobe items are in it. One slot opens at a time, and the controls inside are exactly the ones the
+session HUD shows. The panel counts how many slots still have no angle, so you can see what is left to do,
+and says so if you are not in GPose — saving an angle needs the GPose camera.
+
+Slots with no items yet are listed too. A wardrobe grows, and an angle saved before the first pair of
+boots arrives is exactly what this is for.
+
 ### Several per slot
 
 A slot can hold as many presets as you like, because one angle is rarely enough — a full-body shot
@@ -141,17 +243,33 @@ angle can be fixed without expanding the window back over the scene you are shoo
 - **Save New** — or **Save Camera** on a slot with none yet — keeps the current angle as another
   preset.
 
-Renaming, deleting and changing which preset the session loads are left out on purpose: they are
-housekeeping, and a stray click on a delete button between shots is a preset gone. **Expand** is
-there when you want the full panel.
+Renaming, deleting, changing which preset is the cover and ticking extra angles are left out on
+purpose: they are housekeeping, and a stray click on a delete button between shots is a preset gone.
+**Expand** is there when you want the full panel.
 
-### Choosing which one loads
+The compact window shows the same *Shot 2 of 3* line and the same two skip buttons as the HUD, since
+this is the window most of a session is actually watched in.
 
-Each preset has a radio button beside it. The ticked one is what a **screenshot session applies
-automatically**; everything else in the list is there for you to reach by hand.
+### Choosing the cover and the extra angles
 
-Ticking one changes nothing about the order, so you can arrange the list however you like and pick
-the session default independently.
+Each preset row starts with two controls:
+
+- the **button on the left** picks the **cover angle** — the shot that becomes the card's picture, and
+  the one a session loads first. Exactly one per slot.
+- the **checkbox** beside it asks for an **extra shot** at that angle as well. Tick as many as you
+  like; the session photographs the cover, then each ticked angle in turn. See
+  [Extra angles in a session](#extra-angles-in-a-session).
+
+The cover's own row has no checkbox: a session photographs that angle because it is the cover, and a
+tick there would only ask for the same picture twice. Promoting a ticked preset to cover clears its
+tick for the same reason.
+
+Under the list, a line says how many shots a session will take for that slot and in what order, which
+is the thing worth knowing before starting one.
+
+Neither control changes the order, so you can arrange the list however you like and pick the cover
+independently of it. Both travel with the presets file, so a shared set of angles arrives ready to
+shoot.
 
 > Presets saved before pan was supported don't store one, and applying them leaves the camera's pan
 > untouched rather than guessing at a centred value. Press **Update** to capture it.
