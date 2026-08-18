@@ -61,11 +61,16 @@ public class GlamourerIpc : IDisposable
     private const ulong CustomizationFlag = 0x04uL;
     private const ulong EquipmentFlag     = 0x02uL;
 
-    // Property names Glamourer might use for the hairstyle inside its Customize block. The exact
-    // shape is not documented, so several spellings are tried and the real keys are logged on a miss.
-    private static readonly string[] HairKeys = { "Hairstyle", "HairStyle", "Hair" };
+    // Property names Glamourer might use inside its Customize block. The exact shape is not
+    // documented, so several spellings are tried and the real keys are logged on a miss.
+    private static readonly string[] HairKeys   = { "Hairstyle", "HairStyle", "Hair" };
+    private static readonly string[] RaceKeys   = { "Race" };
+    private static readonly string[] GenderKeys = { "Gender", "Sex" };
+    private static readonly string[] ClanKeys   = { "Clan", "Tribe", "SubRace", "Subrace" };
 
-    private bool _loggedCustomizeShape;
+    // Which Customize lookups have already reported a miss. Per field rather than one flag for all of
+    // them: a missing race key must not be what stops a missing hairstyle key from ever being logged.
+    private readonly HashSet<string> _loggedCustomizeMisses = new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly List<byte> NoStains = new() { 0, 0 };
     private const int PlayerIndex = 0;
@@ -202,20 +207,37 @@ public class GlamourerIpc : IDisposable
         if (state["Customize"] is not JObject customize)
             return null;
 
-        foreach (var key in HairKeys)
+        return FindCustomizeToken(customize, HairKeys, "hairstyle");
+    }
+
+    /// <summary>
+    /// One value out of a Glamourer Customize block, by whichever of several spellings is present.
+    /// </summary>
+    /// <remarks>
+    /// Handles both a bare number and the wrapped <c>{ "Value": n, "Apply": bool }</c> that Glamourer
+    /// actually writes. <c>Apply</c> is deliberately ignored: it says whether a design would set the
+    /// field, which is a question about a design and not about the character being looked at. In a
+    /// live actor state the value is what the character currently is.
+    /// </remarks>
+    private JToken? FindCustomizeToken(JObject customize, string[] keys, string what)
+    {
+        foreach (var key in keys)
         {
             if (customize[key] is not { } token) continue;
             return token is JObject wrapped ? wrapped["Value"] : token;
         }
 
-        if (!_loggedCustomizeShape)
-        {
-            _loggedCustomizeShape = true;
-            _log.Warning($"[Wardrobe] No hairstyle key in Glamourer Customize. Keys present: " +
+        if (_loggedCustomizeMisses.Add(what))
+            _log.Warning($"[Wardrobe] No {what} key in Glamourer Customize. Keys present: " +
                          $"{string.Join(", ", customize.Properties().Select(p => p.Name))}");
-        }
         return null;
     }
+
+    /// <summary>An integer out of a Glamourer Customize block, or null when it is not there.</summary>
+    private int? CustomizeInt(JObject customize, string[] keys, string what) =>
+        FindCustomizeToken(customize, keys, what) is { Type: JTokenType.Integer } token
+            ? token.Value<int>()
+            : null;
 
     /// <summary>All Glamourer designs, as ID and display name.</summary>
     public IList<(Guid Id, string Name)> GetDesigns()
@@ -511,8 +533,33 @@ public class GlamourerIpc : IDisposable
     /// Derived from the customise data: race, gender, and for Hyur the tribe, since Midlander and
     /// Highlander are separate models. Needed because hairstyle numbering is per-race, so the same
     /// hair mod is a different number on each one.
+    /// <para>
+    /// Glamourer is asked first, and the game object is only the fallback. A character changed to
+    /// another race in Glamourer keeps its original race in the game object — Glamourer redraws the
+    /// model without writing back — so reading the game object alone reported the race the player
+    /// used to be. A hair mod built for the race they now are was then rejected as unsupported, which
+    /// is issue #19: a Miqo'te-only hair on a Viera character wearing a Miqo'te appearance.
+    /// </para>
     /// </remarks>
     public int? GetPlayerRaceCode()
+    {
+        var native = RaceCodeFromGameObject();
+
+        if (RaceCodeFromGlamourer() is not { } applied)
+            return native;
+
+        // Worth having in /xllog when someone reports a hair being refused: it names the race the
+        // character is being drawn as and the race the game still thinks it is, which is the whole
+        // of what went wrong in issue #19 and is otherwise invisible from a screenshot of the miss.
+        if (native != applied)
+            _log.Debug($"[Wardrobe] Race code {applied:D4} from Glamourer; the game object still " +
+                       $"says {native:D4}. Using Glamourer's.");
+
+        return applied;
+    }
+
+    /// <summary>The race code of the character the game itself thinks the player is.</summary>
+    private int? RaceCodeFromGameObject()
     {
         var player = _objects.LocalPlayer;
         if (player == null) return null;
@@ -522,30 +569,68 @@ public class GlamourerIpc : IDisposable
             var customize = player.Customize;
             if (customize.Length < 5) return null;
 
-            var race   = customize[0];
-            var gender = customize[1]; // 0 = male, 1 = female
-            var tribe  = customize[4];
-            var female = gender == 1;
-
-            return race switch
-            {
-                1 => tribe == 2 ? (female ? 401 : 301)   // Hyur: Highlander
-                                : (female ? 201 : 101),  //       Midlander
-                2 => female ? 601  : 501,   // Elezen
-                3 => female ? 1201 : 1101,  // Lalafell
-                4 => female ? 801  : 701,   // Miqo'te
-                5 => female ? 1001 : 901,   // Roegadyn
-                6 => female ? 1401 : 1301,  // Au Ra
-                7 => female ? 1601 : 1501,  // Hrothgar
-                8 => female ? 1801 : 1701,  // Viera
-                _ => null,
-            };
+            return RaceCode(customize[0], customize[1], customize[4]);
         }
         catch (Exception ex)
         {
             _log.Debug(ex, "[Wardrobe] Could not read player customise data");
             return null;
         }
+    }
+
+    /// <summary>
+    /// The race code of the appearance Glamourer is currently applying, or null when it cannot say.
+    /// </summary>
+    /// <remarks>
+    /// The Customize block holds the raw customise bytes, in the same encoding the game object uses —
+    /// race 1-8, gender 0 male and 1 female, and a clan running two per race, so Viera are 15 Rava
+    /// and 16 Veena. Verified against Glamourer's own saved designs rather than assumed: a stored
+    /// design for a Viera character reads Race 8, Clan 16. Both paths therefore share
+    /// <see cref="RaceCode"/> and there is one mapping to be wrong about.
+    /// </remarks>
+    private int? RaceCodeFromGlamourer()
+    {
+        if (_objects.LocalPlayer == null) return null;
+
+        try
+        {
+            var (ec, state) = _getState.InvokeFunc(PlayerIndex, 0u);
+            if (ec != 0 || state?["Customize"] is not JObject customize) return null;
+
+            var race   = CustomizeInt(customize, RaceKeys,   "race");
+            var gender = CustomizeInt(customize, GenderKeys, "gender");
+            if (race is null || gender is null) return null;
+
+            // Only Hyur need it, and a missing clan should not cost the whole answer for everyone else
+            var clan = CustomizeInt(customize, ClanKeys, "clan") ?? 0;
+
+            return RaceCode(race.Value, gender.Value, clan);
+        }
+        catch (Exception ex)
+        {
+            _log.Debug(ex, "[Wardrobe] Glamourer race lookup failed");
+            return null;
+        }
+    }
+
+    /// <summary>Raw race, gender and clan bytes to the model race code they name.</summary>
+    private static int? RaceCode(int race, int gender, int clan)
+    {
+        var female = gender == 1;
+
+        return race switch
+        {
+            1 => clan == 2 ? (female ? 401 : 301)   // Hyur: Highlander
+                           : (female ? 201 : 101),  //       Midlander
+            2 => female ? 601  : 501,   // Elezen
+            3 => female ? 1201 : 1101,  // Lalafell
+            4 => female ? 801  : 701,   // Miqo'te
+            5 => female ? 1001 : 901,   // Roegadyn
+            6 => female ? 1401 : 1301,  // Au Ra
+            7 => female ? 1601 : 1501,  // Hrothgar
+            8 => female ? 1801 : 1701,  // Viera
+            _ => null,
+        };
     }
 
     /// <summary>Current hairstyle number of the local player, or null if it cannot be read.</summary>

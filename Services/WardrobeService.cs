@@ -304,6 +304,32 @@ public class WardrobeService : IDisposable
     /// it, and is only captured on the first hair item applied — otherwise swapping between two
     /// hair items would overwrite it with the other mod's number.
     /// </remarks>
+    /// <summary>
+    /// The hairstyle number an item stores for a model race code, or null when it covers no such race.
+    /// </summary>
+    /// <remarks>
+    /// Compares the keys as numbers rather than as text, because the two halves disagreed about
+    /// padding and nothing caught it: every import writes the key with <c>int.ToString()</c>, giving
+    /// <c>"401"</c>, while the lookup asked for <c>"D4"</c>, giving <c>"0401"</c>. Every race code
+    /// below 1000 therefore missed — all Hyur, Elezen and Miqo'te, and male Roegadyn — and the
+    /// warning said the mod did not cover a race whose number it was plainly listing. Only the
+    /// four-digit races ever worked.
+    /// <para>
+    /// Fixed on the reading side on purpose. Repadding the keys at import would leave every item
+    /// already saved still broken and need a migration to match; comparing numerically fixes those
+    /// items where they sit, and cannot be undone by a future writer choosing a different format.
+    /// The dictionary holds one entry per race the mod covers, so the scan is nothing.
+    /// </para>
+    /// </remarks>
+    private static ushort? HairIdForRace(WardrobeItem item, int raceCode)
+    {
+        foreach (var (key, id) in item.HairIdByRace)
+            if (int.TryParse(key, out var code) && code == raceCode)
+                return id;
+
+        return null;
+    }
+
     private void ApplyHairstyleFor(WardrobeItem item)
     {
         if (item.Slot != EquipSlot.Hair) return;
@@ -318,7 +344,7 @@ public class WardrobeService : IDisposable
         // but a different number on Hrothgar and Viera, so the first one found is often wrong.
         ushort? hairstyle = null;
         var raceCode = _glamourer.GetPlayerRaceCode();
-        if (raceCode.HasValue && item.HairIdByRace.TryGetValue(raceCode.Value.ToString("D4"), out var perRace))
+        if (raceCode.HasValue && HairIdForRace(item, raceCode.Value) is { } perRace)
         {
             hairstyle = perRace;
             _log.Debug($"[Wardrobe] '{item.Name}': hairstyle {perRace} for race code {raceCode:D4}");
