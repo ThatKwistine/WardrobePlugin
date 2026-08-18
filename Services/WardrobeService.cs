@@ -167,7 +167,7 @@ public class WardrobeService : IDisposable
         if (_config.WornItems.TryGetValue(slotKey, out var prevId) && prevId != item.Id)
         {
             var prev = _config.WardrobeItems.Find(x => x.Id == prevId);
-            if (prev != null) UnwearItem(prev, save: false, redraw: !forceRedraw);
+            if (prev != null) UnwearItem(prev, save: false, redraw: !forceRedraw, restoreBase: false);
         }
 
         // Set Glamourer BEFORE enabling Penumbra mods.
@@ -432,7 +432,15 @@ public class WardrobeService : IDisposable
     /// asked for it, instead of forcing one on a set that swapped its Glamourer items and did not
     /// need it.
     /// </returns>
-    public bool UnwearItem(WardrobeItem item, bool save = true, bool redraw = true)
+    /// <param name="restoreBase">
+    /// Whether the base character is put back over the slot this item vacates. True for a removal on
+    /// its own, which is the whole of what a base character promises: a base hair displaced by a hair
+    /// mod has to come back when that mod comes off, or taking the mod off leaves the character in
+    /// their vanilla hair rather than in themselves. False for a removal that is one step of a larger
+    /// sequence — the caller either re-applies the base itself once at the end, or is about to fill
+    /// the slot with something else and would only be fighting it.
+    /// </param>
+    public bool UnwearItem(WardrobeItem item, bool save = true, bool redraw = true, bool restoreBase = true)
     {
         var disabledAny = false;
 
@@ -519,6 +527,16 @@ public class WardrobeService : IDisposable
             _penumbra.RedrawPlayer();
             needsRedraw = false;
         }
+
+        // After the slot has been emptied, so the base's own item is put into a slot that is free
+        // rather than displaced straight back out again. ApplyBase only wears what is not already
+        // worn, so this costs nothing when the item removed was never covering the base.
+        //
+        // Never for one of the base's own items, though: someone taking a base item off by hand has
+        // said what they want, and putting it straight back would make the button appear broken. The
+        // base returns on the next strip, which is the moment it is meant to.
+        if (restoreBase && _config.ActiveBaseCharacter?.ItemIds.Contains(item.Id) != true)
+            ApplyBase();
 
         if (save)
         {
@@ -778,15 +796,18 @@ public class WardrobeService : IDisposable
         // hair, an animation, a texture mod — has nothing else to make it visible and asks for one;
         // ordinary gear forces its own reload by swapping to Emperor's New, and redrawing on top of
         // that is a visible stutter for no benefit.
-        var needsRedraw = UnwearItem(item, save: false, redraw: false);
+        var needsRedraw = UnwearItem(item, save: false, redraw: false, restoreBase: false);
 
         foreach (var partner in worn)
         {
             _log.Debug($"[Wardrobe] '{item.Name}' also removes linked item '{partner.Name}'");
-            needsRedraw |= UnwearItem(partner, save: false, redraw: false);
+            needsRedraw |= UnwearItem(partner, save: false, redraw: false, restoreBase: false);
         }
 
         if (needsRedraw) _penumbra.RedrawPlayer();
+
+        // Once for the whole set rather than per item, for the same reason the redraw is
+        ApplyBase();
 
         _log.Information($"[Wardrobe] Removed '{item.Name}' with {worn.Count} linked item(s)");
 
@@ -902,7 +923,7 @@ public class WardrobeService : IDisposable
             foreach (var item in ResolveBase(previous))
             {
                 if (keep.Contains(item.Id) || !IsItemWorn(item)) continue;
-                needsRedraw |= UnwearItem(item, save: false, redraw: false);
+                needsRedraw |= UnwearItem(item, save: false, redraw: false, restoreBase: false);
             }
         }
 
@@ -957,7 +978,7 @@ public class WardrobeService : IDisposable
             if (keptIds.Contains(item.Id) || kept.Contains(item.Slot)) continue;
 
             // Removes its own WornItems entry
-            UnwearItem(item, save: false);
+            UnwearItem(item, save: false, restoreBase: false);
         }
 
         // Force every equipment slot to Emperor's New regardless of what Glamourer currently has.
@@ -1541,7 +1562,7 @@ public class WardrobeService : IDisposable
                 if (worn == null || (keptSlots.Contains(worn.Slot) &&
                                      !items.Any(i => i.Slot == worn.Slot))) continue;
 
-                UnwearItem(worn, save: false, redraw: false);
+                UnwearItem(worn, save: false, redraw: false, restoreBase: false);
             }
         }
 
@@ -1577,11 +1598,14 @@ public class WardrobeService : IDisposable
         // and texture mods have nothing else to make them disappear and do ask.
         var needsRedraw = false;
         foreach (var item in items)
-            needsRedraw |= UnwearItem(item, save: false, redraw: false);
+            needsRedraw |= UnwearItem(item, save: false, redraw: false, restoreBase: false);
 
         if (_activeOutfitId == outfit.Id) _activeOutfitId = null;
 
         if (needsRedraw) _penumbra.RedrawPlayer();
+
+        // What taking an outfit off leaves behind is the base character, the same as a strip does
+        ApplyBase();
 
         _config.Save();
         WardrobeChanged?.Invoke();
@@ -2112,7 +2136,7 @@ public class WardrobeService : IDisposable
             if (kept.Contains(item.Slot) && baseChar?.ItemIds.Contains(item.Id) != true)
                 keptItems.Add(item);
 
-            UnwearItem(item, save: false, redraw: false);
+            UnwearItem(item, save: false, redraw: false, restoreBase: false);
             removed++;
         }
 

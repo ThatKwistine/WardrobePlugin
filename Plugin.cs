@@ -161,7 +161,9 @@ public sealed class Plugin : IDalamudPlugin
             foreach (var id in System.Linq.Enumerable.ToList(_config.WornItems.Values))
             {
                 var item = _config.WardrobeItems.Find(x => x.Id == id);
-                if (item != null) _wardrobeService.UnwearItem(item, save: false);
+                // restoreBase: false — the Clear() below wipes the record, so a base put back here
+                // would leave its mods enabled with nothing saying so
+                if (item != null) _wardrobeService.UnwearItem(item, save: false, restoreBase: false);
             }
             _config.WornItems.Clear();
             _config.Save();

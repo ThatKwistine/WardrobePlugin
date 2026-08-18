@@ -1096,7 +1096,9 @@ public class PluginUi : Window, IDisposable
                 foreach (var id in _config.WornItems.Values.ToList())
                 {
                     var item = _config.WardrobeItems.Find(x => x.Id == id);
-                    if (item != null) _wardrobe.UnwearItem(item, save: false);
+                    // restoreBase: false — the Clear() below wipes the record, so a base put back
+                    // here would leave its mods enabled with nothing saying so
+                    if (item != null) _wardrobe.UnwearItem(item, save: false, restoreBase: false);
                 }
                 _config.WornItems.Clear();
                 _config.Save();
@@ -1573,7 +1575,9 @@ public class PluginUi : Window, IDisposable
         foreach (var item in items)
         {
             // save: false — one write at the end rather than one per item
-            if (_wardrobe.IsItemWorn(item)) _wardrobe.UnwearItem(item, save: false);
+            // restoreBase: false — this item is about to be deleted, and a base that still lists it
+            // would have it put straight back on and then left enabled with nothing owning it
+            if (_wardrobe.IsItemWorn(item)) _wardrobe.UnwearItem(item, save: false, restoreBase: false);
             _wardrobe.ForgetLinksTo(item.Id);
             _wardrobe.ReparentVariantsOf(item);
             _config.WardrobeItems.Remove(item);
@@ -3579,8 +3583,9 @@ public class PluginUi : Window, IDisposable
             if (idx >= 0)
             {
                 var removed = _config.WardrobeItems[idx];
+                // restoreBase: false, as the bulk delete does and for the same reason
                 if (_wardrobe.IsItemWorn(removed))
-                    _wardrobe.UnwearItem(removed, save: false);
+                    _wardrobe.UnwearItem(removed, save: false, restoreBase: false);
                 _wardrobe.ForgetLinksTo(removed.Id);
                 _wardrobe.ReparentVariantsOf(removed);
                 _config.WardrobeItems.RemoveAt(idx);
