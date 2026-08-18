@@ -8416,8 +8416,14 @@ public class PluginUi : Window, IDisposable
     private void DrawBaseDesignPicker(BaseCharacter baseChar)
     {
         ImGui.TextUnformatted("Glamourer design");
-        ImGui.TextDisabled("Only its customisations are applied — face, colouring, hairstyle. Its " +
-                           "gear is ignored, or it would put back the clothes a strip just removed.");
+
+        // The second sentence points at a control that is only drawn once a design is chosen, so it is
+        // only said once there is something to point at
+        ImGui.TextDisabled(baseChar.DesignId.HasValue
+            ? "Its customisations are applied — face, colouring, hairstyle. Its gear is ignored " +
+              "unless you ask for it below, or it would put back the clothes a strip just removed."
+            : "Its customisations are applied — face, colouring, hairstyle. Its gear is ignored, or " +
+              "it would put back the clothes a strip just removed.");
         ImGui.Spacing();
 
         _settingsDesigns ??= Plugin.Glamourer.GetDesigns();
@@ -8466,8 +8472,39 @@ public class PluginUi : Window, IDisposable
             Plugin.Glamourer.ApplyDesignFull(baseChar.DesignId.Value);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Apply this design's gear as well as its customisations, once, now.\n\n" +
-                             "For getting dressed as your character in the first place. Nothing\n" +
-                             "does this on its own — a strip would only take the gear off again.");
+                             "For getting dressed as your character in the first place, whether or\n" +
+                             "not the switch below is on.");
+
+        ImGui.Spacing();
+
+        // Disabled rather than hidden when the design carries no gear, exactly as the outfit card's
+        // own copy of this switch is: a control that appears to do something and does not is worse
+        // than one that says why it cannot
+        var noGear = Plugin.Glamourer.GetDesignContents(baseChar.DesignId.Value)
+            is { AppliesEquipment: false };
+
+        if (noGear) ImGui.BeginDisabled();
+
+        var equipment = baseChar.DesignAppliesEquipment;
+        if (ImGui.Checkbox("Apply the design's gear on every strip too", ref equipment))
+        {
+            baseChar.DesignAppliesEquipment = equipment;
+            _config.Save();
+        }
+
+        if (noGear) ImGui.EndDisabled();
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(noGear
+                ? "This design sets no equipment, so there is nothing for this to apply\n" +
+                  "either way."
+                : "Off: a strip strips to bare skin plus this base's own items, and the\n" +
+                  "design supplies only face, body and colouring. This is the default.\n\n" +
+                  "On: the design is what a strip strips down to. Its gear goes back on\n" +
+                  "after every strip and before each shot, with the piece being\n" +
+                  "photographed on top of it. For a base look that is partly gear —\n" +
+                  "nails on the hands slot, a piece worn as skin — which customisations\n" +
+                  "alone cannot describe.");
     }
 
     /// <summary>

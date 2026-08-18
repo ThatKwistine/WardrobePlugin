@@ -44,14 +44,34 @@ public class BaseCharacter
 
     /// <summary>Glamourer design holding this character's face and colouring, or null for none.</summary>
     /// <remarks>
-    /// Only its customisations are ever applied automatically. A design is usually a whole look,
-    /// gear included, and re-applying that on the way into a shot would put back the very clothes
-    /// the strip just removed. The editor has a button for applying one in full, by hand.
+    /// Only its customisations are applied unless <see cref="DesignAppliesEquipment"/> says otherwise.
+    /// A design is usually a whole look, gear included, and re-applying that on the way into a shot
+    /// would put back the very clothes the strip just removed. The editor also has a button for
+    /// applying one in full once, by hand.
     /// </remarks>
     public Guid? DesignId { get; set; }
 
     /// <summary>Display name of <see cref="DesignId"/>, so the UI needs no lookup to show it.</summary>
     public string DesignName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Apply the design's equipment as well as its customisations every time the base is put back.
+    /// </summary>
+    /// <remarks>
+    /// The answer to issue #18: a base look that is partly gear — nails on the hands slot, a piece
+    /// worn as skin — cannot be described by customisations alone, and building it out of wardrobe
+    /// items means importing every piece of it. With this on, the design is the base look, and the
+    /// order a session already runs in gives exactly what was asked for: strip, then the design, then
+    /// the piece being photographed on top of it.
+    /// <para>
+    /// False by default, and deliberately the opposite of <see cref="Outfit.DesignAppliesEquipment"/>.
+    /// An outfit is a whole look and its design usually is too, so applying gear is what is meant
+    /// there. A base is what a strip strips down to, and a base character that already exists must
+    /// not start dressing its owner because the plugin updated — a strip quietly leaving clothes on
+    /// is precisely the surprise the base character exists to avoid.
+    /// </para>
+    /// </remarks>
+    public bool DesignAppliesEquipment { get; set; }
 
     public bool Keeps(EquipSlot slot) => KeepSlots.Contains(slot.ToString());
 

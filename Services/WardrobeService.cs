@@ -844,8 +844,10 @@ public class WardrobeService : IDisposable
     /// shot, so a base item displaced by the piece being photographed comes back for the next one
     /// instead of the session quietly drifting away from the character it started with.
     /// <para>
-    /// Only the design's customisations are applied. Its gear would put back the very clothes a
-    /// strip had just removed; the base's own gear is its items and its kept slots.
+    /// Only the design's customisations are applied unless the base asks for its equipment too. Gear
+    /// would otherwise put back the very clothes a strip had just removed; the base's own gear is
+    /// normally its items and its kept slots. See
+    /// <see cref="BaseCharacter.DesignAppliesEquipment"/> for when that is the wrong default.
     /// </para>
     /// </remarks>
     /// <returns>How many items were newly applied. Zero when everything was already in place.</returns>
@@ -854,22 +856,31 @@ public class WardrobeService : IDisposable
         baseChar ??= _config.ActiveBaseCharacter;
         if (baseChar == null) return 0;
 
-        if (baseChar.DesignId is { } designId && !_glamourer.ApplyDesignCustomization(designId))
-            _log.Warning($"[Wardrobe] Base character '{baseChar.Name}': could not apply design " +
-                         $"'{baseChar.DesignName}' — it may have been deleted in Glamourer.");
+        if (baseChar.DesignId is { } designId)
+        {
+            // Before the items below, so a base item always wins the slot it is in — the design is the
+            // look underneath, and an item attached to the base is a deliberate override of it
+            var applied = baseChar.DesignAppliesEquipment
+                ? _glamourer.ApplyDesignFull(designId)
+                : _glamourer.ApplyDesignCustomization(designId);
 
-        var applied = 0;
+            if (!applied)
+                _log.Warning($"[Wardrobe] Base character '{baseChar.Name}': could not apply design " +
+                             $"'{baseChar.DesignName}' — it may have been deleted in Glamourer.");
+        }
+
+        var worn = 0;
         foreach (var item in ResolveBase(baseChar))
         {
             if (IsItemWorn(item)) continue;
             WearItem(item);
-            applied++;
+            worn++;
         }
 
-        if (applied > 0)
-            _log.Debug($"[Wardrobe] Base character '{baseChar.Name}': re-applied {applied} item(s)");
+        if (worn > 0)
+            _log.Debug($"[Wardrobe] Base character '{baseChar.Name}': re-applied {worn} item(s)");
 
-        return applied;
+        return worn;
     }
 
     /// <summary>
