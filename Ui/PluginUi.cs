@@ -2569,6 +2569,157 @@ public class PluginUi : Window, IDisposable
         (_tagFilter.Count   == 0 || HasAnyTag(outfit.Tags, _tagFilter)) &&
         (_styleFilter.Count == 0 || HasAnyTag(outfit.Tags, _styleFilter));
 
+    /// <summary>
+    /// The search box split into the words a record has to contain, or empty when nothing is typed.
+    /// </summary>
+    /// <remarks>
+    /// Every word has to be found, but each may be found in a different place — so "black boots"
+    /// finds a piece named "Black Leather Boots", and "boots casual" finds one named for the first
+    /// and tagged with the second. Matching the whole box as one string, which is what this used to
+    /// do, meant the words had to sit next to each other in that order inside a single field: typing
+    /// two words that were both plainly there usually returned nothing, which is what made the box
+    /// feel broken rather than merely strict.
+    /// <para>
+    /// Nothing that matched before stops matching. A query found as one substring has each of its
+    /// words in that same field, so this only ever widens what comes back.
+    /// </para>
+    /// </remarks>
+    private string[] SearchWords() =>
+        string.IsNullOrWhiteSpace(_search)
+            ? Array.Empty<string>()
+            : _search.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+
+    /// <summary>Whether an item contains every word of the search.</summary>
+    private static bool ItemMatchesSearch(WardrobeItem item, string[] words)
+    {
+        foreach (var word in words)
+            if (!ItemHasWord(item, word)) return false;
+
+        return true;
+    }
+
+    /// <summary>
+    /// Where one search word is looked for on an item: the four things the box offers, plus the game
+    /// item behind it.
+    /// </summary>
+    /// <remarks>
+    /// The placeholder promises name, tag, mod and note, so all four are searched and the hint is the
+    /// specification. Notes are in for the reason they were written down: a creator's name kept there
+    /// should find the piece. The Glamourer item name is the fifth because it is the vanilla piece the
+    /// mod is worn on, which is how a piece is often remembered when the mod's own name is not.
+    /// <para>
+    /// A mod is matched on its folder as well as its name, as the mass-import panel's own search
+    /// already does. The two disagree often enough to matter — a folder keeps the author's original
+    /// name after the mod has been renamed in Penumbra, and it is what Penumbra's own file list shows
+    /// — so searching for one and being told there is nothing is simply wrong.
+    /// </para>
+    /// </remarks>
+    private static bool ItemHasWord(WardrobeItem item, string word)
+    {
+        const StringComparison ci = StringComparison.OrdinalIgnoreCase;
+
+        return item.Name.Contains(word, ci)
+            || item.Tags.Any(t => t.Contains(word, ci))
+            || item.Mods.Any(m => m.ModName.Contains(word, ci) || m.ModDirectory.Contains(word, ci))
+            || (item.GlamourerItemName?.Contains(word, ci) ?? false)
+            || (item.Notes?.Contains(word, ci) ?? false);
+    }
+
+    /// <summary>Whether an outfit contains every word of the search.</summary>
+    /// <remarks>
+    /// One box drives both grids, so it has to mean the same thing over outfits as it does over
+    /// items, word rule included: the name, the labels, the notes, and the mods behind what is being
+    /// worn. An outfit's mods are its items' mods, so the search reaches through to them — looking
+    /// for a mod by name should find the outfit built out of it and not only the loose pieces. A
+    /// plate's vanilla pieces and a card's design name are searched for the same reason: they are
+    /// what those cards are recognised by, and neither has a wardrobe item to be found through.
+    /// <para>
+    /// <paramref name="byId"/> is handed in rather than looked up here because this runs every frame
+    /// something is typed, and <see cref="WardrobeService.ResolveOutfit"/> scans the whole item list
+    /// once per member — a cost worth paying once for the grid rather than once per card.
+    /// </para>
+    /// </remarks>
+    private static bool OutfitMatchesSearch(Outfit outfit, string[] words, Dictionary<Guid, WardrobeItem> byId)
+    {
+        foreach (var word in words)
+            if (!OutfitHasWord(outfit, word, byId)) return false;
+
+        return true;
+    }
+
+    private static bool OutfitHasWord(Outfit outfit, string word, Dictionary<Guid, WardrobeItem> byId)
+    {
+        const StringComparison ci = StringComparison.OrdinalIgnoreCase;
+
+        if (outfit.Name.Contains(word, ci)) return true;
+        if (outfit.Tags.Any(t => t.Contains(word, ci))) return true;
+        if (outfit.DesignName.Contains(word, ci)) return true;
+        if (outfit.VanillaItems.Values.Any(p => p.Name.Contains(word, ci))) return true;
+
+        foreach (var id in outfit.ItemIds)
+        {
+            // An id with nothing behind it is an item deleted since, exactly as ResolveOutfit treats it
+            if (byId.TryGetValue(id, out var item) && ItemHasWord(item, word)) return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The filters narrowing a grid besides the search, named so an empty grid can say what is on.
+    /// </summary>
+    /// <param name="includeItemFilters">
+    /// Whether the item grid's own filters count. The outfit grid is narrowed by tags and styles
+    /// alone, so naming a slot or the worn filter there would point someone at a button that changes
+    /// nothing they can see.
+    /// </param>
+    /// <remarks>
+    /// A filter left on from earlier is invisible once the grid is empty: nothing is drawn to show
+    /// what it removed, and the row that would give it away is easy to have scrolled past or simply
+    /// forgotten. The result is that the search box gets blamed for a filter doing exactly its job —
+    /// which is half of what "search does nothing" turns out to mean. Naming them is the whole fix.
+    /// </remarks>
+    private List<string> ActiveFilters(bool includeItemFilters)
+    {
+        var parts = new List<string>();
+
+        if (includeItemFilters)
+        {
+            if (_slotFilter is { } slot) parts.Add($"the {slot.DisplayName()} slot");
+            if (_favoritesOnly)          parts.Add("favourites only");
+            if (_wornOnly)               parts.Add("worn only");
+            if (_variantsOnly)           parts.Add("variants only");
+        }
+
+        if (_tagFilter.Count   > 0) parts.Add(_tagFilter.Count   == 1 ? "1 tag"   : $"{_tagFilter.Count} tags");
+        if (_styleFilter.Count > 0) parts.Add(_styleFilter.Count == 1 ? "1 style" : $"{_styleFilter.Count} styles");
+
+        return parts;
+    }
+
+    /// <summary>What an empty item grid says, which depends on why it is empty.</summary>
+    private string EmptyGridMessage()
+    {
+        if (_config.WardrobeItems.Count == 0)
+            return "No items yet. Click '+ Import from Mod' to add your first item.";
+
+        var filters = ActiveFilters(includeItemFilters: true);
+
+        if (SearchWords().Length > 0)
+            return filters.Count > 0
+                ? $"No items match \"{_search.Trim()}\" while filtering on {string.Join(", ", filters)}."
+                : $"No items match \"{_search.Trim()}\".";
+
+        // Only when it is the one thing on. With a slot or a tag also ticked the grid may be empty
+        // because of that instead, and there may be plenty of favourites sitting outside it
+        if (filters.Count == 1 && _favoritesOnly)
+            return "No favourites yet. Click the ♥ on an item to add one.";
+
+        return filters.Count > 0
+            ? $"No items match {string.Join(", ", filters)}."
+            : "No items match the current filter.";
+    }
+
     private void DrawFilterButton(string label, EquipSlot? slot)
     {
         var active = _slotFilter == slot;
@@ -3348,17 +3499,8 @@ public class PluginUi : Window, IDisposable
         if (_styleFilter.Count > 0)
             query = query.Where(x => HasAnyTag(x, _styleFilter));
 
-        if (!string.IsNullOrWhiteSpace(_search))
-        {
-            var q = _search.Trim();
-            query = query.Where(x =>
-                x.Name.Contains(q, StringComparison.OrdinalIgnoreCase) ||
-                x.Tags.Any(t => t.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
-                x.Mods.Any(m => m.ModName.Contains(q, StringComparison.OrdinalIgnoreCase)) ||
-                (x.GlamourerItemName?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                // Notes are searched too, so a creator's name written in there finds the item
-                (x.Notes?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false));
-        }
+        if (SearchWords() is { Length: > 0 } words)
+            query = query.Where(x => ItemMatchesSearch(x, words));
 
         // Secondary key keeps ordering stable when several items share a timestamp
         // (a multi-slot import creates them within the same tick) or the same name.
@@ -3393,13 +3535,7 @@ public class PluginUi : Window, IDisposable
         if (items.Count == 0)
         {
             ImGui.Spacing();
-            ImGui.TextDisabled(_config.WardrobeItems.Count == 0
-                ? "No items yet. Click '+ Import from Mod' to add your first item."
-                : !string.IsNullOrWhiteSpace(_search)
-                    ? $"No items match \"{_search.Trim()}\"."
-                    : _favoritesOnly
-                        ? "No favourites yet. Click the ♥ on an item to add one."
-                        : "No items match the current filter.");
+            ImGui.TextDisabled(EmptyGridMessage());
             return;
         }
 
@@ -5337,17 +5473,37 @@ public class PluginUi : Window, IDisposable
 
         // The same filter row drives both grids, so a style ticked while looking at outfits narrows
         // the outfits rather than quietly doing nothing
-        var outfits = _config.Outfits
+        IEnumerable<Outfit> query = _config.Outfits
             // Design cards are hidden rather than deleted while the setting is off, exactly as items in
             // a switched-off mod category are — so turning it back on brings them back untouched
             .Where(o => _config.ShowGlamourerDesigns || !o.IsDesign)
-            .Where(OutfitMatchesTagFilters)
+            .Where(OutfitMatchesTagFilters);
+
+        // Search is part of that same row, and for a long time it narrowed only the item grid — so
+        // typing here did nothing at all, which read as a broken box rather than as a filter that did
+        // not apply. Built once for the whole grid: see OutfitMatchesSearch for why the lookup is
+        // hoisted out of it.
+        if (SearchWords() is { Length: > 0 } words)
+        {
+            var byId = new Dictionary<Guid, WardrobeItem>();
+            foreach (var item in _config.WardrobeItems) byId[item.Id] = item;
+
+            query = query.Where(o => OutfitMatchesSearch(o, words, byId));
+        }
+
+        var outfits = query
             .OrderBy(o => o.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         if (outfits.Count == 0)
         {
-            ImGui.TextDisabled("No outfit matches the tags or styles you are filtering on.");
+            var narrowing = ActiveFilters(includeItemFilters: false);
+
+            ImGui.TextDisabled(SearchWords().Length > 0
+                ? narrowing.Count > 0
+                    ? $"No outfit matches \"{_search.Trim()}\" while filtering on {string.Join(", ", narrowing)}."
+                    : $"No outfit matches \"{_search.Trim()}\"."
+                : "No outfit matches the tags or styles you are filtering on.");
             return;
         }
 
