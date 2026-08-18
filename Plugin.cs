@@ -156,6 +156,16 @@ public sealed class Plugin : IDalamudPlugin
             return;
         }
 
+        // Undocumented on purpose: a field finder, not a feature. It answers "which camera field does
+        // this control actually move" with a memory diff, which is how the GPose FoV offset and the
+        // pan pair were found — and what a report like issue #17 needs, since a screenshot of a
+        // camera that went to the wrong place cannot say which field was wrong.
+        if (trimmed.Equals("camdump", StringComparison.OrdinalIgnoreCase))
+        {
+            Camera.DumpOrDiff();
+            return;
+        }
+
         if (trimmed.Equals("unequip", StringComparison.OrdinalIgnoreCase))
         {
             foreach (var id in System.Linq.Enumerable.ToList(_config.WornItems.Values))

@@ -51,6 +51,7 @@ public unsafe class CameraService : IDisposable
     private static float* PanH(Camera* cam) => (float*)((byte*)cam + PanHOffset);
     private static float* PanV(Camera* cam) => (float*)((byte*)cam + PanVOffset);
 
+
     /// <summary>
     /// Whether GPose is active, and so whether an angle can be saved or applied at all.
     /// </summary>
@@ -109,7 +110,10 @@ public unsafe class CameraService : IDisposable
     {
         if (!WriteToCamera(preset))
         {
-            _log.Warning("[Wardrobe] Camera apply failed — CameraManager or its camera was null.");
+            _log.Warning(InGpose
+                ? "[Wardrobe] Camera apply failed — CameraManager or its camera was null."
+                : "[Wardrobe] Camera apply skipped — not in GPose. A preset written to the gameplay " +
+                  "camera would tilt it and stay that way.");
             return;
         }
 
@@ -146,6 +150,15 @@ public unsafe class CameraService : IDisposable
 
     private bool WriteToCamera(CameraPreset preset)
     {
+        // Outside GPose this is the gameplay camera, not a separate one, and a preset written into it
+        // lands on the camera the player is using to walk around. Most of it is harmless because the
+        // game's own update overwrites DirH/DirV the next frame — but TiltOffset is the Character
+        // Configuration third-person camera angle, which persists, so an apply outside GPose left the
+        // camera stuck at a GPose pitch until that slider was reset by hand. The guard belongs here
+        // rather than at the call sites: Apply, its sustain loop and anything added later all pass
+        // through this one place.
+        if (!InGpose) return false;
+
         var mgr = CameraManager.Instance();
         if (mgr == null || mgr->Camera == null) return false;
         var cam = mgr->Camera;
@@ -179,7 +192,96 @@ public unsafe class CameraService : IDisposable
         if (preset.PanH is { } panH) *PanH(cam) = panH;
         if (preset.PanV is { } panV) *PanV(cam) = panV;
 
+
         return true;
+    }
+
+    // ── Field finder ──────────────────────────────────────────────────────────
+
+    private byte[]? _dumpBaseline;
+
+    private const int CamBytes    = 704; // Camera is 0x2C0
+    private const int RenderBytes = 640;
+
+    /// <summary>
+    /// First call snapshots both camera structs; the second reports every byte that changed.
+    /// </summary>
+    /// <remarks>
+    /// Scans as floats *and* as raw bytes, because not every setting is a float — a checkbox is
+    /// typically a single byte and would be invisible to a float-only scan. Byte hits that fall
+    /// inside a float that already changed are suppressed, so a moved slider does not also report
+    /// its own four bytes.
+    /// <para>
+    /// Kept in the shipping build behind an undocumented command, so a report about a camera control
+    /// can be answered with what actually moved instead of a guess. Field names lie: on 2026-08-05
+    /// four rounds were lost to names that sounded right, and one diff found the field. Use it in
+    /// GPose with Brio's camera off, change exactly one control between the two calls, and write the
+    /// input field rather than any output that moved with it.
+    /// </para>
+    /// </remarks>
+    public void DumpOrDiff()
+    {
+        var mgr = CameraManager.Instance();
+        if (mgr == null || mgr->Camera == null)
+        {
+            _log.Warning("[Wardrobe] Camera dump: no camera.");
+            return;
+        }
+
+        var camB    = (byte*)mgr->Camera;
+        var renderB = (byte*)mgr->Camera->SceneCamera.RenderCamera;
+
+        var snap = new byte[CamBytes + RenderBytes];
+        for (var i = 0; i < CamBytes; i++) snap[i] = camB[i];
+        if (renderB != null)
+            for (var i = 0; i < RenderBytes; i++) snap[CamBytes + i] = renderB[i];
+
+        if (_dumpBaseline == null)
+        {
+            _dumpBaseline = snap;
+            _log.Information("[Wardrobe] Camera dump: baseline taken. Change one setting in game, " +
+                             "then run /wardrobe camdump again.");
+            return;
+        }
+
+        var floatHits = new System.Collections.Generic.HashSet<int>();
+        var changes   = 0;
+
+        // Floats first, so their byte-level noise can be suppressed below
+        for (var region = 0; region < 2; region++)
+        {
+            var start = region == 0 ? 0 : CamBytes;
+            var len   = region == 0 ? CamBytes : RenderBytes;
+            var label = region == 0 ? "cam   " : "render";
+
+            for (var off = 0; off + 4 <= len; off += 4)
+            {
+                var a = BitConverter.ToSingle(_dumpBaseline, start + off);
+                var b = BitConverter.ToSingle(snap,          start + off);
+                if (a.Equals(b)) continue;
+                if (!float.IsFinite(a) || !float.IsFinite(b)) continue;
+                if (Math.Abs(a) > 100000f || Math.Abs(b) > 100000f) continue;
+
+                for (var k = 0; k < 4; k++) floatHits.Add(start + off + k);
+                _log.Information($"[Wardrobe]  f {label} +0x{off:X3} ({off,3}): " +
+                                 $"{a,12:F5} -> {b,12:F5}");
+                changes++;
+            }
+        }
+
+        // Then anything else that moved, one byte at a time
+        for (var i = 0; i < snap.Length; i++)
+        {
+            if (_dumpBaseline[i] == snap[i] || floatHits.Contains(i)) continue;
+            var inCam = i < CamBytes;
+            var off   = inCam ? i : i - CamBytes;
+            _log.Information($"[Wardrobe]  b {(inCam ? "cam   " : "render")} +0x{off:X3} ({off,3}): " +
+                             $"{_dumpBaseline[i],3} -> {snap[i],3}");
+            changes++;
+        }
+
+        _log.Information($"[Wardrobe] Camera dump: {changes} change(s). Baseline cleared.");
+        _dumpBaseline = null;
     }
 
     private void Unsubscribe()
