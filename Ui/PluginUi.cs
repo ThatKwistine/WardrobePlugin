@@ -4781,6 +4781,22 @@ public class PluginUi : Window, IDisposable
                 : $"Save the current camera as the {label} preset.\n" +
                   "The session will use it from the next shot on.");
 
+        // Only while camera diagnostics are on, and here rather than in the settings panel because
+        // the moment worth capturing is the one being looked at — a camera that came back wrong is
+        // wrong now, and expanding the window to reach a settings button would disturb the very
+        // thing being reported
+        if (_config.CameraDebugLogging)
+        {
+            UiLayout.SameLineIfRoomForButton("Dump camera");
+            if (ImGui.SmallButton("Dump camera"))
+                Plugin.Camera.LogState("dump button, mid-session");
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Write every camera field to the log as it is right now.\n\n" +
+                                 "Open the log with /xllog, copy the lines beginning\n" +
+                                 "[Wardrobe] Camera state, and paste them into the issue.");
+        }
+
         ImGui.Spacing();
     }
 
@@ -5341,6 +5357,8 @@ public class PluginUi : Window, IDisposable
         _config.Save();
         _config.SavePresets();
         _log.Information($"[Wardrobe] Saved camera preset '{captured.Name}' for {slotKey}");
+
+        LogCameraDebug(captured, $"saved as '{captured.Name}' for {slotKey}");
     }
 
     private void OverwritePreset(string slotKey, int index)
@@ -5357,6 +5375,25 @@ public class PluginUi : Window, IDisposable
 
         _config.Save();
         _config.SavePresets();
+
+        LogCameraDebug(captured, $"overwrote '{captured.Name}' for {slotKey}");
+    }
+
+    /// <summary>
+    /// Logs the camera and what a preset took from it, when camera diagnostics are switched on.
+    /// </summary>
+    /// <remarks>
+    /// Both halves together and in that order, because the question they exist to answer is what the
+    /// preset kept and what it did not. Gated here rather than inside the service so that the service
+    /// keeps no opinion about settings, and so a caller that wants the log regardless — the button in
+    /// the session view — can simply not go through this.
+    /// </remarks>
+    private void LogCameraDebug(CameraPreset preset, string what)
+    {
+        if (!_config.CameraDebugLogging) return;
+
+        Plugin.Camera.LogState(what);
+        Plugin.Camera.LogPreset(preset, what);
     }
 
     /// <summary>
@@ -8986,6 +9023,43 @@ public class PluginUi : Window, IDisposable
         {
             ImGui.Spacing();
             ImGui.TextDisabled(_cameraLoadStatus);
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ImGui.TextUnformatted("Camera diagnostics");
+        ImGui.TextDisabled("For reporting an angle that does not come back the way you left it. " +
+                           "Writes the camera's fields to the log when a preset is saved, and adds a " +
+                           "Dump camera button to the session view. Off unless you are chasing a bug.");
+        ImGui.Spacing();
+
+        var camDebug = _config.CameraDebugLogging;
+        if (ImGui.Checkbox("Log camera fields##camdebug", ref camDebug))
+        {
+            _config.CameraDebugLogging = camDebug;
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Saving a preset then logs both the camera and what the preset kept\n" +
+                             "from it — which is how a field that is not being saved shows itself.\n\n" +
+                             "Read the log with /xllog and copy the [Wardrobe] Camera lines.");
+
+        if (camDebug)
+        {
+            ImGui.Spacing();
+            if (ImGui.Button(" Dump camera now "))
+                Plugin.Camera.LogState("dump button, settings");
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Write the camera's fields to the log as they are right now.");
+
+            UiLayout.SameLineIfRoomForText("Needs GPose open to be meaningful.");
+            ImGui.TextDisabled(Plugin.Camera.InGpose
+                ? "Reading the GPose camera."
+                : "Not in GPose — this reads the gameplay camera instead.");
         }
     }
 

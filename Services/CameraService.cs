@@ -51,6 +51,18 @@ public unsafe class CameraService : IDisposable
     private static float* PanH(Camera* cam) => (float*)((byte*)cam + PanHOffset);
     private static float* PanV(Camera* cam) => (float*)((byte*)cam + PanVOffset);
 
+    /// <summary>
+    /// GPose's Twist control, at <c>Camera+0x170</c>. Read for the log only — never written.
+    /// </summary>
+    /// <remarks>
+    /// Presets do not save twist, by decision rather than oversight. The offset comes from Brio's map
+    /// of the same struct and has not been confirmed here, which is exactly why reading it is safe and
+    /// writing it would not be: a wrong offset costs a misleading log line instead of a broken camera.
+    /// </remarks>
+    private const int TwistOffset = 0x170;
+
+    private static float* Twist(Camera* cam) => (float*)((byte*)cam + TwistOffset);
+
 
     /// <summary>
     /// Whether GPose is active, and so whether an angle can be saved or applied at all.
@@ -194,6 +206,69 @@ public unsafe class CameraService : IDisposable
 
 
         return true;
+    }
+
+    // ── Diagnostics ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Writes every camera field the presets know about to the log, named and with its offset.
+    /// </summary>
+    /// <remarks>
+    /// The counterpart to <see cref="DumpOrDiff"/>: that one answers "which field moved", this one
+    /// answers "what were they all set to". A report that an angle came back wrong needs both halves
+    /// of the comparison — what the camera held when the preset was saved, and what it holds when the
+    /// preset is applied — and neither is visible from a screenshot.
+    /// <para>
+    /// Two fields are logged that no preset stores. <c>0x170</c> is the GPose Twist control, Q and E,
+    /// which the wardrobe deliberately does not save; it is here because a camera that comes back
+    /// twisted is otherwise indistinguishable from one that comes back mis-panned. <c>TiltOffset</c>
+    /// is the Character Configuration third-person camera angle, which is a saved game setting rather
+    /// than camera state, and is worth being able to see for the same reason.
+    /// </para>
+    /// </remarks>
+    public void LogState(string when)
+    {
+        var mgr = CameraManager.Instance();
+        if (mgr == null || mgr->Camera == null)
+        {
+            _log.Information($"[Wardrobe] Camera state ({when}): no camera to read.");
+            return;
+        }
+
+        var cam = mgr->Camera;
+
+        _log.Information($"[Wardrobe] Camera state ({when}) — in GPose: {InGpose}");
+        _log.Information($"[Wardrobe]   Distance   0x124 = {cam->Distance,12:F5}   (scroll-wheel zoom)");
+        _log.Information($"[Wardrobe]   FoV        0x130 = {cam->FoV,12:F5}");
+        _log.Information($"[Wardrobe]   GPose zoom 0x13C = {*GPoseFoV(cam),12:F5}   (the Camera Distance slider)");
+        _log.Information($"[Wardrobe]   DirH       0x140 = {cam->DirH,12:F5}   (rotation)");
+        _log.Information($"[Wardrobe]   DirV       0x144 = {cam->DirV,12:F5}   (vertical angle)");
+        _log.Information($"[Wardrobe]   Pan        0x160 = {*PanH(cam),12:F5}   (Pan Camera, A/D)");
+        _log.Information($"[Wardrobe]   Tilt       0x164 = {*PanV(cam),12:F5}   (Tilt Camera, W/S)");
+        _log.Information($"[Wardrobe]   Twist      0x170 = {*Twist(cam),12:F5}   (Twist Camera, Q/E — NOT saved by presets)");
+        _log.Information($"[Wardrobe]   TiltOffset 0x1E4 = {cam->TiltOffset,12:F5}   (Character Configuration camera angle, a saved setting)");
+    }
+
+    /// <summary>Writes what a preset actually stored, next to the camera it was taken from.</summary>
+    /// <remarks>
+    /// Null is printed as "not stored" rather than as a number, because that is a real and different
+    /// state: pan and tilt are nullable, and a preset saved before they existed leaves the camera's
+    /// own alone instead of writing one. A report of "it does not restore my tilt" is answered
+    /// immediately by seeing "not stored" on that line.
+    /// </remarks>
+    public void LogPreset(CameraPreset preset, string when)
+    {
+        static string N(float? v) => v is { } f ? f.ToString("F5") : "not stored";
+
+        _log.Information($"[Wardrobe] Preset '{preset.Name}' ({when}):");
+        _log.Information($"[Wardrobe]   Distance   = {preset.Distance,12:F5}");
+        _log.Information($"[Wardrobe]   FoV        = {preset.FoV,12:F5}");
+        _log.Information($"[Wardrobe]   GPose zoom = {preset.GPoseFoVOffset,12:F5}");
+        _log.Information($"[Wardrobe]   DirH       = {preset.DirH,12:F5}   offset from character: {N(preset.DirHOffset)}");
+        _log.Information($"[Wardrobe]   DirV       = {preset.DirV,12:F5}");
+        _log.Information($"[Wardrobe]   Pan        = {N(preset.PanH),12}");
+        _log.Information($"[Wardrobe]   Tilt       = {N(preset.PanV),12}");
+        _log.Information($"[Wardrobe]   TiltOffset = {preset.TiltOffset,12:F5}");
     }
 
     // ── Field finder ──────────────────────────────────────────────────────────

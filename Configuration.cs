@@ -359,6 +359,18 @@ public class Configuration : IPluginConfiguration
     /// </remarks>
     public bool AdvancedDyesEnabled { get; set; }
 
+    /// <summary>
+    /// Write the camera's fields to the log when a preset is saved, and offer a button that does it
+    /// on demand.
+    /// </summary>
+    /// <remarks>
+    /// For answering a report about a camera angle that did not come back the way it was left. The
+    /// camera has controls the presets do not save and fields nobody has identified, so the only way
+    /// to tell those apart is to see the numbers from the machine it went wrong on. Off by default
+    /// and not something a normal install ever needs: it is a diagnostic, and it says so.
+    /// </remarks>
+    public bool CameraDebugLogging { get; set; }
+
     /// <summary>Show an icon instead of the slot name where slots are displayed.</summary>
     public bool SlotIconsEnabled { get; set; }
 
