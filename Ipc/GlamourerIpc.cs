@@ -1196,6 +1196,43 @@ public class GlamourerIpc : IDisposable
         _                   => string.Empty,
     };
 
+    /// <summary>
+    /// Empties a slot properly — Glamourer's "Nothing", not an invisible item sitting in the slot.
+    /// </summary>
+    /// <remarks>
+    /// The wardrobe's usual way of clearing a slot is the Emperor's New item, which is invisible but
+    /// is still an item: Glamourer shows the slot as filled, and a mod that redirects Emperor's New
+    /// still draws. "Nothing" is the slot actually being empty, which is what someone asking for a
+    /// bare character means.
+    /// <para>
+    /// The id comes from the sentinel band documented above: <c>NothingId(slot)</c> is
+    /// <see cref="NothingBase"/> minus the slot, and the slot in that formula is the same enum
+    /// <see cref="ToApiEquipSlot"/> returns — which is why this can be computed rather than looked up,
+    /// and why <see cref="DesignItemName"/> reads back exactly what this writes.
+    /// </para>
+    /// <para>
+    /// Equipment only. The weapon slots key their empty off the equip type rather than the slot and
+    /// land in a different band, so they are refused here rather than sent a wrong id.
+    /// </para>
+    /// </remarks>
+    public bool SetSlotToNothing(EquipSlot slot)
+    {
+        if (slot is EquipSlot.MainHand or EquipSlot.OffHand)
+        {
+            _log.Debug($"[Wardrobe] SetSlotToNothing: {slot} is a weapon slot — not supported");
+            return false;
+        }
+
+        var apiSlot = ToApiEquipSlot(slot);
+        if (apiSlot == 0)
+        {
+            _log.Warning($"[Wardrobe] SetSlotToNothing: no slot mapping for {slot}");
+            return false;
+        }
+
+        return SetItem(slot, NothingBase - apiSlot);
+    }
+
     private static byte ToApiEquipSlot(EquipSlot slot) => slot switch
     {
         EquipSlot.MainHand  => 1,

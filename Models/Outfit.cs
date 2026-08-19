@@ -157,5 +157,25 @@ public class Outfit : IImageOwner
     /// </remarks>
     public bool DesignAppliesEquipment { get; set; } = true;
 
+    /// <summary>
+    /// Show or hide headgear when this outfit is worn, or null to leave it as it is.
+    /// </summary>
+    /// <remarks>
+    /// Part of the look rather than a setting: a hood is the outfit, and a hat that ruins the hair
+    /// under it is not something to remember to switch off by hand every time. Glamourer already owns
+    /// the toggle — this only says what an outfit wants it set to.
+    /// <para>
+    /// Null means leave it alone, and is the default, so every outfit that already exists keeps
+    /// behaving exactly as it does now. It is a third state rather than a false, because "this outfit
+    /// has no opinion" and "this outfit wants the hat off" are different things: the first must not
+    /// undo a toggle the wearer set themselves a moment earlier.
+    /// </para>
+    /// </remarks>
+    public bool? HatVisible { get; set; }
+
+    /// <summary>Show or hide the weapon when this outfit is worn, or null to leave it alone.</summary>
+    /// <inheritdoc cref="HatVisible" path="/remarks"/>
+    public bool? WeaponVisible { get; set; }
+
     public bool IsDesign => DesignId is not null;
 }

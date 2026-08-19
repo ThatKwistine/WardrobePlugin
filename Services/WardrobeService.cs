@@ -954,9 +954,23 @@ public class WardrobeService : IDisposable
     /// since the last strip comes back. Nothing changes when there is no base character.
     /// </para>
     /// </remarks>
-    public void StripAll()
+    /// <param name="ignoreBase">
+    /// Take the base character off as well, leaving nothing on at all. The base exists so that a
+    /// strip has a floor, and Strip itself always respects it — this is for Unequip All, which is the
+    /// wardrobe emptying itself rather than stripping down to something.
+    /// </param>
+    /// <param name="toNothing">
+    /// Set the slots to Glamourer's "Nothing" rather than to the Emperor's New item. Both look bare
+    /// on the character, but only one is actually empty: Emperor's New is an invisible item still
+    /// sitting in the slot, which is what keeps a mod that redirects it drawing. Strip wants that;
+    /// Unequip All, which is meant to leave the character wearing nothing at all, does not.
+    /// </param>
+    public void StripAll(bool ignoreBase = false, bool toNothing = false)
     {
-        var baseChar = _config.ActiveBaseCharacter;
+        // Everything below already does the right thing when there is no base character, so ignoring
+        // one is just pretending there isn't one. The only line that cannot be expressed that way is
+        // the re-apply at the end, which reaches for the active base itself.
+        var baseChar = ignoreBase ? null : _config.ActiveBaseCharacter;
         var kept     = KeptSlots(baseChar);
         var keptIds  = baseChar?.ItemIds ?? new List<Guid>();
 
@@ -981,19 +995,28 @@ public class WardrobeService : IDisposable
             UnwearItem(item, save: false, restoreBase: false);
         }
 
-        // Force every equipment slot to Emperor's New regardless of what Glamourer currently has.
+        // Force every equipment slot empty regardless of what Glamourer currently has.
         // Customisation slots are skipped — stripping cannot remove a character's hair.
+        //
+        // See toNothing for why there are two kinds of empty and which is which.
         foreach (var slot in EquipSlotEx.All)
         {
             if (slot.IsCustomization() || kept.Contains(slot)) continue;
+
+            // Weapons fall through to Emperor's New either way: their empty is keyed by equip type
+            // rather than by slot, so there is no Nothing id to compute for them here
+            if (toNothing && _glamourer.SetSlotToNothing(slot)) continue;
+
             var emperorsId = ItemLookupService.FindEmperorsNewItem(slot);
             if (emperorsId.HasValue)
                 _glamourer.SetItem(slot, emperorsId.Value);
         }
 
         // After the stripping, so a base item that something else had displaced is put back rather
-        // than merely spared
-        ApplyBase(baseChar);
+        // than merely spared. Skipped entirely when the base is being stripped too — ApplyBase falls
+        // back to the active base when handed null, so passing the null above would put back the very
+        // thing this was asked to remove.
+        if (!ignoreBase) ApplyBase(baseChar);
 
         _config.Save();
         WardrobeChanged?.Invoke();
@@ -1578,6 +1601,11 @@ public class WardrobeService : IDisposable
         // would put plain gear in a slot a mod is about to take anyway
         WearVanillaItems(outfit);
 
+        // Last, so nothing after it can put a hat back on. A design carries its own hat and weapon
+        // state, and applying one is exactly what would override an outfit that asked for the
+        // opposite — so the outfit's own answer is written after the design has had its say.
+        ApplyOutfitVisibility(outfit);
+
         // Remembered so redraws re-apply the dyes too, not just the items
         _activeOutfitId = outfit.Id;
 
@@ -1585,6 +1613,33 @@ public class WardrobeService : IDisposable
         WardrobeChanged?.Invoke();
         _log.Information($"[Wardrobe] Wore outfit '{outfit.Name}' ({items.Count} item(s), " +
                          $"{outfit.VanillaItems.Count} vanilla piece(s))");
+    }
+
+    /// <summary>Applies an outfit's hat and weapon toggles, where it has an opinion about them.</summary>
+    /// <remarks>
+    /// Nothing happens for a null, which is the point of it being nullable: an outfit with no opinion
+    /// leaves whatever the wearer had set, rather than quietly turning their weapon back on every time
+    /// they put a dress on.
+    /// <para>
+    /// Not undone by <see cref="UnwearOutfit"/>. Taking an outfit off restores the character, not the
+    /// session before it, and there is nothing sensible to restore to — the state before the outfit
+    /// was worn is long gone by the time several outfits have been tried on. Whoever wants the hat
+    /// back toggles it, the same as they would in Glamourer.
+    /// </para>
+    /// </remarks>
+    private void ApplyOutfitVisibility(Outfit outfit)
+    {
+        if (outfit.HatVisible is { } hat)
+        {
+            _glamourer.SetHatVisible(hat);
+            _log.Debug($"[Wardrobe] Outfit '{outfit.Name}': headgear {(hat ? "shown" : "hidden")}");
+        }
+
+        if (outfit.WeaponVisible is { } weapon)
+        {
+            _glamourer.SetWeaponVisible(weapon);
+            _log.Debug($"[Wardrobe] Outfit '{outfit.Name}': weapon {(weapon ? "shown" : "hidden")}");
+        }
     }
 
     /// <summary>Removes every item in an outfit that is currently worn.</summary>
@@ -2286,6 +2341,11 @@ public class WardrobeService : IDisposable
                 Stain1 = kv.Value.Stain1,
                 Stain2 = kv.Value.Stain2,
             }),
+
+        // Carried, unlike the design and plate links above: those are what a copy is deliberately cut
+        // loose from, while a hood being off is part of the look the copy is starting from
+        HatVisible    = source.HatVisible,
+        WeaponVisible = source.WeaponVisible,
     };
 
     /// <summary>

@@ -1093,24 +1093,27 @@ public class PluginUi : Window, IDisposable
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.65f, 0.12f, 0.12f, 1f));
             if (ImGui.Button(" Unequip All "))
             {
-                foreach (var id in _config.WornItems.Values.ToList())
-                {
-                    var item = _config.WardrobeItems.Find(x => x.Id == id);
-                    // restoreBase: false — the Clear() below wipes the record, so a base put back
-                    // here would leave its mods enabled with nothing saying so
-                    if (item != null) _wardrobe.UnwearItem(item, save: false, restoreBase: false);
-                }
-                _config.WornItems.Clear();
-                _config.Save();
-                _detectedWorn.Clear();
+                // Ctrl takes the base off too. Without it this leaves the base character on, the same
+                // as Strip does — the difference between the two buttons is what the emptied slots are
+                // set to, not whether the base survives.
+                _wardrobe.StripAll(ignoreBase: ImGui.GetIO().KeyCtrl, toNothing: true);
+
+                // Mod categories keep their marker: an animation or a mount is not on the character,
+                // so nothing here turned it off and the grid must not claim otherwise
+                _detectedWorn.RemoveWhere(id =>
+                    _config.WardrobeItems.Find(x => x.Id == id) is not { } item || !item.Slot.IsModCategory());
+                _scanStatus = string.Empty;
             }
             ImGui.PopStyleColor(2);
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Take off every wardrobe item you are wearing." +
+                ImGui.SetTooltip("Take off every wardrobe item and empty every slot in\n" +
+                                 "Glamourer — set to Nothing, not to an invisible item, so\n" +
+                                 "the character is wearing nothing at all.\n\n" +
+                                 "Animations, VFX and mounts are left running — they are not\n" +
+                                 "on the character, so there is nothing to unequip." +
                                  (_config.ActiveBaseCharacter is { } unequipBase
-                                     ? $"\n\nIncluding '{unequipBase.Name}' — this is the wardrobe\n" +
-                                       "emptying itself, not a strip, so the base character is\n" +
-                                       "not held back. Strip keeps it."
+                                     ? $"\n\nKeeps '{unequipBase.Name}': its slots and items stay on.\n" +
+                                       "Hold Ctrl to take that off as well, leaving nothing at all."
                                      : string.Empty));
             UiLayout.SameLineIfRoomForButton(" Strip ");
         }
@@ -6129,6 +6132,63 @@ public class PluginUi : Window, IDisposable
     /// Editing panel for one outfit: rename, set a preview, and manage its members as a list of
     /// rows with a thumbnail, an equip toggle and a remove control.
     /// </summary>
+    /// <summary>The outfit's say over Glamourer's headgear and weapon toggles.</summary>
+    /// <remarks>
+    /// Three states rather than two checkboxes, because "no opinion" has to be sayable and has to be
+    /// the default. A plain checkbox would make every outfit assert something about the hat the moment
+    /// it was created, and wearing one would then undo a toggle the wearer had just set by hand.
+    /// </remarks>
+    private void DrawOutfitVisibility(Outfit outfit)
+    {
+        ImGui.TextDisabled("Headgear and weapon");
+        ImGui.TextDisabled("What this outfit does with Glamourer's toggles when you wear it. A hood " +
+                           "is part of the look; so is putting the sword away for a dress.");
+        ImGui.Spacing();
+
+        var hat = outfit.HatVisible;
+        if (VisibilityCombo("Headgear##outfithat", ref hat))
+        {
+            outfit.HatVisible = hat;
+            _config.Save();
+        }
+
+        var weapon = outfit.WeaponVisible;
+        if (VisibilityCombo("Weapon##outfitweapon", ref weapon))
+        {
+            outfit.WeaponVisible = weapon;
+            _config.Save();
+        }
+
+        if (outfit.HatVisible is null && outfit.WeaponVisible is null)
+            ImGui.TextDisabled("Leaves both as you have them.");
+    }
+
+    /// <summary>A leave-alone / show / hide picker over a nullable bool.</summary>
+    /// <remarks>
+    /// Null first and selected by default, so the neutral answer is the one a glance lands on and the
+    /// one an outfit keeps unless somebody chooses otherwise.
+    /// </remarks>
+    private static bool VisibilityCombo(string label, ref bool? value)
+    {
+        var options = new[] { "Leave alone", "Show", "Hide" };
+        var current = value is null ? 0 : value.Value ? 1 : 2;
+        var picked  = current;
+
+        ImGui.SetNextItemWidth(UiScale.S(150));
+        if (ImGui.BeginCombo(label, options[current]))
+        {
+            for (var i = 0; i < options.Length; i++)
+                if (ImGui.Selectable(options[i], i == current)) picked = i;
+
+            ImGui.EndCombo();
+        }
+
+        if (picked == current) return false;
+
+        value = picked switch { 1 => true, 2 => false, _ => null };
+        return true;
+    }
+
     private void DrawOutfitEditPanel()
     {
         var outfit = _editingOutfit;
@@ -6237,6 +6297,12 @@ public class PluginUi : Window, IDisposable
         ImGui.Spacing();
 
         DrawOutfitVanillaItems(outfit);
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        DrawOutfitVisibility(outfit);
 
         ImGui.Spacing();
         ImGui.Separator();
