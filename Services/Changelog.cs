@@ -41,6 +41,28 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 5, 3, 1), "19 August 2026", new List<ChangelogSection>
+        {
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("Mods stopped being switched off after turning on the collection setting.",
+                    "Turning on \"use whichever collection my character is on\" lost track of every " +
+                    "mod the wardrobe had already enabled, so removing an item left its mods " +
+                    "running and the scan filled up with items whose mods Glamourer was not " +
+                    "showing. Nothing had to be changed for it but the setting itself. The older " +
+                    "records are found again, and are switched off in the collection they were " +
+                    "switched on in — including by Disable Their Mods, which had the same fault."),
+            }),
+
+            new("What's new", new List<ChangelogNote>
+            {
+                new("Tick boxes for plates and designs in the outfits grid.",
+                    "On the row above the grid, both ticked, each shown only when you have that " +
+                    "kind of card. Untick them to look past twenty glamour plates at the outfits " +
+                    "you built yourself."),
+            }),
+        }),
+
         new(new Version(1, 5, 3, 0), "19 August 2026", new List<ChangelogSection>
         {
             new("Fixes", new List<ChangelogNote>
