@@ -106,6 +106,23 @@ public class PluginUi : Window, IDisposable
     // Variant-group filter: show only pieces that exist in more than one version
     private bool _variantsOnly;
 
+    /// <summary>
+    /// Whether the outfits grid is showing glamour plates and design cards.
+    /// </summary>
+    /// <remarks>
+    /// Both on, because the grid showing everything is what someone opening it expects — these are
+    /// for getting twenty plates out of the way when you want to look at the outfits you built.
+    /// <para>
+    /// Not saved. The same as favourites and worn, which are also a way of looking at the grid for a
+    /// minute rather than a setting — and a category still hidden after a restart would be a wardrobe
+    /// that had quietly lost half its cards.
+    /// </para>
+    /// </remarks>
+    private bool _showPlates = true;
+
+    /// <inheritdoc cref="_showPlates"/>
+    private bool _showDesigns = true;
+
     // Items the grid drew last frame, for the toolbar count. The toolbar draws before the grid,
     // so this trails by one frame — imperceptible, and avoids running the filters twice.
     private int _visibleCount;
@@ -5578,6 +5595,8 @@ public class PluginUi : Window, IDisposable
                                  "screenshot, exactly like an item session.");
         }
 
+        DrawOutfitSourceChecks();
+
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
@@ -5596,6 +5615,9 @@ public class PluginUi : Window, IDisposable
             // Design cards are hidden rather than deleted while the setting is off, exactly as items in
             // a switched-off mod category are — so turning it back on brings them back untouched
             .Where(o => _config.ShowGlamourerDesigns || !o.IsDesign)
+            // The two tick boxes above the grid. Unticking both leaves the outfits you built yourself.
+            .Where(o => _showPlates  || !o.IsGlamourPlate)
+            .Where(o => _showDesigns || !o.IsDesign)
             .Where(OutfitMatchesTagFilters);
 
         // Search is part of that same row, and for a long time it narrowed only the item grid — so
@@ -5618,11 +5640,16 @@ public class PluginUi : Window, IDisposable
         {
             var narrowing = ActiveFilters(includeItemFilters: false);
 
+            if (!_showPlates)  narrowing.Add("plates hidden");
+            if (!_showDesigns) narrowing.Add("designs hidden");
+
             ImGui.TextDisabled(SearchWords().Length > 0
                 ? narrowing.Count > 0
                     ? $"No outfit matches \"{_search.Trim()}\" while filtering on {string.Join(", ", narrowing)}."
                     : $"No outfit matches \"{_search.Trim()}\"."
-                : "No outfit matches the tags or styles you are filtering on.");
+                : narrowing.Count > 0
+                    ? $"No outfit matches {string.Join(", ", narrowing)}."
+                    : "No outfit matches the tags or styles you are filtering on.");
             return;
         }
 
@@ -5690,6 +5717,45 @@ public class PluginUi : Window, IDisposable
     /// screen unless it has actually happened.
     /// </para>
     /// </remarks>
+    /// <summary>Tick boxes for the two kinds of card the wardrobe does not own.</summary>
+    /// <remarks>
+    /// On this row rather than among the filter buttons above, where they would read as two more
+    /// "show only" filters — which is the opposite of what they do. Ticked means shown, which is the
+    /// only way round a tick box can be read, and both start ticked because a grid that opens
+    /// hiding things is a grid that has lost cards.
+    /// <para>
+    /// Each appears only when there is a card of that kind to hide, the same rule the Variants
+    /// filter follows: a box that can only ever empty the grid is worse than no box.
+    /// </para>
+    /// </remarks>
+    private void DrawOutfitSourceChecks()
+    {
+        var plates  = _config.Outfits.Any(o => o.IsGlamourPlate);
+        var designs = _config.ShowGlamourerDesigns && _config.Outfits.Any(o => o.IsDesign);
+
+        if (!plates && !designs) return;
+
+        if (plates)
+        {
+            UiLayout.SameLineIfRoomForText("Plates");
+            var show = _showPlates;
+            if (ImGui.Checkbox("Plates", ref show)) _showPlates = show;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Show your glamour plates in the grid.\n\n" +
+                                 "Untick to leave only the outfits you built yourself.");
+        }
+
+        if (designs)
+        {
+            UiLayout.SameLineIfRoomForText("Designs");
+            var show = _showDesigns;
+            if (ImGui.Checkbox("Designs", ref show)) _showDesigns = show;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Show your Glamourer designs in the grid.\n\n" +
+                                 "Untick to leave only the outfits you built yourself.");
+        }
+    }
+
     private void DrawOutfitSourcesBar()
     {
         // Recomputed every frame so the cards below and the notices here cannot disagree. Cheap: the
