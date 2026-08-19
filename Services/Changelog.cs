@@ -41,6 +41,85 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 5, 3, 0), "19 August 2026", new List<ChangelogSection>
+        {
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("Hair mods that never switched the hairstyle.",
+                    "If you play a Hyur, Elezen or Miqo'te, or a male Roegadyn, hairstyle " +
+                    "switching has quietly done nothing since it was added: the race was looked " +
+                    "up in a format it was never saved in, so the mod was refused as not covering " +
+                    "your race while the log listed the very number it had failed to find. It " +
+                    "works now, on the items you already have."),
+
+                new("Hair mods on a character whose race is set in Glamourer.",
+                    "The race came from the game, which still says who you were before Glamourer " +
+                    "redrew you — so a hair built for the race you are now was turned away. " +
+                    "Glamourer is asked first."),
+
+                new("The search box only searched the item grid.",
+                    "Typing while looking at outfits did nothing at all. Outfits now match on " +
+                    "their name, tags and pictures' worth of contents — including the mods behind " +
+                    "their items, so searching a mod finds the outfit built out of it."),
+
+                new("Searching for more than one word.",
+                    "The whole box had to appear, in that order, inside a single field, so " +
+                    "\"black boots\" could not find \"Black Leather Boots\". Every word is now " +
+                    "looked for separately and each may land in a different place. Mods are " +
+                    "matched on their folder as well as their name, and an empty grid says which " +
+                    "filter is narrowing it rather than blaming the search."),
+
+                new("The base character not coming back when you took something off.",
+                    "Removing a hair mod worn over a base whose own hair is a mod left you in " +
+                    "your vanilla hair. The base is put back on any removal now, as it always was " +
+                    "on a strip."),
+
+                new("Camera presets applied outside GPose tilted your camera.",
+                    "Outside GPose that is the camera you walk around with, and one of the values " +
+                    "a preset writes is the third person camera angle from your own game " +
+                    "settings, which stays where it is put. Presets now only apply in GPose."),
+            }),
+
+            new("What's new", new List<ChangelogNote>
+            {
+                new("Use whichever collection your character is on.",
+                    "Settings → Collection. For anyone whose collection changes with the " +
+                    "character they are playing — a wardrobe built on one used to enable its mods " +
+                    "in a collection the others never read. Worn ticks follow the collection, and " +
+                    "mods left on in a collection you have left are now listed, with the choice " +
+                    "of switching them off or keeping them. A base character can name a " +
+                    "collection too, so changing character changes which base is active."),
+
+                new("Unequip All empties every slot properly.",
+                    "It sets each slot to Nothing rather than to an invisible item, and reaches " +
+                    "slots no wardrobe item was in. It keeps your base character; hold Ctrl to " +
+                    "take that off as well. Strip is unchanged and always strips down to the base."),
+
+                new("Headgear and weapon, per outfit.",
+                    "An outfit can show or hide either when you wear it — a hood is part of the " +
+                    "look, and so is putting the sword away for a dress. Outfits you already have " +
+                    "leave both alone, which is also what a new outfit does until you say otherwise."),
+
+                new("A base character's design can dress you too.",
+                    "Off by default. For a base that is partly gear — nails on the hands slot, a " +
+                    "piece worn as skin — which customisations alone cannot describe. A base can " +
+                    "also keep its design applied after every redraw rather than only on a strip."),
+
+                new("Camera diagnostics.",
+                    "Settings → Screenshots. Off unless you are chasing a bug: it logs the " +
+                    "camera's fields when a preset is saved, and what the preset kept from them, " +
+                    "which is how an angle that does not come back shows what it is missing."),
+            }),
+
+            new("Worth doing once", new List<ChangelogNote>
+            {
+                new("Nothing, if your hair mods were already working.",
+                    "The hair fixes apply to items you have already imported — there is no " +
+                    "re-detect to press this time. If a hair mod still puts on the wrong style, " +
+                    "that is the older problem and Re-detect in its edit panel is the fix."),
+            }),
+        }),
+
         new(new Version(1, 5, 2, 0), "17 August 2026", new List<ChangelogSection>
         {
             new("What's new", new List<ChangelogNote>
