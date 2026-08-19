@@ -191,7 +191,42 @@ public class WardrobeService : IDisposable
     /// </para>
     /// </remarks>
     private string ModKey(ModReference mod) =>
-        $"{_penumbra.ResolveCollection(mod.Collection)}|{mod.ModDirectory}".ToLowerInvariant();
+        ModKey(_penumbra.ResolveCollection(mod.Collection), mod.ModDirectory);
+
+    private static string ModKey(string collection, string modDirectory) =>
+        $"{collection}|{modDirectory}".ToLowerInvariant();
+
+    /// <summary>
+    /// The collection a claim on this mod was recorded in, or null when there is no claim.
+    /// </summary>
+    /// <remarks>
+    /// The resolved collection first, which is where a claim made now would be recorded. Then the
+    /// collection saved on the mod, which is where every claim made before
+    /// <see cref="Configuration.FollowActiveCollection"/> was switched on is recorded — resolving
+    /// started returning the character's own collection instead, and a key built from it matches
+    /// none of them. Without this fallback, switching the setting on orphans every existing claim at
+    /// once: the wardrobe decides it did not enable any of the mods it is wearing and stops being
+    /// willing to turn them off, which is what happened on 1.5.3.0.
+    /// <para>
+    /// The collection is returned rather than a bool because it is also the answer to *where* to
+    /// disable. A mod claimed under the saved collection was switched on in that collection, and
+    /// turning it off in the resolved one instead would write to a collection it was never on in and
+    /// leave the real one enabled.
+    /// </para>
+    /// </remarks>
+    private string? ClaimedCollection(ModReference mod)
+    {
+        var resolved = _penumbra.ResolveCollection(mod.Collection);
+
+        if (_config.ModsEnabledByWardrobe.Contains(ModKey(resolved, mod.ModDirectory)))
+            return resolved;
+
+        if (!string.Equals(resolved, mod.Collection, StringComparison.OrdinalIgnoreCase) &&
+            _config.ModsEnabledByWardrobe.Contains(ModKey(mod.Collection, mod.ModDirectory)))
+            return mod.Collection;
+
+        return null;
+    }
 
     /// <summary>Whether two saved references end up in the same collection once resolved.</summary>
     private bool SameCollection(ModReference a, ModReference b) =>
@@ -216,11 +251,11 @@ public class WardrobeService : IDisposable
     /// wardrobe cannot see — a Glamourer design, or the user's own choice in Penumbra — and turning
     /// it off would break something that has nothing to do with the item being removed.
     /// </remarks>
-    private bool OwnsMod(ModReference mod) =>
-        _config.ModsEnabledByWardrobe.Contains(ModKey(mod));
+    private bool OwnsMod(ModReference mod) => ClaimedCollection(mod) is not null;
 
     private void ReleaseMod(ModReference mod) =>
-        _config.ModsEnabledByWardrobe.Remove(ModKey(mod));
+        _config.ModsEnabledByWardrobe.Remove(ModKey(ClaimedCollection(mod) ?? mod.Collection,
+                                                    mod.ModDirectory));
 
     // ── Wardrobe items ────────────────────────────────────────────────────────
 
@@ -548,14 +583,15 @@ public class WardrobeService : IDisposable
 
             if (stillNeeded) continue;
 
-            // Only ever switch off what the wardrobe switched on
-            if (!OwnsMod(mod))
+            // Only ever switch off what the wardrobe switched on, and switch it off where it was
+            // switched on — which is not always where a claim made today would go
+            if (ClaimedCollection(mod) is not { } claimedIn)
             {
                 _log.Debug($"[Wardrobe] Leaving '{mod.ModName}' enabled — the wardrobe did not turn it on");
                 continue;
             }
 
-            if (_penumbra.SetModEnabled(mod.Collection, mod.ModDirectory, mod.ModName, false))
+            if (_penumbra.SetModEnabledIn(claimedIn, mod.ModDirectory, mod.ModName, false))
             {
                 ReleaseMod(mod);
                 disabledAny = true;
@@ -1550,11 +1586,27 @@ public class WardrobeService : IDisposable
                 other.Mods.Any(m =>
                     m.ModDirectory == mod.ModDirectory && SameCollection(m, mod)));
 
-            if (!stillNeeded && _penumbra.SetModEnabled(mod.Collection, mod.ModDirectory, mod.ModName, false))
-            {
-                ReleaseMod(mod);
-                disabledAny = true;
-            }
+            if (stillNeeded) continue;
+
+            // Where a claim exists, that is where the mod was switched on and the only place worth
+            // writing. Where none does — a leftover from before ownership was tracked, or one
+            // stranded by a crash — both candidates are tried, because which of them holds it is
+            // exactly what is not known. Turning a mod off where it is already off costs nothing.
+            var targets = ClaimedCollection(mod) is { } claimedIn
+                ? new List<string> { claimedIn }
+                : new List<string> { _penumbra.ResolveCollection(mod.Collection), mod.Collection }
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Where(c => !string.IsNullOrEmpty(c))
+                    .ToList();
+
+            var turnedOff = false;
+            foreach (var target in targets)
+                turnedOff |= _penumbra.SetModEnabledIn(target, mod.ModDirectory, mod.ModName, false);
+
+            if (!turnedOff) continue;
+
+            ReleaseMod(mod);
+            disabledAny = true;
         }
 
         _log.Information($"[Wardrobe] Disabled mods for desynced item '{item.Name}'");
