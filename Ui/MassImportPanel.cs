@@ -360,6 +360,11 @@ public class MassImportPanel : Window, IDisposable
             }
             ImGui.EndCombo();
         }
+
+        // With "use whichever collection my character is on" set, this choice is only what gets
+        // written to the item; the mod is enabled wherever the character actually is.
+        if (_config.FollowActiveCollection)
+            ImGui.TextDisabled("Saved with the item as a fallback — it applies to the collection you are on.");
         ImGui.Spacing();
     }
 

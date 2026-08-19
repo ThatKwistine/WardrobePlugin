@@ -15,8 +15,15 @@ public class PenumbraIpc : IDisposable
     private const int EcNothingChanged = 1;
 
     private readonly IPluginLog _log;
+    private readonly Configuration _config;
 
     private readonly ICallGateSubscriber<Dictionary<Guid, string>> _getCollections;
+
+    // GetCollectionForObject.V5(int gameObjectIdx) →
+    //   (bool ObjectValid, bool IndividualSet, (Guid Id, string Name) EffectiveCollection)
+    // The effective collection is the one Penumbra actually applies to that object, whether it got
+    // there from an Individual Assignment, Your Character, or the default.
+    private readonly ICallGateSubscriber<int, (bool, bool, (Guid, string))> _getCollectionForObject;
     private readonly ICallGateSubscriber<Dictionary<string, string>> _getModList;
 
     private readonly ICallGateSubscriber<Guid, string, string, bool,
@@ -45,9 +52,17 @@ public class PenumbraIpc : IDisposable
     /// <summary>Fires whenever Penumbra finishes redrawing a game object. Arg = game object index (0 = local player).</summary>
     public event Action<int>? GameObjectRedrawn;
 
-    public PenumbraIpc(IDalamudPluginInterface pi, IPluginLog log)
+    /// <summary>How long <see cref="GetActiveCollection"/> reuses its last answer.</summary>
+    private static readonly TimeSpan ActiveCollectionTtl = TimeSpan.FromSeconds(1);
+
+    private string   _activeCollection   = string.Empty;
+    private DateTime _activeCollectionAt = DateTime.MinValue;
+    private bool     _activeCollectionFailed;
+
+    public PenumbraIpc(IDalamudPluginInterface pi, IPluginLog log, Configuration config)
     {
-        _log = log;
+        _log    = log;
+        _config = config;
 
         _redrawObject = pi.GetIpcSubscriber<int, int, object?>("Penumbra.RedrawObject.V5");
 
@@ -56,6 +71,9 @@ public class PenumbraIpc : IDisposable
 
         _getCollections = pi.GetIpcSubscriber<Dictionary<Guid, string>>(
             "Penumbra.GetCollections.V5");
+
+        _getCollectionForObject = pi.GetIpcSubscriber<int, (bool, bool, (Guid, string))>(
+            "Penumbra.GetCollectionForObject.V5");
 
         _getModList = pi.GetIpcSubscriber<Dictionary<string, string>>(
             "Penumbra.GetModList");
@@ -105,6 +123,71 @@ public class PenumbraIpc : IDisposable
     {
         try { return _getCollections.InvokeFunc().Values.ToList(); }
         catch (Exception ex) { _log.Warning(ex, "[Wardrobe] Penumbra GetCollections failed"); return Array.Empty<string>(); }
+    }
+
+    /// <summary>
+    /// The collection Penumbra is applying to your character right now, or empty when it cannot say.
+    /// </summary>
+    /// <remarks>
+    /// Empty covers everything that is not a real answer — nobody logged in, Penumbra absent, or an
+    /// object it cannot identify — and every caller treats that as "no opinion" rather than as a
+    /// collection name. The empty collection counts as no answer too: it exists in Penumbra as a
+    /// deliberate nothing, is not in <see cref="GetCollections"/>, and enabling a mod in it would be
+    /// a write that silently goes nowhere.
+    /// <para>
+    /// Answers are held for <see cref="ActiveCollectionTtl"/> because the wardrobe asks per mod
+    /// operation and the settings panel asks per frame, while the answer only changes when you
+    /// change character. A second of staleness costs nothing: a character swap has a loading screen
+    /// in it, and every path that acts on this is a click that comes long after.
+    /// </para>
+    /// </remarks>
+    public string GetActiveCollection()
+    {
+        if (DateTime.UtcNow - _activeCollectionAt < ActiveCollectionTtl) return _activeCollection;
+
+        var name = string.Empty;
+        try
+        {
+            var (objectValid, _, effective) = _getCollectionForObject.InvokeFunc(0); // 0 = local player
+            var (id, collectionName) = effective;
+            if (objectValid && id != Guid.Empty) name = collectionName ?? string.Empty;
+            _activeCollectionFailed = false;
+        }
+        catch (Exception ex)
+        {
+            // Once per run of failures, not once per second: this is asked repeatedly, and a
+            // Penumbra that is not there fails every single time it is
+            if (!_activeCollectionFailed)
+            {
+                _activeCollectionFailed = true;
+                _log.Warning(ex, "[Wardrobe] Penumbra GetCollectionForObject failed — items fall " +
+                                 "back to the collection saved on them");
+            }
+        }
+
+        if (!name.Equals(_activeCollection, StringComparison.Ordinal))
+            _log.Debug($"[Wardrobe] Active collection is now '{(name.Length == 0 ? "(none)" : name)}'");
+
+        _activeCollection   = name;
+        _activeCollectionAt = DateTime.UtcNow;
+        return name;
+    }
+
+    /// <summary>
+    /// The collection a saved one should actually be read from and written to.
+    /// </summary>
+    /// <remarks>
+    /// With <see cref="Configuration.FollowActiveCollection"/> off this is the saved name, unchanged,
+    /// which is how the wardrobe has always worked. With it on the saved name is only a fallback for
+    /// when <see cref="GetActiveCollection"/> has no answer, so a wardrobe built on one character
+    /// applies to whichever one you are on.
+    /// </remarks>
+    public string ResolveCollection(string savedCollection)
+    {
+        if (!_config.FollowActiveCollection) return savedCollection;
+
+        var active = GetActiveCollection();
+        return string.IsNullOrEmpty(active) ? savedCollection : active;
     }
 
     public IList<(string ModDirectory, string ModName)> GetMods()
@@ -182,10 +265,26 @@ public class PenumbraIpc : IDisposable
     }
 
     public bool IsModEnabled(string collectionName, string modDirectory, string modName)
+        => IsModEnabledCore(collectionName, modDirectory, modName, resolve: true);
+
+    /// <summary>
+    /// Whether a mod is enabled in exactly the collection named, whatever collection is being
+    /// followed.
+    /// </summary>
+    /// <remarks>
+    /// Paired with <see cref="SetModEnabledIn"/> for the cleanup offered after the character's
+    /// collection changes, which is by definition about a collection the character has left. These
+    /// two are the only calls here that deliberately look somewhere other than where the wardrobe
+    /// is currently writing, and both are reached from a button the user pressed.
+    /// </remarks>
+    public bool IsModEnabledIn(string collectionName, string modDirectory, string modName)
+        => IsModEnabledCore(collectionName, modDirectory, modName, resolve: false);
+
+    private bool IsModEnabledCore(string collectionName, string modDirectory, string modName, bool resolve)
     {
         try
         {
-            if (!TryGetCollectionGuid(collectionName, out var id)) return false;
+            if (!TryGetCollectionGuid(collectionName, out var id, resolve)) return false;
             var (ec, inner) = _getCurrentModSettings.InvokeFunc(id, modDirectory, modName, false);
             if (ec != 0 || !inner.HasValue) return false;
             var (enabled, _, _, _) = inner.Value;
@@ -309,10 +408,18 @@ public class PenumbraIpc : IDisposable
     }
 
     public bool SetModEnabled(string collectionName, string modDirectory, string modName, bool enabled)
+        => SetModEnabledCore(collectionName, modDirectory, modName, enabled, resolve: true);
+
+    /// <inheritdoc cref="IsModEnabledIn"/>
+    public bool SetModEnabledIn(string collectionName, string modDirectory, string modName, bool enabled)
+        => SetModEnabledCore(collectionName, modDirectory, modName, enabled, resolve: false);
+
+    private bool SetModEnabledCore(string collectionName, string modDirectory, string modName,
+        bool enabled, bool resolve)
     {
         try
         {
-            if (!TryGetCollectionGuid(collectionName, out var id)) return false;
+            if (!TryGetCollectionGuid(collectionName, out var id, resolve)) return false;
             var ec = _setMod.InvokeFunc(id, modDirectory, modName, enabled);
             if (ec != EcSuccess && ec != EcNothingChanged)
                 _log.Warning($"[Wardrobe] TrySetMod.V5 returned ec={ec} for '{modName}' enabled={enabled} in '{collectionName}'");
@@ -442,9 +549,20 @@ public class PenumbraIpc : IDisposable
     private void OnGameObjectRedrawn(nint address, int objectIndex)
         => GameObjectRedrawn?.Invoke(objectIndex);
 
-    private bool TryGetCollectionGuid(string collectionName, out Guid id)
+    /// <summary>
+    /// The GUID Penumbra knows a collection by, resolving where the wardrobe should be writing first.
+    /// </summary>
+    /// <remarks>
+    /// Every call that reads or changes mod settings comes through here, which makes it the one place
+    /// <see cref="ResolveCollection"/> has to be applied for "follow the active collection" to hold
+    /// everywhere — wearing, unwearing, the scan that decides what is on, and the import panel
+    /// reading an option set back out. <see cref="GetCollections"/> deliberately does not resolve:
+    /// it is the list you pick a collection from, not a use of one.
+    /// </remarks>
+    private bool TryGetCollectionGuid(string collectionName, out Guid id, bool resolve = true)
     {
         id = Guid.Empty;
+        if (resolve) collectionName = ResolveCollection(collectionName);
         try
         {
             foreach (var kvp in _getCollections.InvokeFunc())

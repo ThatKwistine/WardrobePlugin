@@ -32,6 +32,34 @@ The collection new imports start in. **Set this to the collection your character
 See [Troubleshooting](Troubleshooting.md#an-item-does-nothing-when-i-wear-it) for why this matters
 more than anything else in the plugin.
 
+**Use whichever collection my character is on** is for anyone whose collection changes with the
+character they are playing — Character Select+ and similar plugins give each character their own.
+With it on, wearing and removing an item goes to the collection Penumbra is applying to you at that
+moment, whatever collection the item was saved with. The saved collection stays on the item and is
+used only when Penumbra has no answer, such as when you are not logged in. The setting shows which
+collection that currently is, so you can check it against the character you are on.
+
+Worn items follow the collection too. When it changes, the wardrobe re-reads what is actually
+enabled and updates the ticks: items belonging to the character you just left stop showing as worn,
+and items already enabled for the character you moved to start showing as worn. Nothing is enabled
+or disabled by this — only the record of what is on is re-read, so the character you left keeps its
+mods exactly as you left them, and going back re-ticks them.
+
+That is also what keeps a removal honest. Taking an item off only ever turns mods off in the
+collection the wardrobe turned them on in, so an item worn on another character is never quietly
+removed from underneath that character while you are on this one.
+
+The mods left enabled for the character you moved off are not left silent, though. The wardrobe
+watches for the collection changing — a couple of seconds, and with the window shut too — and when
+it does, tells you what it is still holding on elsewhere:
+
+> **3 mod(s) the wardrobe enabled are still on in another collection.**
+> **Disable Them** turns them off in the collection they are actually in.
+> **Keep Them** leaves them alone, which is what you want if you swap back and forth.
+
+Only mods the wardrobe itself switched on are ever listed or touched. Anything you enabled yourself
+in Penumbra is not the wardrobe's to turn off, and never appears here.
+
 ---
 
 ## Importing
@@ -136,6 +164,33 @@ have on right now, which is the quickest way in if you are already wearing your 
 
 **Apply base character now** puts it on without removing anything. The same picker is on the
 screenshot session HUD. See [Base character](Wearing-Items.md#base-character).
+
+The **Glamourer design** a base holds is a live link, never a copy. Only its ID is stored, and it is
+handed to Glamourer at the moment of applying, so editing the design in Glamourer puts the edit in
+the next apply — there is nothing to re-import and nothing to keep in step by hand. Two tick boxes
+say how much of it is used and how often:
+
+- **Apply the design's gear on every strip too** — off by default, so the design supplies only the
+  face, body and colouring and a strip does not put the clothes back. On, the whole design is the
+  base look, gear included. Disabled with a note when the design sets no equipment at all.
+- **Keep this design on, not just on a strip** — off by default, applying the design when the base
+  goes on: a strip, a screenshot session, a change of base, the button. On, it goes back after every
+  redraw of your character too, so a Penumbra reload cannot take your face with it. That is what lets
+  a base be nothing but a design, with no wardrobe items at all. Leave it off if you edit your
+  character in Glamourer directly, or it will put the design back over what you were doing.
+
+**Use this base when the collection is** ties a base to a Penumbra collection. It only appears when
+**Use whichever collection my character is on** is ticked, since nothing watches the collection
+otherwise, and it is not a control worth having for a collection that never changes. If your collection
+changes with the character you are on, that is the same as tying it to a character: change to them,
+and their base becomes the active one and is put on — the face, the ears, the skin, and any items
+the base wears. A collection no base is bound to changes nothing, and leaves whichever base is active alone.
+
+The link to the rest of that character's look is the base's own **Glamourer design**: point it at
+the same design you have the character set up with, and the two travel together. It has to be
+pointed by hand, once — Glamourer cannot be asked which design is currently applied, because a
+design becomes ordinary character state the moment it lands, so no plugin can work out on its own
+which one you are wearing.
 
 ---
 

@@ -493,6 +493,11 @@ public class PluginUi : Window, IDisposable
             _desynced      = new List<WardrobeItem>(_wardrobe.FindDesynced());
         }
 
+        // Every frame, and free unless the character's collection has actually changed: worn ticks
+        // describe one collection, so they have to be re-read when a swap moves the wardrobe to
+        // another. Does nothing unless "use whichever collection my character is on" is set.
+        _wardrobe.ReconcileActiveCollection();
+
         var totalW  = ImGui.GetContentRegionAvail().X;
         var totalH  = ImGui.GetContentRegionAvail().Y;
         var rightOpen = _panel.IsOpen || _showImageBrowser || _showSettings || _showTags
@@ -512,6 +517,7 @@ public class PluginUi : Window, IDisposable
         DrawBulkBar();
         DrawModOwnershipNotice();
         DrawDesyncNotice();
+        DrawLeftoverCollectionNotice();
         ImGui.Separator();
         DrawSlotFilter();
         ImGui.Separator();
@@ -1255,6 +1261,74 @@ public class PluginUi : Window, IDisposable
             _config.ModOwnershipNotice = OwnershipNoticeState.Done;
             _config.Save();
         }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+    }
+
+    /// <summary>
+    /// Reports mods the wardrobe left enabled in a collection the character has moved off, and
+    /// offers to turn them off there.
+    /// </summary>
+    /// <remarks>
+    /// Only ever appears with "use whichever collection my character is on" set, because it is the
+    /// only way to end up holding mods on in a collection you are not in. Removing an item cannot
+    /// deal with these: it works in the collection you are on now, where the mod was never enabled.
+    /// <para>
+    /// Deliberately a notice rather than something automatic. Those mods are correct where they
+    /// are — on the character you left, the item really is worn — so the wardrobe reports what it
+    /// is holding and lets the answer be "leave them", which is the right answer for anyone who
+    /// swaps back and forth.
+    /// </para>
+    /// </remarks>
+    private void DrawLeftoverCollectionNotice()
+    {
+        if (_wardrobe.Leftovers is not { Count: > 0 } groups) return;
+
+        var total = groups.Sum(g => g.Mods.Count);
+
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
+            $"● {total} mod(s) the wardrobe enabled are still on in another collection.");
+        ImGui.TextDisabled("Your character changed collection. These were switched on for the " +
+                           "character you left and are still on there, where removing an item " +
+                           "here cannot reach them.");
+        ImGui.Spacing();
+
+        foreach (var group in groups)
+        {
+            ImGui.TextUnformatted($"{group.Collection}:");
+            UiLayout.SameLineIfRoomForText(string.Join(", ", group.Mods.Select(m => m.ModName)));
+            ImGui.TextDisabled(string.Join(", ", group.Mods.Select(m => m.ModName)));
+        }
+
+        ImGui.Spacing();
+
+        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.45f, 0.08f, 0.08f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.65f, 0.12f, 0.12f, 1f));
+        var disable = ImGui.Button(" Disable Them ");
+        ImGui.PopStyleColor(2);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Turns them off in the collection they are on,\n" +
+                             "which is not the one your character is using.\n\n" +
+                             "Only mods this wardrobe switched on are touched.");
+        if (disable)
+        {
+            _wardrobe.DisableLeftovers();
+            _scanStatus = $"Disabled {total} leftover mod(s).";
+            return;
+        }
+
+        UiLayout.SameLineIfRoomForButton(" Keep Them ");
+        if (ImGui.Button(" Keep Them "))
+        {
+            _wardrobe.DismissLeftovers();
+            return;
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Leaves them enabled and hides this.\n" +
+                             "Right if you swap back to that character:\n" +
+                             "their wardrobe is waiting exactly as it was.");
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -8148,6 +8222,39 @@ public class PluginUi : Window, IDisposable
         ImGui.TextDisabled("A mod enabled anywhere else reports success and never appears. " +
                            "In Penumbra, see Collections → Your Character, and check that no " +
                            "Individual Assignment overrules it.");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var follow = _config.FollowActiveCollection;
+        if (ImGui.Checkbox("Use whichever collection my character is on", ref follow))
+        {
+            _config.FollowActiveCollection = follow;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("For a collection that changes as you change character — " +
+                             "Character Select+ and the like give each character their own.\n\n" +
+                             "Wearing and removing go to the collection Penumbra is applying to " +
+                             "you at that moment, whichever collection the item was saved with.");
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("The wardrobe reads and writes the collection Penumbra is applying to " +
+                           "your character, rather than the one saved on each item. Turn this on " +
+                           "if a plugin changes your collection when you change character.");
+
+        if (follow)
+        {
+            var active = Plugin.Penumbra.GetActiveCollection();
+            ImGui.Spacing();
+            if (string.IsNullOrEmpty(active))
+                ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f),
+                    "Penumbra is not naming a collection for your character right now — " +
+                    "items fall back to their own saved collection until it does.");
+            else
+                ImGui.TextUnformatted($"Now applying to: {active}");
+        }
     }
 
     private void DrawImportSettings()
@@ -8314,6 +8421,14 @@ public class PluginUi : Window, IDisposable
         ImGui.Spacing();
         DrawBaseDesignPicker(active);
 
+        // Only for anyone whose collection changes with their character. For everyone else this is
+        // a control tying two things together that never come apart, so it is not there at all.
+        if (_config.FollowActiveCollection)
+        {
+            ImGui.Spacing();
+            DrawBaseCollectionBinding(active);
+        }
+
         ImGui.Spacing();
         if (ImGui.Button(" Apply base character now "))
             _wardrobe.ApplyBase(active);
@@ -8329,6 +8444,68 @@ public class PluginUi : Window, IDisposable
                 "This base character is empty, so it changes nothing yet. Keep a slot, add an " +
                 "item, or pick a design.");
         }
+    }
+
+    /// <summary>
+    /// Ties a base character to a collection, so that changing character changes base.
+    /// </summary>
+    /// <remarks>
+    /// The other half of "use whichever collection my character is on". That setting moves where
+    /// items are applied; this moves who they are applied to — the face, the ears, the skin — by
+    /// treating the collection in force as the answer to which character is in front of us, which
+    /// for anyone running a collection per character it is.
+    /// <para>
+    /// Drawn whether or not a design is set, unlike the picker above it, because binding a base of
+    /// nothing but kept slots and items to a character is a perfectly ordinary thing to want.
+    /// </para>
+    /// </remarks>
+    private void DrawBaseCollectionBinding(BaseCharacter baseChar)
+    {
+        ImGui.TextDisabled("Use this base when the collection is");
+
+        _settingsCollections ??= Plugin.Penumbra.GetCollections();
+
+        var names  = new[] { "(any collection)" }.Concat(_settingsCollections).ToArray();
+        var curIdx = 0;
+        if (!string.IsNullOrEmpty(baseChar.Collection))
+        {
+            var found = Array.FindIndex(names,
+                n => n.Equals(baseChar.Collection, StringComparison.OrdinalIgnoreCase));
+            if (found >= 0) curIdx = found;
+        }
+
+        ImGui.SetNextItemWidth(UiScale.S(260));
+        if (ImGui.BeginCombo("##basecoll", names[curIdx]))
+        {
+            for (var i = 0; i < names.Length; i++)
+            {
+                if (ImGui.Selectable(names[i], i == curIdx))
+                {
+                    baseChar.Collection = i == 0 ? string.Empty : names[i];
+                    _config.Save();
+                }
+                if (i == curIdx) ImGui.SetItemDefaultFocus();
+            }
+            ImGui.EndCombo();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("When your character's collection changes to this one, this base\n" +
+                             "becomes the active one and is put on.\n\n" +
+                             "Point its design at the same one that character is set up with\n" +
+                             "and the two travel together.");
+
+        // Named but gone from Penumbra: renamed or deleted since it was bound
+        if (!string.IsNullOrEmpty(baseChar.Collection) && curIdx == 0)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.5f, 0.3f, 1f),
+                $"'{baseChar.Collection}' was not found in Penumbra.");
+            return;
+        }
+
+        if (string.IsNullOrEmpty(baseChar.Collection)) return;
+
+        ImGui.TextDisabled("Changing to that character now brings this base with it. A collection " +
+                           "no base is bound to leaves whichever base is active alone.");
     }
 
     /// <summary>Slots the base character holds against a strip, in its two halves.</summary>
@@ -8613,6 +8790,23 @@ public class PluginUi : Window, IDisposable
                   "photographed on top of it. For a base look that is partly gear —\n" +
                   "nails on the hands slot, a piece worn as skin — which customisations\n" +
                   "alone cannot describe.");
+        ImGui.Spacing();
+
+        var keepApplied = baseChar.KeepDesignApplied;
+        if (ImGui.Checkbox("Keep this design on, not just on a strip", ref keepApplied))
+        {
+            baseChar.KeepDesignApplied = keepApplied;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The design is always a live link to Glamourer, never a copy: edit it\n" +
+                             "there and the change is in the next apply. This is about how often\n" +
+                             "that apply comes round.\n\n" +
+                             "Off: when the base goes on — a strip, a session, a change of base.\n\n" +
+                             "On: after every redraw of your character as well, so a Penumbra\n" +
+                             "reload cannot take your face off with it. Turn it off if you edit\n" +
+                             "your character in Glamourer directly, or this will put the design\n" +
+                             "back over what you were doing.");
     }
 
     /// <summary>

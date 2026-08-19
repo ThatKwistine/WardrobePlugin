@@ -189,6 +189,21 @@ public class Configuration : IPluginConfiguration
     public string DefaultCollection { get; set; } = string.Empty;
 
     /// <summary>
+    /// Ignore the collection saved on each mod and use whichever collection Penumbra is applying to
+    /// your character right now.
+    /// </summary>
+    /// <remarks>
+    /// For anyone whose collection changes with the character they are on — Character Select+ and
+    /// the like give each character its own, and a wardrobe built while on one of them would enable
+    /// its mods in a collection the other character never reads, reporting success the whole way.
+    /// <para>
+    /// The saved collection stays on the item and becomes the fallback, used whenever Penumbra
+    /// cannot say what the character is on — nobody logged in, mostly.
+    /// </para>
+    /// </remarks>
+    public bool FollowActiveCollection { get; set; }
+
+    /// <summary>
     /// Camera presets per slot, in the order they are shown. Key = EquipSlot.ToString().
     /// </summary>
     /// <remarks>

@@ -974,6 +974,13 @@ public class ItemImportPanel : IDisposable
             ? _collections.ToArray()
             : new[] { "(no collections)" };
 
+        if (_config.FollowActiveCollection)
+        {
+            ImGui.TextDisabled("These are fallbacks — the item applies to whichever collection " +
+                               "your character is on.");
+            ImGui.Spacing();
+        }
+
         for (var i = 0; i < _editTarget.Mods.Count && i < _editModCollections.Count; i++)
         {
             var mod     = _editTarget.Mods[i];
@@ -1028,7 +1035,8 @@ public class ItemImportPanel : IDisposable
             ImGui.PopID();
         }
 
-        if (_editModCollections.Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+        if (!_config.FollowActiveCollection &&
+            _editModCollections.Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
             ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f),
                 "These mods are in different collections — only the ones in your character's " +
                 "collection will show up.");
@@ -1412,6 +1420,11 @@ public class ItemImportPanel : IDisposable
             }
             ImGui.EndCombo();
         }
+
+        // With "use whichever collection my character is on" set, this choice is only what gets
+        // written to the item; the mod is enabled wherever the character actually is.
+        if (_config.FollowActiveCollection)
+            ImGui.TextDisabled("Saved with the item as a fallback — it applies to the collection you are on.");
     }
 
     /// <summary>

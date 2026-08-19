@@ -71,7 +71,7 @@ public sealed class Plugin : IDalamudPlugin
             _config.Save();
         }
 
-        Penumbra  = new PenumbraIpc(pi, Log);
+        Penumbra  = new PenumbraIpc(pi, Log, _config);
         Glamourer = new GlamourerIpc(pi, Log, Objects);
         Camera    = new CameraService(Framework, Log);
 

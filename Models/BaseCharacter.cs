@@ -73,6 +73,53 @@ public class BaseCharacter
     /// </remarks>
     public bool DesignAppliesEquipment { get; set; }
 
+    /// <summary>
+    /// Put the design back after every redraw, rather than only when the base is applied.
+    /// </summary>
+    /// <remarks>
+    /// A design is already a live link and not a copy — <see cref="DesignId"/> is handed to
+    /// Glamourer at the moment of applying, so an edit made to the design in Glamourer is in the
+    /// next apply without anything being re-imported. What this changes is how often that moment
+    /// comes round. Off, the design goes on when the base does: a strip, a screenshot session, a
+    /// change of base, the button. On, it also goes back after any redraw of your character, which
+    /// is what a redraw would otherwise take with it.
+    /// <para>
+    /// Off by default, because a base is usually a fallback rather than a thing being held in
+    /// place, and because anyone editing their character in Glamourer directly would find their
+    /// changes overwritten every time Penumbra reloaded — which is precisely the point when it is
+    /// wanted and precisely the annoyance when it is not.
+    /// </para>
+    /// <para>
+    /// Follows <see cref="DesignAppliesEquipment"/> for how much of the design goes back, so a base
+    /// whose design is the whole look keeps the whole look, and one supplying only a face keeps
+    /// only the face.
+    /// </para>
+    /// </remarks>
+    public bool KeepDesignApplied { get; set; }
+
+    /// <summary>
+    /// Penumbra collection this base belongs to, empty when it belongs to no particular one.
+    /// </summary>
+    /// <remarks>
+    /// For a character whose collection changes with them — see
+    /// <see cref="Configuration.FollowActiveCollection"/> — where "which character am I on" and
+    /// "which collection is in force" are the same question. When the collection changes to one a
+    /// base names, that base becomes the active one, so the face, the ears and the skin follow the
+    /// character without being picked by hand.
+    /// <para>
+    /// The design a base applies is the link to whatever else dresses that character. Glamourer
+    /// cannot be asked which design is currently applied — a design becomes plain state the moment
+    /// it lands — so pointing this base at the same design the character is set up with is what ties
+    /// the two together, and it is done once.
+    /// </para>
+    /// <para>
+    /// Bases naming no collection are left alone by all of this, and a collection no base names
+    /// changes nothing: the base in force stays in force, rather than being cleared for want of a
+    /// replacement.
+    /// </para>
+    /// </remarks>
+    public string Collection { get; set; } = string.Empty;
+
     public bool Keeps(EquipSlot slot) => KeepSlots.Contains(slot.ToString());
 
     public void SetKeep(EquipSlot slot, bool keep)

@@ -30,18 +30,88 @@ public class WardrobeService : IDisposable
         _framework = framework;
 
         _penumbra.GameObjectRedrawn += OnPlayerRedrawn;
+        _framework.Update           += OnFrameworkUpdate;
     }
 
     public void Dispose()
     {
         _penumbra.GameObjectRedrawn -= OnPlayerRedrawn;
+        _framework.Update           -= OnFrameworkUpdate;
     }
+
+    /// <summary>How often the collection is probed while it is being followed.</summary>
+    /// <remarks>
+    /// Slow on purpose. The thing being watched changes when you change character, which is a
+    /// loading screen away, so two seconds is far finer than the event it is trying to catch and
+    /// costs one IPC call in that time.
+    /// </remarks>
+    private static readonly TimeSpan ProbeInterval = TimeSpan.FromSeconds(2);
+
+    private DateTime _lastProbe = DateTime.MinValue;
+
+    /// <summary>
+    /// Watches for the character's collection changing, with the wardrobe window shut.
+    /// </summary>
+    /// <remarks>
+    /// The draw-time reconcile cannot see a swap that happens while the window is closed, which is
+    /// most of them — you change character and then open the wardrobe, by which time the mods left
+    /// enabled on the character you left are a thing that happened silently. Probing here means the
+    /// notice is already waiting when the window opens.
+    /// </remarks>
+    private void OnFrameworkUpdate(IFramework framework)
+    {
+        if (!_config.FollowActiveCollection) return;
+        if (DateTime.UtcNow - _lastProbe < ProbeInterval) return;
+
+        _lastProbe = DateTime.UtcNow;
+        ReconcileActiveCollection();
+    }
+
+    /// <summary>
+    /// Puts the active base's design back after a redraw, for a base that asks to be kept applied.
+    /// </summary>
+    /// <remarks>
+    /// A redraw resets Glamourer state, which the worn items below already survive by being put
+    /// back. The character wearing them had no such treatment: a base supplying the face, the body
+    /// and the colouring lost them to every reload and only got them back at the next strip. With
+    /// <see cref="BaseCharacter.KeepDesignApplied"/> the design is a standing instruction rather
+    /// than something applied at moments, which is what makes a design-only base — no wardrobe
+    /// items at all — hold on its own.
+    /// <para>
+    /// Restricted to the player, unlike the item re-apply it sits above. That one is old enough to
+    /// be left as it is; a new path that fires a Glamourer apply for every passer-by redrawing in a
+    /// crowded zone would be doing real work for no one.
+    /// </para>
+    /// </remarks>
+    private void ReapplyBaseDesign(int objectIndex)
+    {
+        if (objectIndex != PlayerObjectIndex) return;
+        if (_config.ActiveBaseCharacter is not { KeepDesignApplied: true, DesignId: { } designId } baseChar)
+            return;
+
+        var applied = baseChar.DesignAppliesEquipment
+            ? _glamourer.ApplyDesignFull(designId)
+            : _glamourer.ApplyDesignCustomization(designId);
+
+        if (applied)
+            _log.Debug($"[Wardrobe] Base character '{baseChar.Name}': design put back after a redraw");
+        else
+            _log.Warning($"[Wardrobe] Base character '{baseChar.Name}': could not put design " +
+                         $"'{baseChar.DesignName}' back after a redraw — it may have been deleted in Glamourer.");
+    }
+
+    /// <summary>The local player's game object index, which is what Penumbra reports a redraw of.</summary>
+    private const int PlayerObjectIndex = 0;
 
     /// <summary>
     /// Re-applies Glamourer items after any Penumbra redraw that might have reset visual state.
     /// </summary>
     private void OnPlayerRedrawn(int objectIndex)
     {
+        // Before the worn items below, so an item still wins the slot it is in — the base design is
+        // the look underneath, exactly as it is in ApplyBase
+        ReapplyBaseDesign(objectIndex);
+
         if (_config.WornItems.Count == 0) return;
 
         // Re-apply the active outfit's dyes as well, or a redraw would strip them back to undyed
@@ -111,9 +181,23 @@ public class WardrobeService : IDisposable
     /// Collection and directory together, matching how <see cref="UnwearItem"/> decides a mod is
     /// still needed. Mod *name* is deliberately left out: it is display text that changes when a
     /// mod is renamed in Penumbra, which would silently orphan the claim.
+    /// <para>
+    /// The collection is the resolved one, so a claim records where the mod was actually switched on.
+    /// With <see cref="Configuration.FollowActiveCollection"/> that is the collection the character
+    /// was on at the time, which keeps one character's claims from being spent on another: taking
+    /// an item off while on a second character finds no claim there and disables nothing, and the
+    /// first character's copy stays enabled until it is taken off on that character, where the
+    /// claim is still waiting.
+    /// </para>
     /// </remarks>
-    private static string ModKey(ModReference mod) =>
-        $"{mod.Collection}|{mod.ModDirectory}".ToLowerInvariant();
+    private string ModKey(ModReference mod) =>
+        $"{_penumbra.ResolveCollection(mod.Collection)}|{mod.ModDirectory}".ToLowerInvariant();
+
+    /// <summary>Whether two saved references end up in the same collection once resolved.</summary>
+    private bool SameCollection(ModReference a, ModReference b) =>
+        string.Equals(_penumbra.ResolveCollection(a.Collection),
+                      _penumbra.ResolveCollection(b.Collection),
+                      StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Records that the wardrobe, rather than the user, switched a mod on.
@@ -142,6 +226,11 @@ public class WardrobeService : IDisposable
 
     public bool WearItem(WardrobeItem item, OutfitDye? dye = null)
     {
+        // Before the slot's previous occupant is read below: after a character swap that entry can
+        // name an item belonging to the collection before this one, and taking it off would be a
+        // write to a character nobody asked about
+        ReconcileActiveCollection();
+
         var slotKey = item.WornKey();
         _log.Debug($"[Wardrobe] WearItem '{item.Name}' slot={slotKey} glamItemId={item.GlamourerItemId?.ToString() ?? "null"} ({item.GlamourerItemName ?? "no name"})");
 
@@ -150,7 +239,7 @@ public class WardrobeService : IDisposable
         // collection the character actually uses has any visible effect.
         var collections = item.Mods
             .Where(m => !string.IsNullOrEmpty(m.ModDirectory))
-            .Select(m => m.Collection)
+            .Select(m => _penumbra.ResolveCollection(m.Collection))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (collections.Count > 1)
@@ -442,6 +531,8 @@ public class WardrobeService : IDisposable
     /// </param>
     public bool UnwearItem(WardrobeItem item, bool save = true, bool redraw = true, bool restoreBase = true)
     {
+        ReconcileActiveCollection();
+
         var disabledAny = false;
 
         foreach (var mod in item.Mods)
@@ -453,8 +544,7 @@ public class WardrobeService : IDisposable
                 other.Id != item.Id &&
                 _config.WornItems.ContainsValue(other.Id) &&
                 other.Mods.Any(m =>
-                    m.ModDirectory == mod.ModDirectory &&
-                    string.Equals(m.Collection, mod.Collection, StringComparison.OrdinalIgnoreCase)));
+                    m.ModDirectory == mod.ModDirectory && SameCollection(m, mod)));
 
             if (stillNeeded) continue;
 
@@ -1132,10 +1222,223 @@ public class WardrobeService : IDisposable
     /// <summary>Set by <see cref="Evaluate"/> when it drops a stale claim, so the scan can save once.</summary>
     private bool _prunedClaims;
 
-    private ScanResult Scan(bool adopt)
+    /// <summary>The collection the worn list was last reconciled against, empty before the first answer.</summary>
+    private string _wornCollection = string.Empty;
+
+    /// <summary>
+    /// Brings the worn list back in line when the character's collection has changed under it.
+    /// </summary>
+    /// <remarks>
+    /// Only does anything with <see cref="Configuration.FollowActiveCollection"/> on, where a
+    /// character swap moves every read and write to a different collection and leaves a worn list
+    /// describing the one before. Without this the list keeps its old ticks, and they are not just
+    /// cosmetic: wearing a hat would implicitly remove the hat the list still believes is on, which
+    /// after a swap would reach into the previous character's collection to do it.
+    /// <para>
+    /// What it does not do is move anything. The previous character's mods stay enabled in the
+    /// previous character's collection, which is correct — on that character the item really is
+    /// worn — and swapping back re-ticks them, because the scan finds them enabled and adopts them.
+    /// Nothing is enabled or disabled here; only the record of what is on is re-read.
+    /// </para>
+    /// <para>
+    /// Called from the paths that act on worn state rather than from a timer: the window's draw,
+    /// so ticks correct themselves while you watch, and wear and remove, so anything driving them
+    /// without the window open is covered too. The collection lookup behind it is cached, making
+    /// the no-change case a string comparison.
+    /// </para>
+    /// </remarks>
+    public void ReconcileActiveCollection()
+    {
+        if (!_config.FollowActiveCollection)
+        {
+            // Turning the setting on later should start from whatever is current, not from an
+            // answer remembered out of a period when it was not being followed
+            _wornCollection = string.Empty;
+            return;
+        }
+
+        var active = _penumbra.GetActiveCollection();
+        if (string.IsNullOrEmpty(active)) return; // no answer is not a change
+        if (string.Equals(active, _wornCollection, StringComparison.OrdinalIgnoreCase)) return;
+
+        var previous = _wornCollection;
+        _wornCollection = active;
+
+        // The first answer of a session is not a change: it is finding out where we already were
+        if (previous.Length == 0) return;
+
+        _log.Information($"[Wardrobe] Collection changed from '{previous}' to '{active}' — re-reading what is worn");
+        Scan(adopt: true, prune: true);
+        SwitchBaseForCollection(active);
+        Leftovers = FindLeftovers(active);
+        WardrobeChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Makes the base character bound to the collection now in force the active one.
+    /// </summary>
+    /// <remarks>
+    /// Runs after the worn list has been re-read, so the switch sees the truth: the outgoing base's
+    /// items have already stopped counting as worn, which is what stops <see cref="SwitchBase"/>
+    /// undressing a character that is no longer in front of us. Those mods stay enabled in the
+    /// collection they belong to and are reported as leftovers a moment later, like anything else
+    /// the wardrobe is holding on elsewhere.
+    /// <para>
+    /// A collection no base names leaves the active base alone. Clearing it instead would strip a
+    /// character down to nothing for the sin of having no base set up yet, and "the base I was
+    /// using" is a better guess than "no base at all".
+    /// </para>
+    /// </remarks>
+    private void SwitchBaseForCollection(string collection)
+    {
+        var next = _config.BaseCharacters.Find(b =>
+            !string.IsNullOrEmpty(b.Collection) &&
+            b.Collection.Equals(collection, StringComparison.OrdinalIgnoreCase));
+
+        if (next == null || next.Id == _config.ActiveBaseCharacterId) return;
+
+        _log.Information($"[Wardrobe] Base character '{next.Name}' is bound to '{collection}' — making it active");
+        SwitchBase(_config.ActiveBaseCharacter, next);
+    }
+
+    /// <summary>One mod the wardrobe enabled somewhere the character no longer is.</summary>
+    public sealed record LeftoverMod(string ModDirectory, string ModName);
+
+    /// <summary>Those mods, grouped by the collection they are still enabled in.</summary>
+    public sealed record LeftoverGroup(string Collection, IReadOnlyList<LeftoverMod> Mods);
+
+    /// <summary>
+    /// Mods the wardrobe switched on in a collection the character is not on, waiting on an answer
+    /// about what to do with them. Null when there is nothing to report.
+    /// </summary>
+    public IReadOnlyList<LeftoverGroup>? Leftovers { get; private set; }
+
+    /// <summary>
+    /// Everything the wardrobe is holding on outside the collection now in force.
+    /// </summary>
+    /// <remarks>
+    /// Built from the ownership claims rather than from the wardrobe's items, because a claim is
+    /// the only record of where a mod was actually switched on — the collection saved on an item
+    /// says where it would go today, which after a character change is somewhere else entirely.
+    /// <para>
+    /// Every claim is checked against Penumbra rather than trusted. One whose mod is already off
+    /// was turned off by hand at some point and is spent, so it is dropped here instead of being
+    /// offered as something to turn off twice.
+    /// </para>
+    /// <para>
+    /// Grouped by collection and not limited to the collection just left: swapping twice without
+    /// answering the first notice would otherwise lose the first character's leftovers, and claims
+    /// outlive a session, so a set left behind before a restart is still found.
+    /// </para>
+    /// </remarks>
+    private IReadOnlyList<LeftoverGroup>? FindLeftovers(string activeCollection)
+    {
+        if (_config.ModsEnabledByWardrobe.Count == 0) return null;
+
+        // Exact directory casing and a readable name, neither of which survives in a claim key
+        var known = _config.WardrobeItems
+            .SelectMany(i => i.Mods)
+            .Where(m => !string.IsNullOrEmpty(m.ModDirectory))
+            .GroupBy(m => m.ModDirectory, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        var groups  = new List<LeftoverGroup>();
+        var spent   = new List<string>();
+
+        foreach (var byCollection in _config.ModsEnabledByWardrobe
+                     .Select(key => (Key: key, Split: key.Split('|', 2)))
+                     .Where(x => x.Split.Length == 2)
+                     .GroupBy(x => x.Split[0], StringComparer.OrdinalIgnoreCase))
+        {
+            if (byCollection.Key.Equals(activeCollection, StringComparison.OrdinalIgnoreCase)) continue;
+
+            var mods = new List<LeftoverMod>();
+            foreach (var (key, split) in byCollection)
+            {
+                var directory = known.TryGetValue(split[1], out var reference) ? reference.ModDirectory : split[1];
+                var name      = reference?.ModName is { Length: > 0 } n ? n : directory;
+
+                if (_penumbra.IsModEnabledIn(byCollection.Key, directory, name))
+                    mods.Add(new LeftoverMod(directory, name));
+                else
+                    spent.Add(key);
+            }
+
+            if (mods.Count > 0)
+                groups.Add(new LeftoverGroup(DisplayNameOf(byCollection.Key),
+                    mods.OrderBy(m => m.ModName, StringComparer.OrdinalIgnoreCase).ToList()));
+        }
+
+        if (spent.Count > 0)
+        {
+            foreach (var key in spent) _config.ModsEnabledByWardrobe.Remove(key);
+            _log.Debug($"[Wardrobe] Released {spent.Count} claim(s) whose mods are already off");
+            _config.Save();
+        }
+
+        if (groups.Count == 0) return null;
+
+        _log.Information("[Wardrobe] Left enabled elsewhere: " +
+                         string.Join("; ", groups.Select(g => $"{g.Collection} ({g.Mods.Count})")));
+        return groups;
+    }
+
+    /// <summary>Penumbra's own casing for a collection, since a claim key is all lower case.</summary>
+    private string DisplayNameOf(string collection) =>
+        _penumbra.GetCollections()
+            .FirstOrDefault(c => c.Equals(collection, StringComparison.OrdinalIgnoreCase))
+        ?? collection;
+
+    /// <summary>
+    /// Turns the leftovers off in the collections they are enabled in, and gives up the claims.
+    /// </summary>
+    /// <remarks>
+    /// The one place that writes to a collection the character is not on, and it is reached only
+    /// from the notice's button. Every mod it touches is one this wardrobe switched on and still
+    /// holds a claim to, so nothing here can turn off something the user enabled themselves.
+    /// </remarks>
+    public void DisableLeftovers()
+    {
+        if (Leftovers is not { } groups) return;
+
+        var disabled = 0;
+        foreach (var group in groups)
+        foreach (var mod in group.Mods)
+        {
+            if (!_penumbra.SetModEnabledIn(group.Collection, mod.ModDirectory, mod.ModName, false)) continue;
+
+            _config.ModsEnabledByWardrobe.Remove($"{group.Collection}|{mod.ModDirectory}".ToLowerInvariant());
+            disabled++;
+        }
+
+        _log.Information($"[Wardrobe] Disabled {disabled} leftover mod(s) in {groups.Count} collection(s)");
+
+        // Normally none of this is on the character in front of us, so there is nothing to redraw —
+        // except when they have since swapped back to a collection the notice names
+        var active = _penumbra.GetActiveCollection();
+        if (groups.Any(g => g.Collection.Equals(active, StringComparison.OrdinalIgnoreCase)))
+            _penumbra.RedrawPlayer();
+
+        Leftovers = null;
+        _config.Save();
+        WardrobeChanged?.Invoke();
+    }
+
+    /// <summary>Puts the notice away, changing nothing. It returns on the next collection change.</summary>
+    public void DismissLeftovers() => Leftovers = null;
+
+    /// <param name="prune">
+    /// Whether worn items that came back <see cref="ItemState.Off"/> are unticked. For a scan run
+    /// because the ground moved — the character's collection changed under a worn list describing
+    /// the old one — where leaving them ticked would be leaving a lie. Items the scan never
+    /// evaluated are untouched, so an item with no mods, or one in a slot the scan skips, cannot be
+    /// pruned by something that never looked at it.
+    /// </param>
+    private ScanResult Scan(bool adopt, bool prune = false)
     {
         var added    = new HashSet<Guid>();
         var on       = new List<WardrobeItem>();
+        var off      = new HashSet<Guid>();
         var desynced = new List<WardrobeItem>();
 
         _prunedClaims = false;
@@ -1162,10 +1465,38 @@ public class WardrobeService : IDisposable
                     }
                     break;
 
+                case ItemState.Off:
+                    off.Add(item.Id);
+                    break;
+
                 case ItemState.Desynced:
                     desynced.Add(item);
                     break;
             }
+        }
+
+        // Desynced is deliberately not pruned: those mods are live on the character, and only the
+        // Glamourer half has come away. Off is the one state that means "not on this character".
+        var unticked = 0;
+        if (prune)
+        {
+            foreach (var (key, id) in _config.WornItems.ToList())
+            {
+                if (!off.Contains(id)) continue;
+                _config.WornItems.Remove(key);
+                unticked++;
+            }
+
+            // An outfit is only active while something it put on is still on
+            if (_activeOutfitId is { } activeId)
+            {
+                var outfit = _config.Outfits.Find(o => o.Id == activeId);
+                if (outfit != null && !ResolveOutfit(outfit).Any(IsItemWorn))
+                    _activeOutfitId = null;
+            }
+
+            if (unticked > 0)
+                _log.Information($"[Wardrobe] Scan: unticked {unticked} item(s) that are not enabled here");
         }
 
         // An item sharing every one of its mods with something that *is* correctly worn explains
@@ -1174,19 +1505,19 @@ public class WardrobeService : IDisposable
         // and its variant — would otherwise be reported every single time.
         var explained = on
             .SelectMany(i => i.Mods)
-            .Select(m => $"{m.Collection} {m.ModDirectory}")
+            .Select(m => $"{_penumbra.ResolveCollection(m.Collection)} {m.ModDirectory}")
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var unexplained = desynced
             .Where(i => i.Mods.Any(m => !string.IsNullOrEmpty(m.ModDirectory) &&
-                                        !explained.Contains($"{m.Collection} {m.ModDirectory}")))
+                                        !explained.Contains($"{_penumbra.ResolveCollection(m.Collection)} {m.ModDirectory}")))
             .ToList();
 
         if (unexplained.Count > 0)
             _log.Information($"[Wardrobe] Scan: {unexplained.Count} item(s) have mods enabled that " +
                              $"Glamourer is not showing: {string.Join(", ", unexplained.Select(i => i.Name))}");
 
-        if (added.Count > 0 || _prunedClaims) _config.Save();
+        if (added.Count > 0 || unticked > 0 || _prunedClaims) _config.Save();
         return new ScanResult(added, unexplained);
     }
 
@@ -1217,8 +1548,7 @@ public class WardrobeService : IDisposable
                 other.Id != item.Id &&
                 _config.WornItems.ContainsValue(other.Id) &&
                 other.Mods.Any(m =>
-                    m.ModDirectory == mod.ModDirectory &&
-                    string.Equals(m.Collection, mod.Collection, StringComparison.OrdinalIgnoreCase)));
+                    m.ModDirectory == mod.ModDirectory && SameCollection(m, mod)));
 
             if (!stillNeeded && _penumbra.SetModEnabled(mod.Collection, mod.ModDirectory, mod.ModName, false))
             {

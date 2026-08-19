@@ -12,6 +12,11 @@ collection is not the one affecting your character, nothing shows up.
 3. Set **Wardrobe → Settings → Default Collection** to the same one so future imports start there.
 4. For an item already imported, fix it under **Mods & Collections** in its edit panel.
 
+If your collection changes with the character you are on — Character Select+ and similar plugins
+assign one per character — tick **Settings → Collection → Use whichever collection my character is
+on** instead of setting one. Items then apply to whichever collection Penumbra is using for you at
+the time, so a wardrobe built on one character works on all of them.
+
 ## Only some of an item's mods show up
 
 A mod is only visible on your character if it is enabled in the collection that character actually
@@ -27,6 +32,12 @@ across items only needs fixing once.
 The wardrobe only turns off mods it turned on. If a mod was already enabled when you wore the item —
 because a Glamourer design uses it, or you enabled it yourself — removing the item leaves it alone,
 so whatever else depends on it keeps working. Turn it off in Penumbra when you want it off.
+
+If you use **Use whichever collection my character is on**, there is a second way this happens: the
+mod is enabled in the collection of the character you wore it on, and you have since changed
+character. Removing the item works in the collection you are on now, where it was never enabled, so
+it has nothing to turn off. The wardrobe notices the change and offers those mods under **Disable
+Them**; **Keep Them** is the right answer if you are going back to that character.
 
 Mods enabled by a version older than this one are not recognised as the wardrobe's either, since
 there was nothing tracking that at the time. Those stay on once and are best cleared with **Disable
