@@ -41,6 +41,76 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 5, 3, 2), "20 August 2026", new List<ChangelogSection>
+        {
+            new("What's new", new List<ChangelogNote>
+            {
+                new("An uncheck all button on the import panel's slot list.",
+                    "Beside \"Items to create\", for a mod covering several slots when you want " +
+                    "one of them. It turns into check all once everything is off."),
+
+                new("The tag tree can be used when editing an item.",
+                    "Settings → Tag Picker. The edit panel offers existing tags as a row of " +
+                    "buttons; the import panels offer the same tags as a tree you can open. " +
+                    "Either can now be used in the editor. The row narrows as you type and " +
+                    "right-clicks into the box for editing; the tree shows nesting, which the row " +
+                    "cannot — it has space for the last part only. Off unless you turn it on."),
+
+                new("Re-detect says what it found.",
+                    "It reported only to the log before, so a press that found nothing looked " +
+                    "exactly like one that worked. It now writes the answer under the button, and " +
+                    "when the mod's files are for a different slot than the item is on, it names " +
+                    "that slot."),
+            }),
+
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("Importing a mod with two option groups of the same name closed the window.",
+                    "Nothing stops a mod having two groups with one name, and one shipped two " +
+                    "called 3D OPTIONS. The wardrobe assumed names were unique and threw when " +
+                    "they were not, which in the middle of drawing takes the whole panel down. " +
+                    "Both groups are read now. They still share one set of options, because " +
+                    "Penumbra identifies a group by its name too."),
+
+                new("Mods saved in Penumbra's newer folder layout looked empty.",
+                    "That layout keeps the mod's always-on files somewhere the wardrobe was not " +
+                    "reading, so a mod with no option groups came back as touching nothing: no " +
+                    "slot, no game item, and an item created on Head whatever it really was. A " +
+                    "mod's age has nothing to do with it — the layout comes from whichever " +
+                    "version of Penumbra last wrote the folder."),
+
+                new("Skin and body texture mods were detected as nothing.",
+                    "The file paths in them are invented by the mod's author rather than named " +
+                    "after anything in the game, so nothing in one says what it is. A mod made of " +
+                    "nothing else is now taken for a skin, which covers body textures, tattoos, " +
+                    "scars and body writing. Mods built with Proteus are read as well: their " +
+                    "options list no files at all, and the paths are kept in the tool's own file."),
+
+                new("Mods that swap a file rather than add one.",
+                    "A swap points one of the game's paths at another and is how a fair number of " +
+                    "mods work. Only added files were being counted, so a mod built out of swaps " +
+                    "read as empty."),
+
+                new("Re-detect answered about the slot the item was saved with.",
+                    "Changing Slot and pressing Re-detect kept reporting on the old slot, since " +
+                    "the box only takes effect on Save — so an item on the wrong slot could not " +
+                    "be put right without saving first. Re-detect now moves the item to the slot " +
+                    "in the box and detects for that one."),
+            }),
+
+            new("Worth doing once", new List<ChangelogNote>
+            {
+                new("Press Re-detect on anything that says no game item was detected.",
+                    "Items imported before this keep whatever they were given at the time. Open " +
+                    "the item, and if its Slot is wrong — Head is what an undetected mod was " +
+                    "given — set the right one before pressing Re-detect, which now follows it."),
+
+                new("Mods that imported with no slots detected can be imported again.",
+                    "Skin mods, mods built with Proteus and anything in the newer folder layout " +
+                    "come back with their slot filled in now."),
+            }),
+        }),
+
         new(new Version(1, 5, 3, 1), "19 August 2026", new List<ChangelogSection>
         {
             new("Fixes", new List<ChangelogNote>
