@@ -8211,6 +8211,8 @@ public class PluginUi : Window, IDisposable
         SettingsBreak();
         DrawTagColourSettings();
         SettingsBreak();
+        DrawTagPickerSettings();
+        SettingsBreak();
         DrawImageFolderSettings();
         SettingsBreak();
         DrawScreenshotSettings();
@@ -8965,6 +8967,35 @@ public class PluginUi : Window, IDisposable
         if (outfits) _config.OutfitCardScale = 1f;
         else         _config.CardScale       = 1f;
         _config.Save();
+    }
+
+    /// <summary>
+    /// Which of the two tag pickers the edit panel offers.
+    /// </summary>
+    private void DrawTagPickerSettings()
+    {
+        ImGui.TextUnformatted("Tag Picker");
+        ImGui.TextDisabled("How existing tags are offered when editing an item. The import panels " +
+                           "always use the tree; this is only about the edit panel, and it changes " +
+                           "nothing about the tags themselves.");
+        ImGui.Spacing();
+
+        var tree = _config.TagTreeInEditor;
+        if (ImGui.Checkbox("Use the tag tree when editing an item", ref tree))
+        {
+            _config.TagTreeInEditor = tree;
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The same box the import panel shows.\n" +
+                             "Switch back whenever you like — nothing is lost either way.");
+
+        ImGui.Spacing();
+        ImGui.TextDisabled(tree
+            ? "Nesting is shown in full, so Shoes/Boots/Ankle Boots reads as a tree you can open."
+            : "A row of buttons that narrows as you type, and right-click puts a tag in the box to " +
+              "edit before adding. Nested tags show their last part only, as \"Ankle Boots…\".");
     }
 
     /// <summary>

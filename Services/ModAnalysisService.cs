@@ -68,7 +68,7 @@ public static class ModOptionSets
     {
         if (groups == null) return new Dictionary<string, T>(settings);
 
-        var byName = groups.ToDictionary(g => g.GroupName, StringComparer.OrdinalIgnoreCase);
+        var byName = ByName(groups);
 
         return settings
             .Where(kv => !byName.TryGetValue(kv.Key, out var g) || g.AffectsSlot(slot))
@@ -100,7 +100,7 @@ public static class ModOptionSets
         // the fault, so the safe direction when we cannot tell is to copy nothing.
         if (groups == null) return Array.Empty<string>();
 
-        var byName = groups.ToDictionary(g => g.GroupName, StringComparer.OrdinalIgnoreCase);
+        var byName = ByName(groups);
         var copied = new List<string>();
 
         foreach (var (group, value) in source)
@@ -113,6 +113,51 @@ public static class ModOptionSets
         }
 
         return copied;
+    }
+
+    /// <summary>
+    /// The groups keyed by name, with any sharing a name folded into one.
+    /// </summary>
+    /// <remarks>
+    /// Nothing stops a mod having two groups with the same name — a real one shipped two called
+    /// "3D OPTIONS" — and Penumbra keys option settings by name, so the second is indistinguishable
+    /// from the first from the outside. Building the map with ToDictionary threw on the duplicate
+    /// and took the whole import down mid-draw, which is a hard crash over a mod that Penumbra
+    /// itself is perfectly happy with.
+    /// <para>
+    /// Folding them keeps the answer on the safe side of both questions this map is asked. A group
+    /// naming no slot at all is unattributable, and one of the pair naming none makes the pair
+    /// unattributable: <see cref="ModOptionGroup.AffectsSlot"/> then answers yes for every slot, so
+    /// no setting that was doing its job is dropped, and <see cref="ModOptionGroup.NamesSlot"/>
+    /// answers no, so nothing is copied onto a sibling on a guess. Otherwise the slots are unioned,
+    /// because the settings under that one name really do belong to both.
+    /// </para>
+    /// </remarks>
+    private static Dictionary<string, ModOptionGroup> ByName(IReadOnlyList<ModOptionGroup> groups)
+    {
+        var byName = new Dictionary<string, ModOptionGroup>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var g in groups)
+        {
+            if (!byName.TryGetValue(g.GroupName, out var seen))
+            {
+                byName[g.GroupName] = g;
+                continue;
+            }
+
+            byName[g.GroupName] = seen.Slots is { Count: > 0 } && g.Slots is { Count: > 0 }
+                ? seen with { Slots = Union(seen.Slots, g.Slots) }
+                : seen with { Slots = new HashSet<EquipSlot>() };
+        }
+
+        return byName;
+    }
+
+    private static IReadOnlySet<EquipSlot> Union(IReadOnlySet<EquipSlot> a, IReadOnlySet<EquipSlot> b)
+    {
+        var slots = new HashSet<EquipSlot>(a);
+        slots.UnionWith(b);
+        return slots;
     }
 }
 
@@ -140,6 +185,12 @@ public class ModAnalysisService
 
     /// <summary>Game paths seen during the current Analyze call, used to spot a layout we cannot read.</summary>
     private int _pathsSeen;
+
+    /// <summary>
+    /// Texture and material paths under <c>chara/</c> that name no part of the game — see
+    /// <see cref="CustomTexturePattern"/>.
+    /// </summary>
+    private int _customTextures;
 
     public ModAnalysisService(IPluginLog? log = null) => _log = log;
 
@@ -206,6 +257,14 @@ public class ModAnalysisService
     // decals. Tied to no slot at all, so they land in EquipSlot.Other.
     private static readonly Regex CommonPattern =
         new(@"chara/common/", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // chara/<anything>/….tex or .mtrl that matched none of the layouts above — a path invented by
+    // the mod author rather than one the game owns. They work because some other mod's material
+    // points at them: a body replacer ships materials naming chara/bibo_mid_base.tex, and a skin
+    // texture for it ships that file. Nothing in such a path says what it is, and Penumbra shows no
+    // changed items for a mod made only of them either.
+    private static readonly Regex CustomTexturePattern =
+        new(@"^chara/.+\.(?:tex|mtrl)$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // Any .pap file — emotes, poses, idles and battle animations. Animation data lives in no other
     // file type, so the extension alone identifies the mod, and the file name is what two mods must
@@ -285,7 +344,8 @@ public class ModAnalysisService
     /// </summary>
     public ModAnalysisResult Analyze(string modFolderPath)
     {
-        _pathsSeen  = 0;
+        _pathsSeen      = 0;
+        _customTextures = 0;
         var slots   = new HashSet<EquipSlot>();
         var setIds  = new Dictionary<EquipSlot, Detected>();
         var hairIds = new Dictionary<int, Detected>();
@@ -295,11 +355,20 @@ public class ModAnalysisService
         if (!Directory.Exists(modFolderPath))
             return new ModAnalysisResult(slots, groups, Ids(setIds), Ids(hairIds), replace);
 
+        var meta = ReadMeta(Path.Combine(modFolderPath, "meta.json"));
+
         // default_mod.json
         var defaultFile = Path.Combine(modFolderPath, "default_mod.json");
         if (File.Exists(defaultFile))
             foreach (var key in ReadFileKeys(defaultFile))
                 ClassifyPath(key, slots, setIds, hairIds, replace);
+
+        // FileVersion 4 moved the default option's files into meta.json as well, so a mod written
+        // in that layout has no default_mod.json at all. Everything a mod ships outside an option
+        // group lives here — for a mod with no groups, that is the entire mod, which is why one
+        // could be read as touching no slots while Penumbra listed its changed items quite happily.
+        foreach (var key in PathKeys(meta?.DefaultData))
+            ClassifyPath(key, slots, setIds, hairIds, replace);
 
         // group_NNN_*.json — the older layout, one file per group
         foreach (var groupFile in Directory.GetFiles(modFolderPath, "group_*.json").OrderBy(x => x))
@@ -312,9 +381,11 @@ public class ModAnalysisService
         // meta.json — FileVersion 4 and later put every group inside meta.json instead, with no
         // default_mod.json and no group files at all. Reading only the old layout found nothing
         // for such mods, so they appeared to touch no slots whatsoever.
-        var meta = ReadMeta(Path.Combine(modFolderPath, "meta.json"));
         foreach (var g in meta?.Groups ?? new List<GroupJson>())
             AddGroup(g, slots, setIds, hairIds, replace, groups);
+
+        foreach (var key in ProteusPaths(modFolderPath))
+            ClassifyPath(key, slots, setIds, hairIds, replace);
 
         // Penumbra's on-disk format is barely documented and has changed once already. A mod that
         // yields no game paths at all is nearly always a layout this parser does not understand
@@ -338,6 +409,20 @@ public class ModAnalysisService
         // found, or every such mod gains a phantom extra slot.
         if (slots.Any(s => !Auxiliary.Contains(s)))
             slots.ExceptWith(Auxiliary);
+
+        // A mod whose every path is one the author invented, with nothing recognisable beside it,
+        // is in practice a skin: body textures for Bibo+, YAB, Gen3 and the rest, plus the tattoos,
+        // scars and body writing that ride on the same redirection. Nothing in the paths proves it,
+        // which is why this waits until everything else has come up empty — but the alternative is
+        // reporting that a mod full of files changes nothing at all, and the slot can be changed
+        // after import like any other.
+        if (slots.Count == 0 && _customTextures > 0)
+        {
+            slots.Add(EquipSlot.Skin);
+            _log?.Information($"[Wardrobe] '{Path.GetFileName(modFolderPath)}' names no part of the " +
+                              $"game in any of its {_pathsSeen} path(s), but {_customTextures} are " +
+                              $"custom textures — taking it for a skin.");
+        }
 
         return new ModAnalysisResult(slots, groups, Ids(setIds), Ids(hairIds), replace);
     }
@@ -371,6 +456,106 @@ public class ModAnalysisService
         }
     }
 
+    /// <summary>
+    /// Game paths from a Proteus project, if the mod is one.
+    /// </summary>
+    /// <remarks>
+    /// Proteus is a separate tool for layering skin and gear textures. A mod built with it carries
+    /// its own <c>Proteus/metadata.json</c>, and its Penumbra groups list option names with no files
+    /// under them at all — the files are generated when the option is applied. Read as Penumbra
+    /// alone, such a mod has option groups full of options that change nothing, and the wardrobe
+    /// reported it as touching no slots.
+    /// <para>
+    /// Every path is found by walking for <c>MaterialGamePath</c> rather than by following the
+    /// structure, which nests differently for a plain overlay than for one inside an option group,
+    /// and holds either a single path or a list of them. This is a third party's format with no
+    /// spec to hand, so the shallowest possible reading of it is the one most likely to survive its
+    /// next version.
+    /// </para>
+    /// </remarks>
+    private IEnumerable<string> ProteusPaths(string modFolderPath)
+    {
+        var file = Path.Combine(modFolderPath, "Proteus", "metadata.json");
+        if (!File.Exists(file)) return Array.Empty<string>();
+
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(File.ReadAllText(file),
+                new JsonDocumentOptions { AllowTrailingCommas = true });
+        }
+        catch (Exception ex)
+        {
+            _log?.Warning($"[Wardrobe] Could not read {file}: {ex.Message}");
+            return Array.Empty<string>();
+        }
+
+        var found = new List<string>();
+        using (doc)
+            CollectMaterialPaths(doc.RootElement, found);
+
+        if (found.Count > 0)
+            _log?.Debug($"[Wardrobe] '{Path.GetFileName(modFolderPath)}' is a Proteus mod: " +
+                        $"{found.Count} path(s) read from its metadata.");
+
+        return found;
+    }
+
+    /// <summary>Every <c>MaterialGamePath</c> anywhere below this element, string or array alike.</summary>
+    private static void CollectMaterialPaths(JsonElement element, List<string> found)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var prop in element.EnumerateObject())
+                {
+                    if (prop.NameEquals("MaterialGamePath"))
+                    {
+                        if (prop.Value.ValueKind == JsonValueKind.String)
+                        {
+                            if (prop.Value.GetString() is { Length: > 0 } one) found.Add(one);
+                        }
+                        else if (prop.Value.ValueKind == JsonValueKind.Array)
+                        {
+                            foreach (var item in prop.Value.EnumerateArray())
+                                if (item.ValueKind == JsonValueKind.String &&
+                                    item.GetString() is { Length: > 0 } many)
+                                    found.Add(many);
+                        }
+                        continue;
+                    }
+
+                    CollectMaterialPaths(prop.Value, found);
+                }
+                return;
+
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                    CollectMaterialPaths(item, found);
+                return;
+        }
+    }
+
+    /// <summary>
+    /// The game paths one option (or the mod's default data) changes.
+    /// </summary>
+    /// <remarks>
+    /// Swaps count alongside plain files: a swap redirects one game path to another, and the key —
+    /// the path being replaced — says what the mod changes just as a file does. A mod built entirely
+    /// out of swaps ships no files at all, and reading only Files made it look empty.
+    /// </remarks>
+    private static IEnumerable<string> PathKeys(OptionJson? option)
+    {
+        if (option == null) yield break;
+
+        foreach (var map in new[] { option.Files, option.FileSwaps })
+        {
+            if (map == null) continue;
+            foreach (var key in map.Keys)
+                yield return key;
+        }
+    }
+
     private static IEnumerable<string> ReadFileKeys(string jsonPath)
     {
         string text;
@@ -383,9 +568,12 @@ public class ModAnalysisService
 
         using (doc)
         {
-            if (doc.RootElement.TryGetProperty("Files", out var files) &&
-                files.ValueKind == JsonValueKind.Object)
+            foreach (var section in new[] { "Files", "FileSwaps" })
             {
+                if (!doc.RootElement.TryGetProperty(section, out var files) ||
+                    files.ValueKind != JsonValueKind.Object)
+                    continue;
+
                 foreach (var prop in files.EnumerateObject())
                     yield return prop.Name;
             }
@@ -433,9 +621,8 @@ public class ModAnalysisService
         foreach (var opt in g.Options)
         {
             optNames.Add(opt.Name);
-            if (opt.Files == null) continue;
 
-            foreach (var key in opt.Files.Keys)
+            foreach (var key in PathKeys(opt))
                 ClassifyPath(key, groupSlots, setIds, hairIds, replace);
         }
 
@@ -558,7 +745,15 @@ public class ModAnalysisService
         }
 
         if (CommonPattern.IsMatch(gamePath))
+        {
             slots.Add(EquipSlot.Other);
+            return;
+        }
+
+        // Counted rather than turned into a slot here: a gear mod that ships one custom texture is
+        // still a gear mod, and only a mod made of nothing else lets these say what it is.
+        if (CustomTexturePattern.IsMatch(gamePath))
+            _customTextures++;
     }
 
     // ── JSON POCOs ────────────────────────────────────────────────────────────
@@ -571,6 +766,13 @@ public class ModAnalysisService
 
         [JsonPropertyName("Groups")]
         public List<GroupJson>? Groups { get; set; }
+
+        /// <summary>
+        /// The files the mod applies with no option chosen — what FileVersion 3 kept in
+        /// default_mod.json. Shaped like an option, so it is read as one.
+        /// </summary>
+        [JsonPropertyName("DefaultData")]
+        public OptionJson? DefaultData { get; set; }
     }
 
     private class GroupJson
@@ -593,5 +795,8 @@ public class ModAnalysisService
 
         [JsonPropertyName("Files")]
         public Dictionary<string, string>? Files { get; set; }
+
+        [JsonPropertyName("FileSwaps")]
+        public Dictionary<string, string>? FileSwaps { get; set; }
     }
 }

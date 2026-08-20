@@ -359,6 +359,23 @@ public class Configuration : IPluginConfiguration
     public bool TagColoursEnabled { get; set; } = true;
 
     /// <summary>
+    /// Offer existing tags in the edit panel as the collapsible tree the import panels use, rather
+    /// than as the flat row of buttons.
+    /// </summary>
+    /// <remarks>
+    /// Neither is better; they suit different tag schemes. The flat row filters as you type and
+    /// right-clicks into the box for editing, which wins on a short list of loose tags. The tree
+    /// shows nesting, which the flat row cannot — it has room for the last segment only, so
+    /// Shoes/Boots/Ankle Boots is drawn as "Ankle Boots…" with its parents nowhere. Anyone who
+    /// files tags deeply is reading a list of endings and guessing.
+    /// <para>
+    /// Off by default: the flat row is what the panel has always shown, and an editor that
+    /// rearranges itself in an update is a worse surprise than a setting nobody turns on.
+    /// </para>
+    /// </remarks>
+    public bool TagTreeInEditor { get; set; } = false;
+
+    /// <summary>
     /// Keep Glamourer's advanced dyes with an outfit, on top of the game's two dye channels.
     /// </summary>
     /// <remarks>

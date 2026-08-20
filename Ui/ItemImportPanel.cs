@@ -36,6 +36,17 @@ public class ItemImportPanel : IDisposable
     private string        _editNotes    = string.Empty;
 
     /// <summary>
+    /// What the last Re-detect press found, shown under the button.
+    /// </summary>
+    /// <remarks>
+    /// Re-detect used to report only to the log, so a press that found nothing looked exactly like
+    /// a press that worked — and the most common reason for finding nothing is that the item is on
+    /// the wrong slot, which is fixable right there in the combo above if only anyone said so.
+    /// </remarks>
+    private string        _editDetectMsg = string.Empty;
+    private bool          _editDetectOk;
+
+    /// <summary>
     /// The staged redraw toggle, null while the item has never been given one. Kept nullable rather
     /// than resolved to a bool on open so an item moved between slots follows its new slot's default
     /// instead of the one it was drawn with, and so saving an item nobody touched the toggle on does
@@ -252,6 +263,7 @@ public class ItemImportPanel : IDisposable
         _editTagInput = string.Empty;
         _editReplaces = item.Replaces ?? string.Empty;
         _editNotes    = item.Notes ?? string.Empty;
+        _editDetectMsg = string.Empty;
         _editForceRedraw = item.ForceRedraw;
         _linkSearch   = string.Empty;
 
@@ -473,7 +485,11 @@ public class ItemImportPanel : IDisposable
         ImGui.TextDisabled("Slot");
         ImGui.SetNextItemWidth(-1);
         var slotNames = _slotChoices.Select(s => s.DisplayName()).ToArray();
-        ImGui.Combo("##eslot", ref _editSlotIdx, slotNames, slotNames.Length);
+        // Picking a different slot makes the last detection's message about a slot the user has
+        // moved on from, and one saying "nothing for Head" while the combo reads Feet is worse than
+        // no message at all
+        if (ImGui.Combo("##eslot", ref _editSlotIdx, slotNames, slotNames.Length))
+            _editDetectMsg = string.Empty;
 
         // Mod categories are not exclusive per slot, so what the item displaces is its own field
         if (SelectedSlot(_editSlotIdx).IsModCategory())
@@ -514,6 +530,12 @@ public class ItemImportPanel : IDisposable
             TryRedetectItem(_editTarget!);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Re-reads the mod's files to work out which FFXIV item it replaces.");
+
+        if (_editDetectMsg.Length > 0)
+            ImGui.TextColored(_editDetectOk
+                    ? new Vector4(0.5f, 0.9f, 0.5f, 1f)
+                    : new Vector4(1f, 0.6f, 0.3f, 1f),
+                _editDetectMsg);
 
         // Override the auto-detected item when several share the same model
         if (_editTarget!.ModelSetId is { } editSetId)
@@ -1238,6 +1260,7 @@ public class ItemImportPanel : IDisposable
         if (_slotConfigs.Count > 0)
         {
             ImGui.TextUnformatted("Items to create:");
+            DrawIncludeAllButton();
             ImGui.TextDisabled("Uncheck slots you don't want.");
             ImGui.Spacing();
 
@@ -1330,6 +1353,39 @@ public class ItemImportPanel : IDisposable
     /// mod is for, where it came from, what it goes with. Left until later it means opening each
     /// item again and remembering, which in practice means it does not happen.
     /// </remarks>
+    /// <summary>
+    /// The tick-everything / tick-nothing button, right-aligned on the "Items to create:" line.
+    /// </summary>
+    /// <remarks>
+    /// A mod covering half a dozen slots is usually wanted for one of them, and the alternative was
+    /// six clicks to turn five off. The label follows what a press would do, so the button is never
+    /// the one thing on screen that does nothing: with anything ticked it offers to clear them, and
+    /// once they are clear it offers them back.
+    /// <para>
+    /// Ticking everything includes the rows already imported, which each carry their own warning
+    /// badge. A button that says "check all" and quietly skips two rows would be harder to trust
+    /// than one that does what it says next to a warning that is already there.
+    /// </para>
+    /// </remarks>
+    private void DrawIncludeAllButton()
+    {
+        // One row is its own tick box; a button to do the same thing to it is just clutter
+        if (_slotConfigs.Count < 2) return;
+
+        var anyIncluded = _slotConfigs.Any(c => c.Include);
+        var label       = anyIncluded ? "uncheck all" : "check all";
+
+        // Right-aligned, but only while it fits beside the label — on a narrow panel it drops to
+        // its own line instead of sitting on top of the text
+        var x       = ImGui.GetContentRegionMax().X - UiLayout.ButtonWidth(label);
+        var textEnd = ImGui.GetItemRectMax().X - ImGui.GetWindowPos().X + ImGui.GetStyle().ItemSpacing.X;
+        if (x > textEnd) ImGui.SameLine(x);
+
+        if (ImGui.SmallButton(label))
+            foreach (var cfg in _slotConfigs)
+                cfg.Include = !anyIncluded;
+    }
+
     private void DrawImportTagsAndNotes()
     {
         var plural = _slotConfigs.Count(c => c.Include) > 1 ? " every item this import creates" : " the new item";
@@ -2507,6 +2563,12 @@ public class ItemImportPanel : IDisposable
         if (ImGui.SmallButton("Add")) TryAddTag();
         ImGui.TextDisabled("Use / for sub-tags, e.g. Shoes/Boots/Ankle Boots");
 
+        if (_config.TagTreeInEditor)
+        {
+            DrawEditTagTree();
+            return;
+        }
+
         // Every known tag, including ones made in the Tags panel before any item had them —
         // otherwise a pre-made tag would have to be retyped from memory to be used
         var suggestions = _config.AllTags()
@@ -2543,6 +2605,33 @@ public class ItemImportPanel : IDisposable
                         : "Click to add · right-click to edit first");
             }
         }
+    }
+
+    /// <summary>
+    /// Existing tags as the collapsible tree, for whoever turned that setting on.
+    /// </summary>
+    /// <remarks>
+    /// The same picker the import panels draw, so a tag scheme laid out in the Tags panel reads the
+    /// same wherever it is used. Styles are left out of it: the toggles above already cover them,
+    /// and a style reachable twice on one panel is two places to wonder which one counts.
+    /// </remarks>
+    private void DrawEditTagTree()
+    {
+        if (_config.AllTags().Count == 0) return;
+
+        ImGui.Spacing();
+        var height = ImGui.GetTextLineHeightWithSpacing() * 8;
+        if (ImGui.BeginChild("##editTagTree", new Vector2(-1, height), true))
+            TagTree.DrawPicker(TagTree.Build(_config, includeStyles: false), "editpick",
+                path => _editTags.Contains(path, StringComparer.OrdinalIgnoreCase),
+                path =>
+                {
+                    if (!_editTags.Contains(path, StringComparer.OrdinalIgnoreCase))
+                        _editTags.Add(path);
+                    _editTagInput = string.Empty;
+                });
+        ImGui.EndChild();
+        ImGui.TextDisabled("Click to add. Greyed tags have no items yet.");
     }
 
     /// <summary>
@@ -2616,9 +2705,13 @@ public class ItemImportPanel : IDisposable
 
     private void TryRedetectItem(WardrobeItem item)
     {
+        _editDetectMsg = string.Empty;
+        _editDetectOk  = false;
+
         var primaryMod = item.Mods.Count > 0 ? item.Mods[0] : null;
         if (primaryMod == null || string.IsNullOrEmpty(primaryMod.ModDirectory))
         {
+            _editDetectMsg = "This item has no mod linked, so there are no files to read.";
             _log.Warning("[Wardrobe] Re-detect: item has no primary mod directory");
             return;
         }
@@ -2626,63 +2719,139 @@ public class ItemImportPanel : IDisposable
         var path = _penumbra.GetModFolderPath(primaryMod.ModDirectory);
         if (path == null)
         {
+            _editDetectMsg = "Penumbra did not give a folder for this mod.";
             _log.Warning("[Wardrobe] Re-detect: could not get mod folder path");
             return;
         }
 
         var result = _analysis.Analyze(path);
 
+        // The slot chosen in the combo, not the one the item was saved with. Re-detect asks what
+        // this mod puts in this slot, and the slot the user means is the one they are looking at —
+        // reading the saved one meant that moving an item to Feet and pressing Re-detect kept
+        // answering about Head, with a message telling them to do the thing they had just done.
+        var slot = SelectedSlot(_editSlotIdx);
+        MoveItemToSlot(item, slot);
+
         // Mod categories identify themselves by name rather than by set ID, so they are re-read
         // from ReplaceKeys and there is no game item to look up afterwards
-        if (item.Slot.IsModCategory())
+        if (slot.IsModCategory())
         {
-            if (result.ReplaceKeys.TryGetValue(item.Slot, out var key))
+            if (result.ReplaceKeys.TryGetValue(slot, out var key))
             {
                 item.Replaces = key;
                 _editReplaces = key;
                 _config.Save();
-                _log.Information($"[Wardrobe] Re-detected '{item.Name}': {item.Slot.DisplayName()} replaces '{key}'");
+                _editDetectOk  = true;
+                _editDetectMsg = $"Detected: replaces {key}.";
+                _log.Information($"[Wardrobe] Re-detected '{item.Name}': {slot.DisplayName()} replaces '{key}'");
             }
             else
             {
-                _log.Warning($"[Wardrobe] Re-detect: nothing detected for {item.Slot.DisplayName()} " +
+                _editDetectMsg = SlotMismatchHint(result, slot);
+                _log.Warning($"[Wardrobe] Re-detect: nothing detected for {slot.DisplayName()} " +
                              $"in mod '{primaryMod.ModDirectory}'");
             }
             return;
         }
 
-        if (result.SlotSetIds.TryGetValue(item.Slot, out var setId))
+        if (result.SlotSetIds.TryGetValue(slot, out var setId))
         {
             // Persist this regardless of the item lookup. For customisation slots it is the
             // hairstyle (or equivalent) number and there is no game item to find, so saving only
             // on a successful lookup would silently discard it.
             item.ModelSetId = setId;
 
-            if (item.Slot == EquipSlot.Hair)
+            if (slot == EquipSlot.Hair)
                 item.HairIdByRace = result.HairIdsByRace
                     .ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
 
             _config.Save();
 
-            if (item.Slot.IsCustomization())
+            if (slot.IsCustomization())
             {
                 var perRace = item.HairIdByRace.Count > 0
                     ? $" ({item.HairIdByRace.Count} race variants)" : string.Empty;
-                _log.Information($"[Wardrobe] Re-detected '{item.Name}': {item.Slot.DisplayName()} id {setId}{perRace}");
+                _editDetectOk  = true;
+                _editDetectMsg = $"Detected {slot.DisplayName().ToLowerInvariant()} number {setId}{perRace}.";
+                _log.Information($"[Wardrobe] Re-detected '{item.Name}': {slot.DisplayName()} id {setId}{perRace}");
                 return;
             }
 
-            var found = _itemLookup.FindBestItem(setId, item.Slot);
+            var found = _itemLookup.FindBestItem(setId, slot);
             if (found.HasValue)
             {
                 item.GlamourerItemId   = found.Value.ItemId;
                 item.GlamourerItemName = found.Value.ItemName;
+                _editDetectOk  = true;
+                _editDetectMsg = $"Detected: {found.Value.ItemName}.";
                 _log.Information($"[Wardrobe] Re-detected item for '{item.Name}': {found.Value.ItemName} (id={found.Value.ItemId})");
                 _config.Save();
                 return;
             }
         }
-        _log.Warning($"[Wardrobe] Re-detect: nothing detected for slot {item.Slot} in mod '{primaryMod.ModDirectory}'");
+        _editDetectMsg = SlotMismatchHint(result, slot);
+        _log.Warning($"[Wardrobe] Re-detect: nothing detected for slot {slot} in mod '{primaryMod.ModDirectory}'");
+    }
+
+    /// <summary>
+    /// Commits the slot picked in the combo to the item before a Re-detect reads it.
+    /// </summary>
+    /// <remarks>
+    /// Everything detection writes — the model ID, the game item, the hairstyle numbers — belongs to
+    /// one slot, so the item has to be on that slot for any of it to mean anything. Detecting
+    /// against the combo while the item stayed on its old slot would record a pair of shoes on a
+    /// head item, which is worse than not detecting at all. The old slot's findings are cleared for
+    /// the same reason: they answer a question nobody is asking any more, and leaving them would let
+    /// a failed detection carry on dressing the item in the wrong thing.
+    /// <para>
+    /// This writes without Save being pressed, as the picture, game item and mod controls in this
+    /// panel already do. Pressing Re-detect is the point at which the user has said which slot they
+    /// mean, and making them save and re-open first would be the same dead end in a longer form.
+    /// </para>
+    /// </remarks>
+    private void MoveItemToSlot(WardrobeItem item, EquipSlot slot)
+    {
+        if (item.Slot == slot) return;
+
+        _log.Information($"[Wardrobe] Re-detect: moving '{item.Name}' from {item.Slot.DisplayName()} " +
+                         $"to {slot.DisplayName()} before detecting");
+
+        item.Slot              = slot;
+        item.ModelSetId        = null;
+        item.GlamourerItemId   = null;
+        item.GlamourerItemName = null;
+        item.HairIdByRace      = new Dictionary<string, ushort>();
+        item.Replaces          = null;
+        _editReplaces          = string.Empty;
+        _config.Save();
+    }
+
+    /// <summary>
+    /// Why a Re-detect found nothing, in the terms of the fix rather than of the failure.
+    /// </summary>
+    /// <remarks>
+    /// Nearly always the item is simply on the wrong slot — imported before its mod's layout could
+    /// be read, so it took the first slot in the list and kept it. The mod's own files know which
+    /// slot it belongs to, and naming it turns a dead end into a one-line instruction.
+    /// </remarks>
+    private static string SlotMismatchHint(ModAnalysisResult result, EquipSlot slot)
+    {
+        // The mod does name this slot; it is the game's item list that has no entry for the model
+        // it replaces, which happens with models belonging to an NPC or to nothing equippable.
+        if (result.SlotSetIds.TryGetValue(slot, out var setId))
+            return $"Model {setId} found, but no {slot.DisplayName()} item in the game uses it. " +
+                   $"Set the game item manually below.";
+
+        var found = result.DetectedSlots.Where(s => s != slot).ToList();
+
+        if (found.Count == 0)
+            return "Nothing found in this mod's files. It may use a layout the wardrobe " +
+                   "cannot read yet — please report it.";
+
+        var names = string.Join(", ", found.Select(s => s.DisplayName()));
+        return $"Nothing for {slot.DisplayName()}, but this mod's files are for {names}. " +
+               $"Set Slot above to {names}, then press Re-detect again.";
     }
 
     private void ResetImport()
