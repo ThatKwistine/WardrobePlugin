@@ -70,14 +70,23 @@ public class WardrobeShareService
     /// the photographs — which is the difference between something that fits in a Discord message
     /// and something that does not.
     /// </param>
+    /// <param name="outfits">
+    /// Outfits to send. Every item they name is added to the export whether or not it was ticked —
+    /// an outfit is a list of references, and one arriving without its pieces is a list of nothing.
+    /// </param>
     public ExportResult Export(
-        IReadOnlyList<WardrobeItem> items,
+        IReadOnlyList<WardrobeItem>   items,
+        IReadOnlyList<Outfit>         outfits,
+        IReadOnlyList<WardrobeItem>   allItems,
         string   path,
         string   author,
         string   description,
         bool     includeImages)
     {
-        if (items.Count == 0) return ExportResult.Failed("Nothing selected to share.");
+        var (toSend, pulledIn) = WithOutfitPieces(items, outfits, allItems);
+
+        if (toSend.Count == 0 && outfits.Count == 0)
+            return ExportResult.Failed("Nothing selected to share.");
 
         try
         {
@@ -91,15 +100,18 @@ public class WardrobeShareService
 
             // Only links between items that are both in this export survive — see
             // SharedItem.LinkedSourceIds
-            var exported = items.Select(i => i.Id).ToHashSet();
+            var exported = toSend.Select(i => i.Id).ToHashSet();
 
             // One archive entry per distinct picture on disk, however many items point at it: a
             // wardrobe where twenty variants share one cover should not carry twenty copies of it
             var imageEntries = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var missingImages = 0;
 
-            foreach (var item in items)
+            foreach (var item in toSend)
                 share.Items.Add(ToShared(item, exported, includeImages, imageEntries, ref missingImages));
+
+            foreach (var outfit in outfits)
+                share.Outfits.Add(ToShared(outfit, exported, includeImages, imageEntries, ref missingImages));
 
             // Written to a temporary file and moved into place, so a failure halfway through leaves
             // whatever was already at that path alone rather than truncated
@@ -138,15 +150,169 @@ public class WardrobeShareService
             File.Move(temp, path, true);
 
             var size = new FileInfo(path).Length;
-            _log.Information($"[Wardrobe] Shared {share.Items.Count} item(s) to {path} ({Describe(size)}).");
+            _log.Information($"[Wardrobe] Shared {share.Items.Count} item(s) and {share.Outfits.Count} " +
+                             $"outfit(s) to {path} ({Describe(size)}).");
 
-            return ExportResult.Succeeded(share.Items.Count, imageEntries.Count, missingImages, size);
+            return ExportResult.Succeeded(share.Items.Count, share.Outfits.Count,
+                imageEntries.Count, missingImages, size, pulledIn);
         }
         catch (Exception ex)
         {
             _log.Error(ex, "[Wardrobe] Share export failed");
             return ExportResult.Failed($"Could not write the file: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// The ticked items plus every item the ticked outfits need, deduplicated, with a count of how
+    /// many were pulled in that nobody ticked.
+    /// </summary>
+    /// <remarks>
+    /// Done here rather than in the UI so it cannot be forgotten by a second caller. An outfit is a
+    /// list of item ids; sending one without the items behind it produces a bundle where the outfit
+    /// arrives empty and there is nothing on screen to explain why.
+    /// <para>
+    /// The count is reported back so the export can say what it did. Quietly sending items somebody
+    /// did not tick would be a worse surprise than the alternative, given the whole point of the
+    /// ticks is to control what leaves.
+    /// </para>
+    /// </remarks>
+    private static (List<WardrobeItem> ToSend, int PulledIn) WithOutfitPieces(
+        IReadOnlyList<WardrobeItem> items,
+        IReadOnlyList<Outfit>       outfits,
+        IReadOnlyList<WardrobeItem> allItems)
+    {
+        var seen   = new HashSet<Guid>();
+        var toSend = new List<WardrobeItem>();
+
+        foreach (var item in items)
+            if (seen.Add(item.Id)) toSend.Add(item);
+
+        var ticked   = seen.Count;
+        var byId     = allItems.ToDictionary(i => i.Id);
+
+        foreach (var outfit in outfits)
+        {
+            foreach (var id in outfit.ItemIds)
+            {
+                // An outfit can name an item deleted since it was saved — the wear path already
+                // skips those, and so does this
+                if (!byId.TryGetValue(id, out var piece)) continue;
+                if (seen.Add(id)) toSend.Add(piece);
+            }
+        }
+
+        return (toSend, seen.Count - ticked);
+    }
+
+    private SharedOutfit ToShared(
+        Outfit outfit,
+        HashSet<Guid> exported,
+        bool includeImages,
+        Dictionary<string, string> imageEntries,
+        ref int missingImages)
+    {
+        var shared = new SharedOutfit
+        {
+            SourceId      = outfit.Id,
+            Name          = outfit.Name,
+            Tags          = new List<string>(outfit.Tags),
+            HatVisible    = outfit.HatVisible,
+            WeaponVisible = outfit.WeaponVisible,
+            Origin        = outfit.IsGlamourPlate ? SharedOutfitOrigin.GlamourPlate
+                          : outfit.IsDesign       ? SharedOutfitOrigin.DesignCard
+                          :                         SharedOutfitOrigin.Normal,
+        };
+
+        // Only pieces actually travelling. WithOutfitPieces has already made sure that is all of
+        // them bar any deleted since, so this drops nothing a sender would miss.
+        foreach (var id in outfit.ItemIds)
+            if (exported.Contains(id)) shared.ItemSourceIds.Add(id);
+
+        // The sender's local item ids are the dye keys, and they are also the source ids — the same
+        // guid means both things until it lands on the other side, where the import rewrites them
+        foreach (var (key, dye) in outfit.Dyes)
+        {
+            if (!Guid.TryParse(key, out var itemId) || !exported.Contains(itemId)) continue;
+
+            shared.Dyes[key] = new OutfitDye
+            {
+                Stain1   = dye.Stain1,
+                Stain2   = dye.Stain2,
+                Advanced = new Dictionary<string, string>(dye.Advanced),
+            };
+        }
+
+        foreach (var (slot, piece) in outfit.VanillaItems)
+        {
+            shared.VanillaItems[slot] = new VanillaPiece
+            {
+                ItemId = piece.ItemId,
+                Name   = piece.Name,
+                Stain1 = piece.Stain1,
+                Stain2 = piece.Stain2,
+            };
+        }
+
+        if (includeImages)
+        {
+            var (cover, extras) = AttachImages(outfit, outfit.Id, imageEntries, ref missingImages);
+            shared.ImageFile       = cover;
+            shared.ExtraImageFiles = extras;
+        }
+
+        return shared;
+    }
+
+    /// <summary>
+    /// Files an owner's pictures into the archive's entry map and returns the names it should
+    /// reference them by.
+    /// </summary>
+    /// <remarks>
+    /// Shared by items and outfits, which hold pictures identically — both are
+    /// <see cref="IImageOwner"/>, and the whole point of that interface is that this only needs
+    /// writing once.
+    /// </remarks>
+    private (string? Cover, List<string> Extras) AttachImages(
+        IImageOwner owner,
+        Guid        ownerId,
+        Dictionary<string, string> imageEntries,
+        ref int     missingImages)
+    {
+        string?     cover  = null;
+        var         extras = new List<string>();
+        var         index  = 0;
+
+        foreach (var picture in owner.AllImages())
+        {
+            if (imageEntries.Count >= MaxImages) break;
+
+            if (!File.Exists(picture)) { missingImages++; index++; continue; }
+
+            if (!imageEntries.TryGetValue(picture, out var entryName))
+            {
+                var ext = Path.GetExtension(picture);
+                if (!AllowedImageExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase)) { index++; continue; }
+
+                entryName = $"{ownerId:N}-{index}{ext.ToLowerInvariant()}";
+                imageEntries[picture] = entryName;
+            }
+
+            if (cover == null && index == 0)      cover = entryName;
+            else if (!extras.Contains(entryName)) extras.Add(entryName);
+
+            index++;
+        }
+
+        // AllImages puts the cover first, but one whose file is missing while the extras survive
+        // would otherwise arrive with no cover at all and pictures in the gallery
+        if (cover == null && extras.Count > 0)
+        {
+            cover = extras[0];
+            extras.RemoveAt(0);
+        }
+
+        return (cover, extras);
     }
 
     private SharedItem ToShared(
@@ -200,37 +366,9 @@ public class WardrobeShareService
 
         if (!includeImages) return shared;
 
-        var index = 0;
-        foreach (var picture in item.AllImages())
-        {
-            if (imageEntries.Count >= MaxImages) break;
-
-            if (!File.Exists(picture)) { missingImages++; index++; continue; }
-
-            if (!imageEntries.TryGetValue(picture, out var entryName))
-            {
-                var ext = Path.GetExtension(picture);
-                if (!AllowedImageExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase)) { index++; continue; }
-
-                entryName = $"{item.Id:N}-{index}{ext.ToLowerInvariant()}";
-                imageEntries[picture] = entryName;
-            }
-
-            if (shared.ImageFile == null && index == 0)
-                shared.ImageFile = entryName;
-            else if (!shared.ExtraImageFiles.Contains(entryName))
-                shared.ExtraImageFiles.Add(entryName);
-
-            index++;
-        }
-
-        // AllImages puts the cover first, but an item whose cover file is missing while its extras
-        // survive would otherwise arrive with no cover at all and pictures in the gallery
-        if (shared.ImageFile == null && shared.ExtraImageFiles.Count > 0)
-        {
-            shared.ImageFile = shared.ExtraImageFiles[0];
-            shared.ExtraImageFiles.RemoveAt(0);
-        }
+        var (cover, extras) = AttachImages(item, item.Id, imageEntries, ref missingImages);
+        shared.ImageFile       = cover;
+        shared.ExtraImageFiles = extras;
 
         return shared;
     }
@@ -408,6 +546,33 @@ public class WardrobeShareService
     }
 
     /// <summary>
+    /// How much of each outfit the local install can put together, given which of its pieces are
+    /// backed by mods that are present.
+    /// </summary>
+    /// <remarks>
+    /// Takes the item availability rather than recomputing it, so the two can never disagree about
+    /// the same piece.
+    /// </remarks>
+    public Dictionary<Guid, OutfitAvailability> ResolveOutfitAvailability(
+        WardrobeShare share, Dictionary<Guid, ItemAvailability> items)
+    {
+        var result = new Dictionary<Guid, OutfitAvailability>();
+
+        foreach (var outfit in share.Outfits)
+        {
+            var available = outfit.ItemSourceIds.Count(
+                id => items.TryGetValue(id, out var a) && a.CanWear);
+
+            // Vanilla pieces need nothing installed, so an outfit made entirely of plain gear — a
+            // shared glamour plate, most often — is always fully available
+            result[outfit.SourceId] = new OutfitAvailability(
+                available, outfit.ItemSourceIds.Count, outfit.VanillaItems.Count);
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// The installed mod list in the two forms a shared reference is matched against.
     /// </summary>
     /// <remarks>
@@ -539,6 +704,74 @@ public class WardrobeShareService
         return item;
     }
 
+    /// <summary>
+    /// Turns a shared outfit into a local one, resolving its pieces through
+    /// <paramref name="sourceToLocal"/>.
+    /// </summary>
+    /// <param name="sourceToLocal">
+    /// <see cref="SharedItem.SourceId"/> to the id of the local item standing in for it. Pieces
+    /// absent from the map are dropped: they are the ones whose mods this install does not have, and
+    /// a reference to nothing is worse than a gap — the wear path would skip it anyway, silently.
+    /// </param>
+    /// <remarks>
+    /// What comes out is an ordinary outfit. It is not a plate and not a design card whatever it was
+    /// on the sender's side, both for the reasons in <see cref="SharedOutfit"/> — so it can be edited,
+    /// worn and deleted like any outfit somebody built themselves.
+    /// </remarks>
+    public Outfit ToLocalOutfit(SharedOutfit shared, IReadOnlyDictionary<Guid, Guid> sourceToLocal, string imageDir)
+    {
+        var outfit = new Outfit
+        {
+            Name          = shared.Name,
+            Tags          = new List<string>(shared.Tags),
+            HatVisible    = shared.HatVisible,
+            WeaponVisible = shared.WeaponVisible,
+            DateAdded     = DateTime.UtcNow,
+        };
+
+        foreach (var sourceId in shared.ItemSourceIds)
+            if (sourceToLocal.TryGetValue(sourceId, out var localId))
+                outfit.ItemIds.Add(localId);
+
+        foreach (var (key, dye) in shared.Dyes)
+        {
+            if (!Guid.TryParse(key, out var sourceId)) continue;
+            if (!sourceToLocal.TryGetValue(sourceId, out var localId)) continue;
+
+            outfit.Dyes[localId.ToString()] = new OutfitDye
+            {
+                Stain1   = dye.Stain1,
+                Stain2   = dye.Stain2,
+                Advanced = new Dictionary<string, string>(dye.Advanced),
+            };
+        }
+
+        foreach (var (slot, piece) in shared.VanillaItems)
+        {
+            outfit.VanillaItems[slot] = new VanillaPiece
+            {
+                ItemId = piece.ItemId,
+                Name   = piece.Name,
+                Stain1 = piece.Stain1,
+                Stain2 = piece.Stain2,
+            };
+        }
+
+        if (!string.IsNullOrEmpty(shared.ImageFile))
+        {
+            var cover = Path.Combine(imageDir, shared.ImageFile);
+            if (File.Exists(cover)) outfit.ImagePath = cover;
+        }
+
+        foreach (var extra in shared.ExtraImageFiles)
+        {
+            var picture = Path.Combine(imageDir, extra);
+            if (File.Exists(picture)) outfit.ExtraImages.Add(picture);
+        }
+
+        return outfit;
+    }
+
     // ---------------------------------------------------------------- helpers
 
     /// <summary>A byte count in the units a person would use for it.</summary>
@@ -574,24 +807,57 @@ public readonly record struct ItemAvailability(
     IReadOnlyList<SharedMod> Missing,
     IReadOnlyList<SharedMod> Present);
 
+/// <summary>How much of one shared outfit this install could actually put together.</summary>
+/// <param name="AvailablePieces">Wardrobe items in the outfit whose mods are installed here.</param>
+/// <param name="TotalPieces">Wardrobe items the outfit names.</param>
+/// <param name="VanillaPieces">
+/// Plain game items in it, which need nothing installed and so always arrive intact.
+/// </param>
+public readonly record struct OutfitAvailability(
+    int AvailablePieces,
+    int TotalPieces,
+    int VanillaPieces)
+{
+    /// <summary>Whether anything at all would land — some pieces, or some plain gear.</summary>
+    public bool CanAdd => AvailablePieces > 0 || VanillaPieces > 0;
+
+    /// <summary>Whether it would arrive exactly as its sender has it.</summary>
+    public bool Complete => AvailablePieces == TotalPieces;
+
+    public int MissingPieces => TotalPieces - AvailablePieces;
+}
+
 /// <summary>Outcome of writing a bundle, in the terms the UI reports it in.</summary>
 public readonly record struct ExportResult(
     bool   Success,
     string Message,
     int    Items,
+    int    Outfits,
     int    Images,
     int    SkippedImages,
     long   Bytes)
 {
-    public static ExportResult Failed(string message) => new(false, message, 0, 0, 0, 0);
+    public static ExportResult Failed(string message) => new(false, message, 0, 0, 0, 0, 0);
 
-    public static ExportResult Succeeded(int items, int images, int skipped, long bytes)
+    /// <param name="pulledIn">
+    /// Items added to the export because an outfit needed them, which nobody ticked. Reported rather
+    /// than passed over — see <c>WithOutfitPieces</c>.
+    /// </param>
+    public static ExportResult Succeeded(int items, int outfits, int images, int skipped, long bytes, int pulledIn)
     {
-        var message = $"Shared {items} item(s) and {images} picture(s) — {WardrobeShareService.Describe(bytes)}.";
+        var what = outfits > 0
+            ? $"{items} item(s) and {outfits} outfit(s)"
+            : $"{items} item(s)";
+
+        var message = $"Shared {what} with {images} picture(s) — {WardrobeShareService.Describe(bytes)}.";
+
+        if (pulledIn > 0)
+            message += $" {pulledIn} of the items came along because an outfit needed them.";
+
         if (skipped > 0)
             message += $" {skipped} picture(s) could not be read and were left out.";
 
-        return new ExportResult(true, message, items, images, skipped, bytes);
+        return new ExportResult(true, message, items, outfits, images, skipped, bytes);
     }
 }
 

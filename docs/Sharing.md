@@ -8,11 +8,13 @@ Press **Share** on the toolbar.
 
 ## What a share file contains
 
-It contains the *description* of your items:
+It contains the *description* of your items and outfits:
 
 - the name, slot, tags and notes
 - which Penumbra mod each one needs, and which options within that mod
 - the game item and model set the wardrobe detected
+- for outfits: the pieces, the dyes on each of them, the plain game items filling the other slots,
+  and whether the hat and weapon show
 - your pictures, if you leave **Include pictures** ticked
 
 ## What it does not contain
@@ -33,14 +35,15 @@ It also leaves behind a few things that are yours rather than the item's:
 | Penumbra collection names | They describe your install. The recipient picks their own on import. |
 | Glamourer designs | A design id means nothing in somebody else's Glamourer. |
 | Favourites, variants, dates | Your filing, not the item. |
-| Base characters and outfits | Items only, for now. |
+| Base characters | Not yet. |
 
 ## Sending one
 
 1. Toolbar → **Share** → **Send a wardrobe**.
 2. Optionally put a name in **Shared by** and a line in **Note**. Both are free text, both are
    optional, and nothing is filled in for you.
-3. Tick the items to send. **Tick All Shown** takes everything the search is currently showing.
+3. Tick the items to send, and switch to **Outfits** to tick outfits. **Tick All Shown** takes
+   everything the search is currently showing in whichever list you are on.
 4. **Export…** and choose where to save it.
 
 Sending a lot? Untick **Include pictures**. A wardrobe of three hundred items is a few dozen
@@ -49,6 +52,24 @@ still travel either way, so the recipient can still browse and import the lot. T
 placeholders instead of your photographs.
 
 You can also start from the grid: **Select**, tick some items, then **Share Selected**.
+
+### Outfits bring their pieces with them
+
+Ticking an outfit ticks every item in it, whether or not you chose them yourself — an outfit is a
+list of references, and one sent without its pieces arrives empty. Those items show as ticked and
+locked in the Items list, and the count beside the tabs says how many came along that way. Untick
+the outfit to leave them out.
+
+### Plates and design cards change when shared
+
+A **glamour plate outfit** is sent as an ordinary outfit holding the same gear. It cannot stay
+attached to a plate, because plate 3 on somebody else's account holds their glamour, not yours. The
+gear itself travels perfectly, so this is usually exactly what you wanted.
+
+A **Glamourer design card** is sent as an ordinary outfit holding the items attached to it. The
+design does not travel — its id means nothing in anybody else's Glamourer — so any gear or colouring
+that lived in the design is not in the file. If a card is mostly its design rather than its attached
+items, very little of it will arrive, and the send list marks it so you know before you send it.
 
 ## Opening one somebody sent you
 
@@ -66,6 +87,21 @@ behind it:
   patch it was sent with. It will go on and look very nearly right.
 
 **Only what I can wear** hides the greyed ones once you have had a look.
+
+### Outfits you were sent
+
+Switch to **Outfits** to see them. An outfit card says how much of it you could put together:
+
+- **No badge** — you have every piece. It will arrive exactly as its sender has it.
+- **"3 of 5 pieces"** — you have some of the modded pieces. Adding it gives you the outfit with the
+  other two missing; find them in the Items list, greyed, to see what to install.
+- **"No pieces you have"** — none of it can be assembled, and there is nothing to add.
+
+Plain game items in an outfit always work, so a shared glamour plate — or any mostly-unmodded look —
+usually arrives intact whatever mods you own.
+
+**Add** on an outfit brings in the outfit *and* any of its pieces you do not already have, so you do
+not have to collect them from the Items list first.
 
 ### Why Add and Wear adds first
 

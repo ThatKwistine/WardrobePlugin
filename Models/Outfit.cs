@@ -12,6 +12,11 @@ namespace WardrobePlugin.Models;
 /// options — the part a Glamourer design cannot do on its own.
 /// </remarks>
 /// <summary>The two dye channels an equipment piece can carry.</summary>
+/// <remarks>
+/// Also part of the share format — see <see cref="SharedOutfit.Dyes"/>. It carries nothing local,
+/// which is what makes that safe; a field added here that does mean something only on this machine
+/// would start travelling to other people's installs without anything saying so.
+/// </remarks>
 [Serializable]
 public class OutfitDye
 {
@@ -41,6 +46,11 @@ public class OutfitDye
 /// Stored by item ID rather than as a wardrobe item because there is nothing to manage: no mod to
 /// enable, no options to apply, nothing to detect. Wearing one is a single Glamourer call. Keeping
 /// them on the outfit is what lets a look be saved when only some of it — or none of it — is modded.
+/// <para>
+/// Also part of the share format, under the same caveat as <see cref="OutfitDye"/>: a game item id
+/// and two dye channels mean the same thing on every install, and anything added here that does not
+/// would travel silently.
+/// </para>
 /// </remarks>
 [Serializable]
 public class VanillaPiece
@@ -185,6 +195,9 @@ public class Outfit : IImageOwner
     /// <summary>Show or hide the weapon when this outfit is worn, or null to leave it alone.</summary>
     /// <inheritdoc cref="HatVisible" path="/remarks"/>
     public bool? WeaponVisible { get; set; }
+
+    /// <inheritdoc cref="WardrobeItem.SharedFromId"/>
+    public Guid? SharedFromId { get; set; }
 
     public bool IsDesign => DesignId is not null;
 }

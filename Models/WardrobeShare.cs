@@ -72,6 +72,113 @@ public class WardrobeShare
     public string Description { get; set; } = string.Empty;
 
     public List<SharedItem> Items { get; set; } = new();
+
+    /// <summary>
+    /// Outfits in the bundle. Every item an outfit names is in <see cref="Items"/> as well.
+    /// </summary>
+    /// <remarks>
+    /// Guaranteed by the export rather than hoped for: ticking an outfit pulls its pieces in behind
+    /// it, because an outfit is a list of references and one arriving without them is a list of
+    /// nothing. The reverse does not hold — items travel perfectly well on their own.
+    /// </remarks>
+    public List<SharedOutfit> Outfits { get; set; } = new();
+}
+
+/// <summary>One outfit as it crosses to another install.</summary>
+/// <remarks>
+/// Less of an outfit survives the crossing than survives for an item, because more of an outfit is a
+/// pointer at something only the sender has. What is dropped, and why:
+/// <list type="bullet">
+/// <item><description>
+/// <b>Glamour plate id.</b> A plate outfit mirrors one of the sender's twenty in-game plates. Carried
+/// across it would attach to the recipient's plate of the same number, which holds something else
+/// entirely — so a plate outfit arrives as an ordinary outfit holding the pieces it had, which is
+/// exactly what makes a plate worth sharing in the first place.
+/// </description></item>
+/// <item><description>
+/// <b>Glamourer design link.</b> A design id names a design in the sender's Glamourer and nothing in
+/// anybody else's. A design card arrives as an ordinary outfit holding whatever items were attached
+/// to it, and loses the design's own gear and colouring — which is most of what a design card is, so
+/// it will usually arrive looking thin.
+/// </description></item>
+/// </list>
+/// <para>
+/// What does survive is the part that is genuinely the look: the pieces, the dyes, the plain game
+/// items filling the rest of the slots, and whether the hat and weapon show.
+/// </para>
+/// </remarks>
+[Serializable]
+public class SharedOutfit
+{
+    /// <inheritdoc cref="SharedItem.SourceId"/>
+    public Guid SourceId { get; set; }
+
+    public string       Name { get; set; } = string.Empty;
+    public List<string> Tags { get; set; } = new();
+
+    /// <inheritdoc cref="SharedItem.ImageFile"/>
+    public string?      ImageFile       { get; set; }
+    public List<string> ExtraImageFiles { get; set; } = new();
+
+    /// <summary>
+    /// <see cref="SharedItem.SourceId"/>s of the wardrobe items in this outfit, in order.
+    /// </summary>
+    /// <remarks>
+    /// Remapped to the recipient's own ids on import. A piece whose mod they do not have is dropped
+    /// from the outfit rather than blocking it: an outfit is worn a piece at a time, so most of a
+    /// look is still most of a look.
+    /// </remarks>
+    public List<Guid> ItemSourceIds { get; set; } = new();
+
+    /// <summary>
+    /// Dye channels per piece, keyed by <see cref="SharedItem.SourceId"/> as a string.
+    /// </summary>
+    /// <remarks>
+    /// Keyed by source id rather than by the sender's local item id, which the recipient has no way
+    /// to resolve. Rewritten to their own ids on import, alongside <see cref="ItemSourceIds"/>.
+    /// <para>
+    /// <see cref="OutfitDye"/> is reused rather than copied because it holds nothing local — two dye
+    /// channels and Glamourer's own opaque rows, which are keyed by slot and so mean the same thing
+    /// on any character. That makes it part of this wire format: a field added to it is a field added
+    /// to what a share carries, which is not true of anything else on <see cref="Outfit"/>.
+    /// </para>
+    /// </remarks>
+    public Dictionary<string, OutfitDye> Dyes { get; set; } = new();
+
+    /// <summary>
+    /// Plain game items filling the slots this outfit's own pieces do not, keyed by slot name.
+    /// </summary>
+    /// <remarks>
+    /// The one part of a share that always works. A vanilla piece is a game item id and two dye
+    /// channels, so it needs nothing installed and arrives exactly as it left — which is why a plate
+    /// outfit, or a mostly-unmodded look, survives the crossing almost intact.
+    /// <para>
+    /// <see cref="VanillaPiece"/> is reused for the same reason <see cref="OutfitDye"/> is, and with
+    /// the same consequence: it is part of this format.
+    /// </para>
+    /// </remarks>
+    public Dictionary<string, VanillaPiece> VanillaItems { get; set; } = new();
+
+    public bool? HatVisible    { get; set; }
+    public bool? WeaponVisible { get; set; }
+
+    /// <summary>
+    /// What the outfit was on the sender's side, when it was not an ordinary one — for telling the
+    /// recipient why a plate or a design card arrived holding less than it used to.
+    /// </summary>
+    /// <remarks>
+    /// A note to show, never a thing to act on. Nothing keys behaviour off it: the outfit that
+    /// arrives is an ordinary outfit in every respect, and this only explains its shape.
+    /// </remarks>
+    public SharedOutfitOrigin Origin { get; set; } = SharedOutfitOrigin.Normal;
+}
+
+/// <summary>What an outfit was before it was shared. Values are persisted, so do not renumber.</summary>
+public enum SharedOutfitOrigin
+{
+    Normal       = 0,
+    GlamourPlate = 1,
+    DesignCard   = 2,
 }
 
 /// <summary>One item as it crosses to another install.</summary>

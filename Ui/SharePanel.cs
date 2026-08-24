@@ -55,6 +55,12 @@ public class SharePanel : Window, IDisposable
     /// <summary>Items ticked for export. Ids rather than references, so a deletion cannot strand one.</summary>
     private readonly HashSet<Guid> _picked = new();
 
+    /// <summary>Outfits ticked for export. Their pieces come along whether or not they are ticked.</summary>
+    private readonly HashSet<Guid> _pickedOutfits = new();
+
+    /// <summary>Whether the send list is showing outfits rather than items.</summary>
+    private bool _sendOutfits;
+
     // ── Receiving ─────────────────────────────────────────────────────────────
 
     private WardrobeShare? _loaded;
@@ -65,8 +71,14 @@ public class SharePanel : Window, IDisposable
     private bool   _onlyWearable;
     private bool   _tagWithSender = true;
 
+    /// <summary>Whether the browsed bundle is showing its outfits rather than its items.</summary>
+    private bool _recvOutfits;
+
     /// <summary>Availability per <see cref="SharedItem.SourceId"/>, worked out once per load.</summary>
     private Dictionary<Guid, ItemAvailability> _availability = new();
+
+    /// <summary>Availability per <see cref="SharedOutfit.SourceId"/>, worked out from the above.</summary>
+    private Dictionary<Guid, OutfitAvailability> _outfitAvailability = new();
 
     /// <summary>Collections to file imported mods under, and which one is chosen.</summary>
     private IList<string> _collections   = Array.Empty<string>();
@@ -77,6 +89,9 @@ public class SharePanel : Window, IDisposable
     /// after every import so a card can say it has already been taken.
     /// </summary>
     private readonly HashSet<Guid> _alreadyImported = new();
+
+    /// <inheritdoc cref="_alreadyImported"/>
+    private readonly HashSet<Guid> _alreadyImportedOutfits = new();
 
     private IDisposable? _fontScope;
     private float        _lastScaleFactor;
@@ -145,7 +160,8 @@ public class SharePanel : Window, IDisposable
         {
             _picked.Clear();
             foreach (var id in preselected) _picked.Add(id);
-            _sending = true;
+            _sending     = true;
+            _sendOutfits = false;
         }
 
         _sendStatus = string.Empty;
@@ -194,10 +210,10 @@ public class SharePanel : Window, IDisposable
 
     private void DrawSend()
     {
-        ImGui.TextWrapped("A share file describes your items — which mod each one needs, which " +
-                          "options, which game item — and carries your pictures. It does not " +
-                          "contain the mods themselves, so whoever opens it needs to already own " +
-                          "them, or to go and get them.");
+        ImGui.TextWrapped("A share file describes your items and outfits — which mod each piece " +
+                          "needs, which options, which game item, which dyes — and carries your " +
+                          "pictures. It does not contain the mods themselves, so whoever opens it " +
+                          "needs to already own them, or to go and get them.");
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -235,12 +251,12 @@ public class SharePanel : Window, IDisposable
         ImGui.Separator();
         ImGui.Spacing();
 
-        var none = _picked.Count == 0;
+        var none = _picked.Count == 0 && _pickedOutfits.Count == 0;
         if (none) ImGui.BeginDisabled();
         if (ImGui.Button("  Export…  ")) BeginExport();
         if (none) ImGui.EndDisabled();
         if (none && ImGui.IsItemHovered())
-            ImGui.SetTooltip("Tick some items first.");
+            ImGui.SetTooltip("Tick some items or outfits first.");
 
         if (!string.IsNullOrEmpty(_sendStatus))
         {
@@ -251,25 +267,77 @@ public class SharePanel : Window, IDisposable
 
     private void DrawSendPickerBar()
     {
-        ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted($"{_picked.Count} of {_config.WardrobeItems.Count} ticked");
+        DrawListToggle($" Items ({_picked.Count}) ", false, ref _sendOutfits);
+        ImGui.SameLine();
+        DrawListToggle($" Outfits ({_pickedOutfits.Count}) ", true, ref _sendOutfits);
+
+        // The pieces an outfit drags along, so the tick counts above are not the whole story and do
+        // not have to pretend to be
+        var pulled = PulledInCount();
+        if (pulled > 0)
+        {
+            ImGui.SameLine();
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextDisabled($"+{pulled} for the outfits");
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Items the ticked outfits need that you have not ticked yourself.\n\n" +
+                                 "They travel too — an outfit is a list of pieces, and one sent\n" +
+                                 "without them arrives empty.");
+        }
 
         UiLayout.SameLineIfRoomForButton(" Tick All Shown ");
         if (ImGui.Button(" Tick All Shown "))
         {
-            foreach (var item in VisibleForSend()) _picked.Add(item.Id);
+            if (_sendOutfits) foreach (var o in VisibleOutfitsForSend()) _pickedOutfits.Add(o.Id);
+            else              foreach (var i in VisibleForSend())        _picked.Add(i.Id);
             _sendStatus = string.Empty;
         }
 
         UiLayout.SameLineIfRoomForButton(" Clear ");
         if (ImGui.Button(" Clear "))
         {
-            _picked.Clear();
+            if (_sendOutfits) _pickedOutfits.Clear();
+            else              _picked.Clear();
             _sendStatus = string.Empty;
         }
 
         ImGui.SetNextItemWidth(UiScale.S(200f));
         ImGui.InputTextWithHint("##shareSearch", "Search…", ref _sendSearch, 64);
+    }
+
+    /// <summary>A sub-list selector, drawn like the window's own mode buttons but smaller.</summary>
+    private static void DrawListToggle(string label, bool showsOutfits, ref bool state)
+    {
+        var active = state == showsOutfits;
+        if (active)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.5f, 0.8f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.4f, 0.6f, 0.9f, 1f));
+        }
+
+        if (ImGui.Button(label)) state = showsOutfits;
+
+        if (active) ImGui.PopStyleColor(2);
+    }
+
+    /// <summary>
+    /// How many items the ticked outfits would bring along that are not ticked in their own right.
+    /// </summary>
+    /// <remarks>
+    /// Recomputed per frame from two small sets, which is cheap enough and cannot go stale — the
+    /// alternative is a cached count that has to be invalidated by every tick, in both lists.
+    /// </remarks>
+    private int PulledInCount() =>
+        PulledIn().Count(id => !_picked.Contains(id) && _config.WardrobeItems.Exists(i => i.Id == id));
+
+    private IEnumerable<Outfit> VisibleOutfitsForSend()
+    {
+        if (string.IsNullOrWhiteSpace(_sendSearch)) return _config.Outfits;
+
+        var needle = _sendSearch.Trim();
+        return _config.Outfits.Where(o =>
+            o.Name.Contains(needle, StringComparison.OrdinalIgnoreCase)
+            || o.Tags.Any(t => t.Contains(needle, StringComparison.OrdinalIgnoreCase)));
     }
 
     private IEnumerable<WardrobeItem> VisibleForSend()
@@ -292,17 +360,38 @@ public class SharePanel : Window, IDisposable
 
         UiLayout.PushWrap();
 
+        if (_sendOutfits) DrawSendOutfitRows();
+        else              DrawSendItemRows();
+
+        UiLayout.PopWrap();
+        ImGui.EndChild();
+    }
+
+    private void DrawSendItemRows()
+    {
+        // Pieces an outfit is dragging along are shown ticked and locked rather than left looking
+        // untouched, so the list agrees with what the export will actually contain
+        var pulled = PulledIn();
+
         foreach (var item in VisibleForSend())
         {
-            var ticked = _picked.Contains(item.Id);
+            var forced = pulled.Contains(item.Id);
+            var ticked = forced || _picked.Contains(item.Id);
+
             ImGui.PushID(item.Id.ToString());
 
+            if (forced) ImGui.BeginDisabled();
             if (ImGui.Checkbox($"{item.Name}##pick", ref ticked))
             {
                 if (ticked) _picked.Add(item.Id);
                 else        _picked.Remove(item.Id);
                 _sendStatus = string.Empty;
             }
+            if (forced) ImGui.EndDisabled();
+
+            if (forced && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip("A ticked outfit needs this piece, so it is going either way.\n\n" +
+                                 "Untick the outfit to leave it out.");
 
             var slot = item.Slot.DisplayName();
             UiLayout.SameLineIfRoomForText(slot);
@@ -310,9 +399,70 @@ public class SharePanel : Window, IDisposable
 
             ImGui.PopID();
         }
+    }
 
-        UiLayout.PopWrap();
-        ImGui.EndChild();
+    private void DrawSendOutfitRows()
+    {
+        if (_config.Outfits.Count == 0)
+        {
+            ImGui.TextDisabled("You have no outfits yet.");
+            return;
+        }
+
+        foreach (var outfit in VisibleOutfitsForSend())
+        {
+            var ticked = _pickedOutfits.Contains(outfit.Id);
+            ImGui.PushID(outfit.Id.ToString());
+
+            if (ImGui.Checkbox($"{outfit.Name}##pickOutfit", ref ticked))
+            {
+                if (ticked) _pickedOutfits.Add(outfit.Id);
+                else        _pickedOutfits.Remove(outfit.Id);
+                _sendStatus = string.Empty;
+            }
+
+            var pieces = outfit.ItemIds.Count + outfit.VanillaItems.Count;
+            var label  = $"{pieces} piece(s)";
+            UiLayout.SameLineIfRoomForText(label);
+            ImGui.TextDisabled(label);
+
+            // A plate or a design card arrives as a plain outfit, and that is worth saying before it
+            // is sent rather than after — see SharedOutfit
+            if (outfit.IsGlamourPlate || outfit.IsDesign)
+            {
+                UiLayout.SameLineIfRoomForText("changes when shared");
+                ImGui.TextColored(new Vector4(0.85f, 0.8f, 0.4f, 1f), "changes when shared");
+
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(outfit.IsGlamourPlate
+                        ? "A glamour plate outfit is sent as an ordinary outfit holding the\n" +
+                          "same pieces. It cannot stay attached to a plate — plate 3 on their\n" +
+                          "side holds something else entirely.\n\n" +
+                          "The gear itself travels perfectly, so this is usually fine."
+                        : "A design card is sent as an ordinary outfit holding the items\n" +
+                          "attached to it. The Glamourer design itself does not travel —\n" +
+                          "its id means nothing in anybody else's Glamourer.\n\n" +
+                          "If the look is mostly the design rather than the items, very\n" +
+                          "little of it will arrive.");
+            }
+
+            ImGui.PopID();
+        }
+    }
+
+    /// <summary>Ids of items the ticked outfits require, whether or not they are ticked themselves.</summary>
+    private HashSet<Guid> PulledIn()
+    {
+        var pulled = new HashSet<Guid>();
+        if (_pickedOutfits.Count == 0) return pulled;
+
+        foreach (var outfit in _config.Outfits)
+        {
+            if (!_pickedOutfits.Contains(outfit.Id)) continue;
+            foreach (var id in outfit.ItemIds) pulled.Add(id);
+        }
+
+        return pulled;
     }
 
     private void BeginExport()
@@ -335,8 +485,14 @@ public class SharePanel : Window, IDisposable
             if (!path.EndsWith(WardrobeShare.Extension, StringComparison.OrdinalIgnoreCase))
                 path += WardrobeShare.Extension;
 
-            var items = _config.WardrobeItems.Where(i => _picked.Contains(i.Id)).ToList();
-            var result = _share.Export(items, path, _author, _description, _withImages);
+            var items   = _config.WardrobeItems.Where(i => _picked.Contains(i.Id)).ToList();
+            var outfits = _config.Outfits.Where(o => _pickedOutfits.Contains(o.Id)).ToList();
+
+            // The whole wardrobe goes in as the third argument, not as content but as the lookup the
+            // export resolves outfit pieces through
+            var result = _share.Export(items, outfits, _config.WardrobeItems,
+                path, _author, _description, _withImages);
+
             _sendStatus = result.Message;
         }, start);
     }
@@ -393,7 +549,8 @@ public class SharePanel : Window, IDisposable
         DrawReceiveBar();
         ImGui.Spacing();
 
-        DrawReceiveGrid(_loaded);
+        if (_recvOutfits) DrawReceiveOutfitGrid();
+        else              DrawReceiveGrid(_loaded);
     }
 
     private void DrawShareHeader(WardrobeShare share)
@@ -402,8 +559,11 @@ public class SharePanel : Window, IDisposable
         ImGui.TextUnformatted(who);
 
         var wearable = _availability.Count(a => a.Value.CanWear);
-        ImGui.TextDisabled($"{share.Items.Count} item(s) — you can wear {wearable} of them. " +
-                           $"Shared {share.ExportedUtc.ToLocalTime():d}.");
+        var summary  = share.Outfits.Count > 0
+            ? $"{share.Items.Count} item(s) and {share.Outfits.Count} outfit(s) — you can wear {wearable} of the items. "
+            : $"{share.Items.Count} item(s) — you can wear {wearable} of them. ";
+
+        ImGui.TextDisabled(summary + $"Shared {share.ExportedUtc.ToLocalTime():d}.");
 
         if (!string.IsNullOrWhiteSpace(share.Description))
         {
@@ -422,6 +582,14 @@ public class SharePanel : Window, IDisposable
 
     private void DrawReceiveBar()
     {
+        if (_loaded is { Outfits.Count: > 0 })
+        {
+            DrawListToggle($" Items ({_loaded.Items.Count}) ", false, ref _recvOutfits);
+            ImGui.SameLine();
+            DrawListToggle($" Outfits ({_loaded.Outfits.Count}) ", true, ref _recvOutfits);
+            ImGui.Spacing();
+        }
+
         ImGui.SetNextItemWidth(UiScale.S(200f));
         ImGui.InputTextWithHint("##recvSearch", "Search…", ref _recvSearch, 64);
 
@@ -452,6 +620,11 @@ public class SharePanel : Window, IDisposable
             ImGui.SetTooltip("Adds one tag to every item you take from this file, so they are\n" +
                              "easy to find together — and easy to remove again if you change\n" +
                              "your mind.");
+
+        // "Add All Shown" reads the item list, so it is offered only while that is what is showing.
+        // On the outfit list the equivalent bulk action would be adding several outfits and every
+        // piece behind them at once, which is a lot to do on one press and no easier to undo.
+        if (_recvOutfits) return;
 
         var addable = VisibleForReceive().Count(i => Available(i).CanWear && !_alreadyImported.Contains(i.SourceId));
 
@@ -800,6 +973,268 @@ public class SharePanel : Window, IDisposable
         }
     }
 
+    // ── Received outfits ─────────────────────────────────────
+
+    private IEnumerable<SharedOutfit> VisibleOutfitsForReceive()
+    {
+        if (_loaded == null) return Array.Empty<SharedOutfit>();
+
+        IEnumerable<SharedOutfit> outfits = _loaded.Outfits;
+
+        if (_onlyWearable) outfits = outfits.Where(o => OutfitAvailable(o).CanAdd);
+
+        if (!string.IsNullOrWhiteSpace(_recvSearch))
+        {
+            var needle = _recvSearch.Trim();
+            outfits = outfits.Where(o =>
+                o.Name.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                || o.Tags.Any(t => t.Contains(needle, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        return outfits;
+    }
+
+    private OutfitAvailability OutfitAvailable(SharedOutfit outfit) =>
+        _outfitAvailability.TryGetValue(outfit.SourceId, out var a)
+            ? a
+            : new OutfitAvailability(0, outfit.ItemSourceIds.Count, outfit.VanillaItems.Count);
+
+    private void DrawReceiveOutfitGrid()
+    {
+        if (!ImGui.BeginChild("##recvOutfitGrid", new Vector2(0, 0), false)) { ImGui.EndChild(); return; }
+
+        var width   = CardWidth;
+        var spacing = ImGui.GetStyle().ItemSpacing.X;
+        var columns = Math.Max(1, (int)((ImGui.GetContentRegionAvail().X + spacing) / (width + spacing)));
+
+        var column = 0;
+        foreach (var outfit in VisibleOutfitsForReceive())
+        {
+            if (column > 0) ImGui.SameLine();
+
+            ImGui.PushID(outfit.SourceId.ToString());
+            DrawSharedOutfitCard(outfit, width);
+            ImGui.PopID();
+
+            column = (column + 1) % columns;
+        }
+
+        ImGui.EndChild();
+    }
+
+    private void DrawSharedOutfitCard(SharedOutfit outfit, float width)
+    {
+        var availability = OutfitAvailable(outfit);
+        var imported     = _alreadyImportedOutfits.Contains(outfit.SourceId);
+
+        ImGui.BeginGroup();
+
+        // Same two-group structure as an item card, and for the same reason — see DrawSharedCard
+        ImGui.BeginGroup();
+
+        if (!availability.CanAdd) ImGui.BeginDisabled();
+
+        DrawOutfitCardImage(outfit, width);
+
+        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
+        ImGui.TextUnformatted(outfit.Name);
+        ImGui.PopTextWrapPos();
+
+        var pieces = availability.TotalPieces + availability.VanillaPieces;
+        ImGui.TextDisabled($"{pieces} piece(s)");
+
+        if (!availability.CanAdd) ImGui.EndDisabled();
+
+        DrawOutfitCardBadge(availability, imported, width);
+
+        ImGui.EndGroup();
+
+        DrawOutfitCardTooltip(outfit, availability);
+        DrawOutfitCardActions(outfit, availability, imported, width);
+
+        ImGui.EndGroup();
+    }
+
+    private void DrawOutfitCardImage(SharedOutfit outfit, float width)
+    {
+        var path = string.IsNullOrEmpty(outfit.ImageFile)
+            ? null
+            : Path.Combine(_imageDir, outfit.ImageFile);
+
+        if (path != null && File.Exists(path))
+        {
+            try
+            {
+                if (_textures.GetFromFile(path).GetWrapOrDefault() is { } wrap)
+                {
+                    ImageDraw.Square(wrap, width);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Debug($"[Wardrobe] Share outfit picture '{path}' would not load: {ex.Message}");
+            }
+        }
+
+        var start = ImGui.GetCursorScreenPos();
+        ImGui.Dummy(new Vector2(width, width));
+        ImGui.GetWindowDrawList().AddRectFilled(
+            start, new Vector2(start.X + width, start.Y + width),
+            ImGui.GetColorU32(new Vector4(0.18f, 0.18f, 0.20f, 1f)), UiScale.S(4f));
+    }
+
+    private void DrawOutfitCardBadge(OutfitAvailability availability, bool imported, float width)
+    {
+        if (imported)
+        {
+            ImGui.TextColored(new Vector4(0.5f, 0.8f, 0.5f, 1f), "In your wardrobe");
+            return;
+        }
+
+        if (!availability.CanAdd)
+        {
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
+            ImGui.TextColored(new Vector4(0.9f, 0.6f, 0.4f, 1f), "No pieces you have");
+            ImGui.PopTextWrapPos();
+            return;
+        }
+
+        if (!availability.Complete)
+        {
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
+            ImGui.TextColored(new Vector4(0.85f, 0.8f, 0.4f, 1f),
+                $"{availability.AvailablePieces} of {availability.TotalPieces} pieces");
+            ImGui.PopTextWrapPos();
+        }
+    }
+
+    private void DrawOutfitCardTooltip(SharedOutfit outfit, OutfitAvailability availability)
+    {
+        if (!ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled)) return;
+
+        ImGui.BeginTooltip();
+        ImGui.PushTextWrapPos(UiScale.S(360f));
+
+        ImGui.TextUnformatted(outfit.Name);
+
+        if (outfit.Tags.Count > 0)
+            ImGui.TextDisabled(string.Join(", ", outfit.Tags));
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        if (availability.TotalPieces > 0)
+            ImGui.TextUnformatted($"{availability.AvailablePieces} of {availability.TotalPieces} " +
+                                  "modded piece(s) you have the mods for");
+
+        if (availability.VanillaPieces > 0)
+            ImGui.TextUnformatted($"{availability.VanillaPieces} plain game piece(s), which always work");
+
+        if (!availability.Complete && availability.TotalPieces > 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextWrapped($"{availability.MissingPieces} piece(s) would be left out. Look through " +
+                              "the items list for what is missing — the pieces are all in this file, " +
+                              "greyed where you do not have the mod.");
+        }
+
+        // Why it may not look like the outfit they were sent
+        if (outfit.Origin != SharedOutfitOrigin.Normal)
+        {
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+            ImGui.TextWrapped(outfit.Origin == SharedOutfitOrigin.GlamourPlate
+                ? "This was a glamour plate on the sender's side. It arrives as an ordinary outfit "
+                  + "holding the same gear — it cannot stay attached to a plate, since your plates "
+                  + "hold your own glamours."
+                : "This was a Glamourer design card on the sender's side. It arrives as an ordinary "
+                  + "outfit holding the items that were attached to it; the design itself does not "
+                  + "travel, so any gear or colouring that lived in the design is not here.");
+        }
+
+        ImGui.PopTextWrapPos();
+        ImGui.EndTooltip();
+    }
+
+    private void DrawOutfitCardActions(SharedOutfit outfit, OutfitAvailability availability, bool imported, float width)
+    {
+        if (imported || !availability.CanAdd) return;
+
+        if (ImGui.Button("Add##recvAddOutfit", new Vector2(width, 0)))
+        {
+            var added = AddOutfitToWardrobe(outfit);
+            if (added >= 0)
+                _loadStatus = added == 0
+                    ? $"Added '{outfit.Name}'."
+                    : $"Added '{outfit.Name}' and {added} item(s) it needed.";
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Adds the outfit, and any of its pieces you do not already have\n" +
+                             "in your wardrobe.");
+    }
+
+    /// <summary>
+    /// Brings an outfit in, adding whichever of its pieces are not in the wardrobe yet, and returns
+    /// how many pieces that was — or -1 if nothing could be added at all.
+    /// </summary>
+    /// <remarks>
+    /// The pieces have to land first: an outfit is a list of local item ids, so it cannot be written
+    /// until those items exist and have ids to point at.
+    /// </remarks>
+    private int AddOutfitToWardrobe(SharedOutfit outfit)
+    {
+        if (_loaded == null) return -1;
+
+        // Built by assignment rather than ToDictionary, which throws on a duplicate key. Nothing this
+        // plugin writes has two items under one source id, but the file came from somebody else and a
+        // malformed one must not take the window down.
+        var bySource = new Dictionary<Guid, SharedItem>();
+        foreach (var shared in _loaded.Items) bySource[shared.SourceId] = shared;
+
+        var wanted = outfit.ItemSourceIds
+            .Where(id => !_alreadyImported.Contains(id))
+            .Select(id => bySource.TryGetValue(id, out var shared) ? shared : null)
+            .Where(shared => shared != null && Available(shared).CanWear)
+            .Select(shared => shared!)
+            .ToList();
+
+        var converted = _share.ToLocalItems(wanted, ChosenCollection(), _imageDir);
+
+        var addedPieces = 0;
+        for (var i = 0; i < wanted.Count; i++)
+            if (Register(wanted[i], converted[i])) addedPieces++;
+
+        // Built after the pieces are registered, so the ones just added are in it
+        var sourceToLocal = new Dictionary<Guid, Guid>();
+        foreach (var item in _config.WardrobeItems)
+            if (item.SharedFromId is { } id) sourceToLocal[id] = item.Id;
+
+        var local = _share.ToLocalOutfit(outfit, sourceToLocal, _imageDir);
+        local.SharedFromId = outfit.SourceId;
+
+        if (local.ItemIds.Count == 0 && local.VanillaItems.Count == 0)
+        {
+            _loadStatus = $"None of '{outfit.Name}' could be put together from what you have.";
+            return -1;
+        }
+
+        if (_tagWithSender && !string.IsNullOrWhiteSpace(_loaded.ExportedBy))
+        {
+            var tag = _loaded.ExportedBy.Trim();
+            if (!local.Tags.Contains(tag, StringComparer.OrdinalIgnoreCase))
+                local.Tags.Add(tag);
+        }
+
+        _config.Outfits.Add(local);
+        _alreadyImportedOutfits.Add(outfit.SourceId);
+        _config.Save();
+
+        return addedPieces;
+    }
+
     private static string Shorten(string name) =>
         name.Length <= 28 ? name : name[..27] + "…";
 
@@ -844,8 +1279,15 @@ public class SharePanel : Window, IDisposable
             if (idx >= 0) _collectionIdx = idx;
         }
 
+        _outfitAvailability = _share.ResolveOutfitAvailability(result.Share, _availability);
+        _recvOutfits = false;
+
         _alreadyImported.Clear();
         foreach (var item in _config.WardrobeItems)
             if (item.SharedFromId is { } id) _alreadyImported.Add(id);
+
+        _alreadyImportedOutfits.Clear();
+        foreach (var outfit in _config.Outfits)
+            if (outfit.SharedFromId is { } id) _alreadyImportedOutfits.Add(id);
     }
 }
