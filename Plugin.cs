@@ -29,6 +29,8 @@ public sealed class Plugin : IDalamudPlugin
     public static IconPackService     IconPacks    { get; private set; } = null!;
     public static ItemLookupService   ItemLookup   { get; private set; } = null!;
     public static GlamourPlateService GlamourPlates { get; private set; } = null!;
+    public static GameScreenshotService Shutter     { get; private set; } = null!;
+    public static TextureCompressionFlagService TextureFlags { get; private set; } = null!;
 
     private readonly Configuration            _config;
     private readonly WardrobeService          _wardrobeService;
@@ -82,8 +84,11 @@ public sealed class Plugin : IDalamudPlugin
         // After ItemLookup, which it resolves item names through when it logs its slot mapping
         GlamourPlates      = new GlamourPlateService(Log);
 
+        Shutter            = new GameScreenshotService(Log);
+        TextureFlags       = new TextureCompressionFlagService(Penumbra, Framework, Log);
+
         _wardrobeService   = new WardrobeService(Penumbra, Glamourer, _config, Log, Framework);
-        _screenshotSession = new ScreenshotSessionService(_wardrobeService, _config, Framework, Log, Camera);
+        _screenshotSession = new ScreenshotSessionService(_wardrobeService, _config, Framework, Log, Camera, Shutter);
         _backupService     = new BackupService(_config, Framework, Log);
 
         _windowSystem = new WindowSystem("WardrobePlugin");
@@ -163,6 +168,14 @@ public sealed class Plugin : IDalamudPlugin
         if (trimmed.Equals("camdump", StringComparison.OrdinalIgnoreCase))
         {
             Camera.DumpOrDiff();
+            return;
+        }
+
+        // Undocumented, same errand as camdump: a fault finder for "a mod stayed enabled when
+        // something replaced it", which has several causes that look identical on screen
+        if (trimmed.Equals("modstate", StringComparison.OrdinalIgnoreCase))
+        {
+            _wardrobeService.DumpModState();
             return;
         }
 

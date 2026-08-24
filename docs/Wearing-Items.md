@@ -88,6 +88,9 @@ rather than a strip, and it is the way to take a base off without changing any s
 
 **In-Game Look** keeps it too, unless you say otherwise — see below.
 
+**Unequip All** and **In-Game Look** both take a **Ctrl**-held press to leave the base off for that
+press only.
+
 ## In-Game Look
 
 The three take-off buttons in the toolbar do different things:
@@ -120,6 +123,11 @@ absolute: the unmodded character the server sees.
 The same setting appears beside **Show In-Game Look** in a glamour plate's edit panel, because that
 is where the question tends to occur to people. It is one setting either way, and it also governs
 what happens after applying a plate in game.
+
+**Hold Ctrl** while pressing either **In-Game Look** button and the base is left off for that press
+alone, whatever the setting says — the same Ctrl that **Unequip All** uses to take the base off with
+everything else. For the moment you want the honest answer to "what do I actually look like" without
+changing a setting you will only have to change back. The status line says so when it happens.
 
 ## Linked items
 

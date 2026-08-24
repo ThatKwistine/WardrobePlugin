@@ -81,6 +81,66 @@ deleted from your images folder.
 A session over the whole wardrobe still only queues items with **no picture at all**, angles or not.
 Use a [selection](#a-session-over-just-the-items-you-pick) to re-shoot items that already have one.
 
+## Fully automatic sessions
+
+> **Experimental.** It presses the game's own screenshot function, which is not an API, and it has
+> not yet been run over a large wardrobe. The tick is in Settings → **Experimental**, at the bottom
+> of the panel, and off until you turn it on. Watch the first few shots before leaving it to run.
+
+**Fully automatic sessions**, in Settings → Experimental and as a tick on the session HUD, is manual
+mode's opposite: the session takes the screenshots itself. Each item is worn, the camera moves to the
+angle its slot asks for, the shot is taken, cropped and filed, and it moves on to the next. There is
+nothing to press. Point it at a wardrobe of a few hundred pieces and go and do something else.
+
+It is the ordinary [session](#screenshot-sessions) in every other way — the same queue, the same
+stripping, the same base character, the same [extra angles](#several-pictures-per-item) — so it works
+for a whole wardrobe, for [just the items you pick](#a-session-over-just-the-items-you-pick), for
+outfits, and for a single item from its edit panel.
+
+### Before you start one
+
+- **Set your camera angles up.** Settings → Screenshots → **Edit Angles For Every Slot**. An automatic
+  session has nobody to frame a shot, so a slot with no angle saved is photographed from wherever the
+  camera happens to be standing. See [camera presets](#camera-presets).
+- **Be in GPose.** Angles are written to the GPose camera and nowhere else. The session HUD says so if
+  you are not, and the run will otherwise take every picture from the same place.
+- **Check the screenshots folder.** Settings → Screenshots. A session finds its pictures by watching
+  that folder, and an automatic one has no way of noticing that nothing is arriving except by giving up.
+
+### The delay
+
+**How long to wait before each shot**, so what is being photographed has settled. Raise it if pictures
+come out mid-redraw or at the previous angle — a slower drive wants more, and there is no number that
+is right for every machine. The first shot of each item is given longer again on top of it, since that
+is the one that follows a redraw.
+
+### While it runs
+
+- **Pause** holds the run where it is, so you can move the camera. It carries on from the time the
+  countdown had left rather than starting it over.
+- **Shoot Now** takes the picture the session is waiting for immediately, without waiting out the
+  countdown. It is there in every mode, manual included, where it saves reaching for the screenshot key
+  at all.
+- **Skip Angle**, **Skip Item** and **End Session** work exactly as they do in an ordinary session.
+
+### When something goes wrong
+
+A shot that produces no picture is asked for again, twice, before the session gives up on that angle and
+moves on. If three go missing in a row, the run **pauses on the shot that failed** rather than carrying
+on — which almost always means the screenshots folder is wrong, and is worth finding out about before
+the whole wardrobe has been photographed into somewhere nobody is watching. The reason is written to the
+log; open it with `/xllog` and look for lines beginning `[Wardrobe] Session`.
+
+An automatic run writes what it is about to do to the log before it starts — how many targets, the
+delay, whether you are in GPose, which slots have no angle saved, and both folders — and a line for
+every shot it takes and every picture it files. Nobody is watching an unattended run, so that log is
+the only record of it. It ends on a count of what was filed.
+
+If the game refuses screenshots for half a minute — a cutscene, a loading screen — the run pauses
+rather than asking forever. Press **Resume** when you are back.
+
+Manual mode and fully automatic mode are opposites, so turning one on turns the other off.
+
 ## Screenshot sessions
 
 A session queues every item that has no preview image, equips each in turn, and picks up new
@@ -88,6 +148,7 @@ screenshots from a watched folder automatically.
 
 Options during a session:
 
+- **fully automatic** — the session takes the screenshots itself, so nothing has to be pressed
 - **per-slot GPose camera presets** — saved camera positions per equipment slot, as many as you want
 - **strip other items** — persisted between sessions
 - **base character** — the customisation mods and slots every shot keeps, chosen from the HUD

@@ -72,7 +72,15 @@ public class ScreenshotSessionService : IDisposable
         {
             if (_config.ManualScreenshotMode == value) return;
             _config.ManualScreenshotMode = value;
+
+            // The two are opposite ends of the same dial — one waits on a person for every picture,
+            // the other waits on nobody — so turning this on cannot leave the other on as well
+            if (value) _config.AutoScreenshotMode = false;
             _config.Save();
+
+            // Turning this on has just turned automatic mode off, so a countdown left running would
+            // fire a shot for a session that is no longer taking them
+            if (value) CancelAutoShot();
 
             // Turned on while a session is waiting, this simply means the current item stops advancing
             // by itself; turned off, the queued angles take over again from the next shot. Neither
@@ -80,6 +88,112 @@ public class ScreenshotSessionService : IDisposable
             _log.Debug($"[Wardrobe] Session: manual mode {(value ? "on" : "off")}");
         }
     }
+
+    /// <summary>Whether the game will take a screenshot when asked at all.</summary>
+    /// <remarks>
+    /// False means the game's screenshot task could not be found, which no setting here can do
+    /// anything about — so the opt-in is not offered either, a tick box that cannot work being worse
+    /// than none.
+    /// </remarks>
+    public bool AutoSupported => _shutter.Available;
+
+    /// <summary>
+    /// Whether fully automatic sessions are turned on in Experimental, and can be had at all.
+    /// </summary>
+    /// <remarks>
+    /// The opt-in, not the mode: this is what decides whether the <b>Super Screenshot Session</b>
+    /// button is on the toolbar and whether the HUD offers the tick. What a given session actually
+    /// does is <see cref="Auto"/>.
+    /// </remarks>
+    public bool AutoEnabled
+    {
+        get => AutoSupported && _config.AutoScreenshotEnabled;
+        set
+        {
+            if (_config.AutoScreenshotEnabled == value) return;
+            _config.AutoScreenshotEnabled = value;
+
+            // Switched off, nothing is left half-automatic: the mode goes with it, so a session
+            // running at the time simply stops taking its own pictures
+            if (!value) _config.AutoScreenshotMode = false;
+            _config.Save();
+
+            _log.Debug($"[Wardrobe] Session: automatic sessions {(value ? "enabled" : "disabled")}");
+
+            if (!value) CancelAutoShot();
+            StateChanged?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// The session takes its own screenshots, so a whole wardrobe can be photographed unattended.
+    /// </summary>
+    /// <remarks>
+    /// Backed by <see cref="Configuration.AutoScreenshotMode"/>, gated on <see cref="AutoEnabled"/>,
+    /// and exclusive with <see cref="Manual"/> for the reason given there. Set by whichever toolbar
+    /// button started the run, and settable mid-session: turned on while a session is already waiting,
+    /// the shot it is waiting for is the first one taken for you.
+    /// </remarks>
+    public bool Auto
+    {
+        get => AutoEnabled && _config.AutoScreenshotMode;
+        set
+        {
+            if (value && !AutoEnabled) return;
+            if (_config.AutoScreenshotMode == value) return;
+            _config.AutoScreenshotMode = value;
+            if (value) _config.ManualScreenshotMode = false;
+            _config.Save();
+
+            _log.Debug($"[Wardrobe] Session: automatic mode {(value ? "on" : "off")}");
+
+            if (value)
+            {
+                // Only while there is a session to drive. Idle, BeginSession does the subscribing, and
+                // a per-frame handler held open by a tickbox nobody is using is a handler for nothing.
+                if (State != SessionState.Idle) SubscribeTick();
+                if (State == SessionState.WaitingForShot) ArmAutoShot();
+            }
+            else
+            {
+                CancelAutoShot();
+            }
+
+            StateChanged?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// Photographs every item without a picture, taking the screenshots itself.
+    /// </summary>
+    /// <remarks>
+    /// What the <b>Super Screenshot Session</b> button presses. The pair with <see cref="Start"/>,
+    /// which clears the mode instead — between them the two buttons say which kind of run this is,
+    /// rather than leaving it to a tick box in a panel behind the character.
+    /// </remarks>
+    public void StartSuper()
+    {
+        if (!AutoEnabled) return;
+        Auto = true;
+        Start();
+    }
+
+    /// <summary>An automatic session is held where it is until it is resumed.</summary>
+    /// <remarks>
+    /// The answer to the one thing a fully automated run cannot do by itself: stop, so you can move the
+    /// camera. Sitting through the countdown to fix a framing you can see is wrong would otherwise mean
+    /// ending the session.
+    /// </remarks>
+    public bool AutoPaused { get; private set; }
+
+    /// <summary>Seconds until the next automatic shot, or zero when none is counting down.</summary>
+    public float AutoCountdown =>
+        Auto && !AutoPaused && !_autoFired && State == SessionState.WaitingForShot
+            ? Math.Max(0f, (float)(_autoAt - DateTime.UtcNow).TotalSeconds)
+            : 0f;
+
+    /// <summary>True while an automatic shot has been asked for and the picture has not arrived.</summary>
+    public bool AutoShotPending => Auto && _autoFired;
 
     /// <summary>How many pictures have been filed for the item being photographed.</summary>
     public int TakenForTarget { get; private set; }
@@ -114,6 +228,7 @@ public class ScreenshotSessionService : IDisposable
     private readonly IFramework      _framework;
     private readonly IPluginLog      _log;
     private readonly CameraService   _camera;
+    private readonly GameScreenshotService _shutter;
 
     /// <summary>One thing to photograph: either a wardrobe item or a whole outfit.</summary>
     private sealed record SessionTarget(WardrobeItem? Item, Outfit? Outfit);
@@ -173,13 +288,14 @@ public class ScreenshotSessionService : IDisposable
     private bool? _hatVisibleBefore;
 
     public ScreenshotSessionService(WardrobeService wardrobe, Configuration config,
-        IFramework framework, IPluginLog log, CameraService camera)
+        IFramework framework, IPluginLog log, CameraService camera, GameScreenshotService shutter)
     {
         _wardrobe  = wardrobe;
         _config    = config;
         _framework = framework;
         _log       = log;
         _camera    = camera;
+        _shutter   = shutter;
     }
 
     public bool FoldersReady =>
@@ -279,6 +395,11 @@ public class ScreenshotSessionService : IDisposable
         TotalCount     = _queue.Count;
         CompletedCount = 0;
 
+        // Held for the length of the session: the shots below force the hat and the weapon for
+        // themselves, and the wardrobe putting the worn outfit's own toggles back after every redraw
+        // would take them straight off again, mid-session and between two pictures
+        _wardrobe.OutfitVisibilityHeld = true;
+
         // Captured before anything is hidden or shown, so both can be put back exactly as they were
         _weaponVisibleBefore = Plugin.Glamourer.GetWeaponVisible();
         _hatVisibleBefore    = Plugin.Glamourer.GetHatVisible();
@@ -293,12 +414,25 @@ public class ScreenshotSessionService : IDisposable
         };
         _watcher.Created += OnFileCreated;
 
+        AutoPaused = false;
+        _filedThisSession = 0;
+        CancelAutoShot();
+
+        if (Auto)
+        {
+            SubscribeTick();
+            LogAutoBanner();
+        }
+
         WearNext();
     }
 
     public void Stop()
     {
         DisposeWatcher();
+        UnsubscribeTick();
+        CancelAutoShot();
+        AutoPaused    = false;
         State         = SessionState.Idle;
         CurrentItem   = null;
         CurrentOutfit = null;
@@ -315,6 +449,7 @@ public class ScreenshotSessionService : IDisposable
         ShotIndex      = 0;
         ShotLabel      = string.Empty;
         TakenForTarget = 0;
+        _wardrobe.OutfitVisibilityHeld = false;
         RestoreWeaponVisibility();
         RestoreHatVisibility();
         StateChanged?.Invoke();
@@ -371,8 +506,16 @@ public class ScreenshotSessionService : IDisposable
         if (_queue.Count == 0)
         {
             DisposeWatcher();
+            UnsubscribeTick();
+            CancelAutoShot();
+
+            if (Auto)
+                _log.Information($"[Wardrobe] Automatic session finished: {CompletedCount} of " +
+                                 $"{TotalCount} targets, {_filedThisSession} picture(s) filed.");
+
             State = SessionState.Done;
             _shot = null;
+            _wardrobe.OutfitVisibilityHeld = false;
             RestoreWeaponVisibility();
             RestoreHatVisibility();
             StateChanged?.Invoke();
@@ -404,6 +547,10 @@ public class ScreenshotSessionService : IDisposable
         HideWeaponIfNeeded();
         ShowHatIfNeeded();
         Plugin.Penumbra.RedrawPlayer();
+
+        // A redraw is the slowest thing a session does and the one an automatic shot must not race:
+        // fire before it finishes and the picture is of the previous item, or of nobody at all
+        _redrawReadyAt = DateTime.UtcNow.AddSeconds(RedrawSettleSeconds);
 
         BeginTarget(target);
         NextShot();
@@ -527,6 +674,9 @@ public class ScreenshotSessionService : IDisposable
 
         _watchFrom = DateTime.UtcNow;
         State      = SessionState.WaitingForShot;
+
+        if (Auto) ArmAutoShot();
+
         StateChanged?.Invoke();
     }
 
@@ -674,10 +824,18 @@ public class ScreenshotSessionService : IDisposable
                     }
 
                     TakenForTarget++;
+                    _missedInARow = 0;
+                    _filedThisSession++;
                     _config.Save();
-                    _log.Debug($"[Wardrobe] Session: filed picture {TakenForTarget} of " +
-                               $"'{name}' as {(shot is null or { IsCover: true } ? "the cover" : shot.Label)}" +
-                               (_pendingShots.Count > 0 ? $", {_pendingShots.Count} more waiting" : string.Empty));
+
+                    var filed = $"[Wardrobe] Session: filed picture {TakenForTarget} of " +
+                                $"'{name}' as {(shot is null or { IsCover: true } ? "the cover" : shot.Label)}" +
+                                (_pendingShots.Count > 0 ? $", {_pendingShots.Count} more waiting" : string.Empty);
+
+                    // Information while the session is running itself, for the reason given on
+                    // LogAutoBanner: nobody is watching, so the log is the only record there will be
+                    if (Auto) _log.Information(filed);
+                    else      _log.Debug(filed);
 
                     // NextShot leaves the session waiting again — or on the next item, or finished — and
                     // only then can anything queued behind this one be taken up
@@ -698,6 +856,299 @@ public class ScreenshotSessionService : IDisposable
         });
     }
 
+    // ── Taking the shot ourselves ──────────────────────────────────
+
+    /// <summary>
+    /// Extra time given to the first shot of each target, on top of the configured delay.
+    /// </summary>
+    /// <remarks>
+    /// A redraw is what separates the cover shot from the rest: the angles that follow only move the
+    /// camera, but the cover comes straight after the character has been stripped, dressed and told to
+    /// redraw. Added here rather than left to the delay setting so nobody has to raise the wait for
+    /// every shot to cure a problem that affects one of them.
+    /// </remarks>
+    private const double RedrawSettleSeconds = 1.5;
+
+    /// <summary>How long to wait for a picture to appear before assuming the shot did not happen.</summary>
+    /// <remarks>
+    /// Generous on purpose. The cost of being wrong is a second shot of the same thing filed as an
+    /// extra picture, against a wait that only has to be sat through when something has genuinely gone
+    /// wrong — and the game is asked whether a shot is still in flight before this is acted on anyway.
+    /// </remarks>
+    private const double ShotTimeoutSeconds = 12;
+
+    /// <summary>Times to ask again before giving up on a shot and moving on.</summary>
+    private const int MaxShotRetries = 2;
+
+    /// <summary>Shots that may go missing in a row before an automatic run stops and says so.</summary>
+    private const int MaxMissesBeforePausing = 3;
+
+    /// <summary>How long the game may refuse screenshots before the session stops asking.</summary>
+    /// <remarks>
+    /// A cutscene, a loading screen or a shot already in flight all pass in a moment and are simply
+    /// waited out. Something that does not pass is not going to, and an unattended session grinding
+    /// against it forever is worse than one that stops and says so.
+    /// </remarks>
+    private const double BlockedGiveUpSeconds = 30;
+
+    /// <summary>The range the delay between automatic shots is allowed to take, in seconds.</summary>
+    /// <remarks>
+    /// The floor is not nothing: a shot with no wait at all lands while the camera is still moving to
+    /// the angle it was asked for, which is a picture of the last angle. The ceiling is where a run
+    /// over a large wardrobe stops being quicker than doing it by hand.
+    /// </remarks>
+    public const float MinAutoDelay = 0.5f;
+
+    /// <inheritdoc cref="MinAutoDelay"/>
+    public const float MaxAutoDelay = 20f;
+
+    private bool      _tickSubscribed;
+    private bool      _autoFired;
+    private DateTime  _autoAt;
+    private DateTime  _autoTimeoutAt;
+    private DateTime  _redrawReadyAt;
+    private DateTime? _blockedSince;
+    private int       _autoRetries;
+
+    /// <summary>Shots asked for and never filed, since the last picture that was.</summary>
+    private int       _missedInARow;
+
+    /// <summary>Time left on the countdown when it was paused, so resuming does not restart it.</summary>
+    private TimeSpan? _pausedRemaining;
+
+    /// <summary>Holds an automatic session where it is, or lets it carry on.</summary>
+    /// <remarks>
+    /// The countdown is kept rather than restarted, so a pause taken to nudge the camera does not cost
+    /// the whole wait again on the way back.
+    /// </remarks>
+    public void SetAutoPaused(bool paused)
+    {
+        if (AutoPaused == paused) return;
+        AutoPaused = paused;
+
+        if (paused)
+        {
+            _pausedRemaining = _autoFired ? null : _autoAt - DateTime.UtcNow;
+        }
+        else
+        {
+            // Whatever stopped the run is being resumed past, so the tally that stopped it starts again
+            _missedInARow = 0;
+
+            if (_pausedRemaining is { } left)
+            {
+                _autoAt          = DateTime.UtcNow + (left > TimeSpan.Zero ? left : TimeSpan.Zero);
+                _pausedRemaining = null;
+            }
+            else if (State == SessionState.WaitingForShot)
+            {
+                // Paused by the session itself rather than by a person, so there is no countdown left
+                // to put back — the shot it stopped on is simply asked for again
+                ArmAutoShot();
+            }
+        }
+
+        _log.Debug($"[Wardrobe] Session: automatic mode {(paused ? "paused" : "resumed")}");
+        StateChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Takes the shot the session is waiting for, now, without a keypress or a countdown.
+    /// </summary>
+    /// <remarks>
+    /// Offered in every mode, not only the automatic one. Manual mode is about deciding when a picture
+    /// is worth taking rather than about which key takes it, and by the time the session is waiting the
+    /// character is posed already — reaching for the screenshot key at that point is a step, not a
+    /// decision.
+    /// </remarks>
+    /// <returns>False when the game would not take one, which is worth saying rather than swallowing.</returns>
+    public bool TakeShotNow()
+    {
+        if (State != SessionState.WaitingForShot) return false;
+        return FireShot();
+    }
+
+    /// <summary>Pictures filed since this session began, for the line it ends on.</summary>
+    private int _filedThisSession;
+
+    /// <summary>
+    /// Writes down what an automatic run is about to do, before it does it.
+    /// </summary>
+    /// <remarks>
+    /// At Information rather than Debug, and everything in one place, because an unattended session's
+    /// log is the only record of it: nobody is watching, so a run that went wrong has to be
+    /// diagnosable afterwards from what was written down. Every line here is something that has been
+    /// the cause of a bad run — the wrong folder, no angles saved, not being in GPose — and each one
+    /// is far easier to read back than to reconstruct from the pictures that came out.
+    /// </remarks>
+    private void LogAutoBanner()
+    {
+        // Worked out from the queue rather than from the wardrobe, so it answers the question that
+        // matters — whether the things about to be photographed have an angle — rather than how many
+        // slots have one in general
+        var keys    = _queue.Select(t => t.Item?.Slot.ToString() ?? Configuration.OutfitPresetKey)
+                            .Distinct()
+                            .ToList();
+        var without = keys.Where(k => _config.PresetsFor(k).Count == 0).ToList();
+
+        _log.Information("[Wardrobe] Automatic session starting.");
+        _log.Information($"[Wardrobe]   targets        : {TotalCount}");
+        _log.Information($"[Wardrobe]   delay per shot : {Math.Clamp(_config.AutoScreenshotDelay, MinAutoDelay, MaxAutoDelay):0.0}s " +
+                         $"(+{RedrawSettleSeconds:0.0}s after a redraw)");
+        _log.Information($"[Wardrobe]   in GPose       : {_camera.InGpose}");
+        _log.Information($"[Wardrobe]   angles ready   : {keys.Count - without.Count} of {keys.Count} " +
+                         "preset list(s) used by this run");
+        _log.Information($"[Wardrobe]   strip others   : {StripOthers}");
+        _log.Information($"[Wardrobe]   image size     : {_config.CapturedImageSize}px" +
+                         (_config.PortraitOutfitPreviews ? ", portrait outfits" : string.Empty));
+        _log.Information($"[Wardrobe]   watching       : {_config.ScreenshotsFolder}");
+        _log.Information($"[Wardrobe]   writing to     : {_config.ImagesFolder}");
+
+        if (without.Count > 0)
+            _log.Warning($"[Wardrobe] No camera angle saved for: {string.Join(", ", without)}. Those " +
+                         "will be photographed from wherever the camera is standing.");
+
+        if (!_camera.InGpose)
+            _log.Warning("[Wardrobe] Not in GPose — camera angles will not be applied and every " +
+                         "picture will be taken from wherever the camera is standing.");
+    }
+
+    /// <summary>Starts the countdown to the next automatic shot.</summary>
+    private void ArmAutoShot()
+    {
+        _autoFired       = false;
+        _autoRetries     = 0;
+        _blockedSince    = null;
+        _pausedRemaining = null;
+
+        var delay = Math.Clamp(_config.AutoScreenshotDelay, MinAutoDelay, MaxAutoDelay);
+        var due   = DateTime.UtcNow.AddSeconds(delay);
+
+        // Never before the character has had time to come back from its redraw, however short the
+        // delay is set — the two waits overlap rather than adding up
+        _autoAt = due < _redrawReadyAt ? _redrawReadyAt : due;
+    }
+
+    /// <summary>Forgets any countdown or shot in flight, leaving the session waiting on a person.</summary>
+    private void CancelAutoShot()
+    {
+        _autoFired       = false;
+        _autoRetries     = 0;
+        _missedInARow    = 0;
+        _blockedSince    = null;
+        _pausedRemaining = null;
+    }
+
+    /// <summary>Asks the game for a picture, and starts the clock on it arriving.</summary>
+    private bool FireShot()
+    {
+        if (!_shutter.Take()) return false;
+
+        _autoFired     = true;
+        _autoTimeoutAt = DateTime.UtcNow.AddSeconds(ShotTimeoutSeconds);
+        _blockedSince  = null;
+
+        _log.Information($"[Wardrobe] Session: took a screenshot of '{CurrentName}' ({ShotLabel})");
+        StateChanged?.Invoke();
+        return true;
+    }
+
+    private void SubscribeTick()
+    {
+        if (_tickSubscribed) return;
+        _framework.Update += OnFrameworkTick;
+        _tickSubscribed = true;
+    }
+
+    private void UnsubscribeTick()
+    {
+        if (!_tickSubscribed) return;
+        _framework.Update -= OnFrameworkTick;
+        _tickSubscribed = false;
+    }
+
+    /// <summary>
+    /// Drives an automatic session: counts down to each shot, takes it, and notices when one is lost.
+    /// </summary>
+    /// <remarks>
+    /// Everything after the shot is the ordinary session's own doing — the folder watcher sees the
+    /// file, it is cropped and filed, and <see cref="NextShot"/> leaves the session waiting again,
+    /// which is what starts the next countdown. So this only ever has one thing to decide: whether it
+    /// is time.
+    /// </remarks>
+    private void OnFrameworkTick(IFramework framework)
+    {
+        if (!Auto || AutoPaused) return;
+
+        // Processing is a picture already in hand being cropped; anything else is not a session waiting
+        if (State != SessionState.WaitingForShot) return;
+
+        var now = DateTime.UtcNow;
+
+        if (_autoFired)
+        {
+            if (now < _autoTimeoutAt) return;
+
+            // Still being written. A slow disk is exactly what the timeout must not mistake for a
+            // failure, so it is extended rather than the shot being taken twice.
+            if (_shutter.Pending)
+            {
+                _autoTimeoutAt = now.AddSeconds(ShotTimeoutSeconds);
+                return;
+            }
+
+            if (_autoRetries < MaxShotRetries)
+            {
+                _autoRetries++;
+                _log.Warning($"[Wardrobe] Session: no picture arrived for '{CurrentName}' " +
+                             $"({ShotLabel}) — asking again ({_autoRetries} of {MaxShotRetries})");
+                _autoFired = false;
+                _autoAt    = now;
+                return;
+            }
+
+            _log.Warning($"[Wardrobe] Session: giving up on '{CurrentName}' ({ShotLabel}) — no " +
+                         "screenshot appeared in the watched folder. Check that Settings → " +
+                         "Screenshots points at the folder the game actually saves to.");
+            _autoFired = false;
+
+            // Three of these in a row is not three unlucky shots, it is a session photographing a
+            // whole wardrobe into a folder nobody is watching — which it would otherwise do all the
+            // way to the end, leaving hundreds of screenshots on disk and no pictures assigned
+            if (++_missedInARow >= MaxMissesBeforePausing)
+            {
+                _log.Warning("[Wardrobe] Session: nothing has been filed for " +
+                             $"{_missedInARow} shots running — pausing the automatic run.");
+
+                // Held on the shot that failed rather than skipped past. Whatever is wrong is a
+                // question about this item and this angle, and a paused session that has moved three
+                // items on is a session that cannot answer it.
+                SetAutoPaused(true);
+                return;
+            }
+
+            SkipShot();
+            return;
+        }
+
+        if (now < _autoAt) return;
+
+        if (FireShot()) return;
+
+        // The game will not take one at the moment. Come back shortly rather than treating a passing
+        // refusal as a failure — but do not do it forever.
+        _blockedSince ??= now;
+        if ((now - _blockedSince.Value).TotalSeconds >= BlockedGiveUpSeconds)
+        {
+            _log.Warning("[Wardrobe] Session: the game has been refusing screenshots for " +
+                         $"{BlockedGiveUpSeconds:0} seconds — pausing the automatic run.");
+            SetAutoPaused(true);
+            return;
+        }
+
+        _autoAt = now.AddSeconds(0.5);
+    }
+
     private void HideWeaponIfNeeded()
     {
         var slot = CurrentItem?.Slot ?? EquipSlot.Unknown;
@@ -707,6 +1158,15 @@ public class ScreenshotSessionService : IDisposable
             Plugin.Glamourer.SetWeaponVisible(true);
             return;
         }
+
+        // An outfit that says what it does with the weapon is photographed saying it. Only where it
+        // has an opinion — with none, which is the default, the session's own rule below stands
+        if (CurrentOutfit?.WeaponVisible is { } wanted)
+        {
+            Plugin.Glamourer.SetWeaponVisible(wanted);
+            return;
+        }
+
         Plugin.Glamourer.SetWeaponVisible(false);
     }
 
@@ -730,6 +1190,14 @@ public class ScreenshotSessionService : IDisposable
         if (slot == EquipSlot.Head)
         {
             Plugin.Glamourer.SetHatVisible(true);
+            return;
+        }
+
+        // As with the weapon above: a hood is part of the look, and an outfit that hides the headgear
+        // has to be photographed with it hidden or the picture is of a different outfit
+        if (CurrentOutfit?.HatVisible is { } wanted)
+        {
+            Plugin.Glamourer.SetHatVisible(wanted);
             return;
         }
 
@@ -869,5 +1337,9 @@ public class ScreenshotSessionService : IDisposable
         _watcher = null;
     }
 
-    public void Dispose() => DisposeWatcher();
+    public void Dispose()
+    {
+        UnsubscribeTick();
+        DisposeWatcher();
+    }
 }

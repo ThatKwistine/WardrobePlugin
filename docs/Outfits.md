@@ -151,7 +151,7 @@ capturing on one is refused because it would freeze a copy over the top of the l
 The game's own twenty glamour plates can be brought into the wardrobe and worn as outfits, so a look
 you already built in-game does not have to be rebuilt here before it can be photographed.
 
-**Sync Plates**, on the sources row at the top of the outfits view, reads them and saves each
+**Sync Plates**, on the toolbar row at the top of the outfits view, reads them and saves each
 non-empty plate as an outfit named `Glamour Plate 1`…`20`, tagged with the **Glamour Plate** style so
 the whole set can be filtered in or out with the styles dropdown. They sit in the same grid as
 everything else, with a blue border and a `Glamour Plate` label on the card.
@@ -159,6 +159,16 @@ everything else, with a blue border and a `Glamour Plate` label on the card.
 The counts beside the button say how many are saved and how many the game has that are not here yet.
 Everything else the button does is in its tooltip, because the row is the grid's space rather than the
 feature's.
+
+### Hiding them again
+
+**Plates** and **Designs**, the two tick boxes on that same row, decide whether each kind of card is in
+the grid at all. Ticked means shown. Each one appears only while you have a card of that kind, so a
+wardrobe with no plates in it is not offered a box that could only ever empty the grid.
+
+Both are remembered between sessions, so a wardrobe left showing only the outfits you built yourself
+opens that way. Syncing plates ticks **Plates** back on if it added any — asking for them is asking to
+see them.
 
 ### You have to open the plate window first
 

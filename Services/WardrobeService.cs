@@ -89,15 +89,35 @@ public class WardrobeService : IDisposable
         if (_config.ActiveBaseCharacter is not { KeepDesignApplied: true, DesignId: { } designId } baseChar)
             return;
 
-        var applied = baseChar.DesignAppliesEquipment
-            ? _glamourer.ApplyDesignFull(designId)
-            : _glamourer.ApplyDesignCustomization(designId);
+        var applied = ApplyDesign(designId, baseChar.DesignAppliesEquipment,
+            baseChar.DesignAppliesHairstyle, $"Base character '{baseChar.Name}'");
 
         if (applied)
             _log.Debug($"[Wardrobe] Base character '{baseChar.Name}': design put back after a redraw");
         else
             _log.Warning($"[Wardrobe] Base character '{baseChar.Name}': could not put design " +
                          $"'{baseChar.DesignName}' back after a redraw — it may have been deleted in Glamourer.");
+    }
+
+    /// <summary>Puts back the designs worn customisation items ask for, after a redraw.</summary>
+    /// <remarks>
+    /// Only the items actually on, and only the ones carrying a design, which is almost none of them
+    /// — so on a normal redraw this does nothing at all and costs a walk of the worn list.
+    /// <para>
+    /// Applied in worn order, last winning, which needs no more thought than that: two sculpts on one
+    /// slot already displace each other by layer, so the only way to reach a second design here is a
+    /// face and a skin each naming a different one, and nobody wears their character two ways at once.
+    /// </para>
+    /// </remarks>
+    private void ReapplyItemDesigns(int objectIndex)
+    {
+        if (objectIndex != PlayerObjectIndex) return;
+
+        foreach (var id in _config.WornItems.Values.ToList())
+        {
+            var item = _config.WardrobeItems.Find(x => x.Id == id);
+            if (item is { DesignId: not null }) ApplyItemDesign(item);
+        }
     }
 
     /// <summary>The local player's game object index, which is what Penumbra reports a redraw of.</summary>
@@ -112,12 +132,24 @@ public class WardrobeService : IDisposable
         // the look underneath, exactly as it is in ApplyBase
         ReapplyBaseDesign(objectIndex);
 
-        if (_config.WornItems.Count == 0) return;
+        // And after it, for the same reason it goes after the base design in ApplyBase: a worn
+        // sculpt's design is the more specific answer. Needed at all because wearing a customisation
+        // item asks for a redraw by default, so the design applied during the wear lands a frame or
+        // two before the base design goes back on over the top of it — the same trap the outfit's hat
+        // and weapon toggles fell into, and fixed the same way.
+        ReapplyItemDesigns(objectIndex);
 
-        // Re-apply the active outfit's dyes as well, or a redraw would strip them back to undyed
+        // Wanted twice below: for the dyes the worn items carry, and for the outfit's own say over
+        // the hat and the weapon, which is put back at the end whether it has any items or not
         var outfit = _activeOutfitId is { } activeId
             ? _config.Outfits.Find(o => o.Id == activeId)
             : null;
+
+        if (_config.WornItems.Count == 0)
+        {
+            ReapplyOutfitVisibility(objectIndex, outfit);
+            return;
+        }
 
         // Advanced dye rows are gathered rather than applied per item: each apply is a whole state
         // round trip, so one for the character beats one for every piece it is wearing
@@ -141,7 +173,45 @@ public class WardrobeService : IDisposable
         // for the same reason the stains above do
         if (advanced.Count > 0)
             _glamourer.ApplyAdvancedDyes(advanced);
+
+        ReapplyOutfitVisibility(objectIndex, outfit);
     }
+
+    /// <summary>
+    /// Puts the active outfit's hat and weapon toggles back after a redraw.
+    /// </summary>
+    /// <remarks>
+    /// Wearing an outfit sets these once and the redraw its own mod items ask for lands afterwards,
+    /// which is the whole bug this exists to fix: the hat was hidden, the character was rebuilt a
+    /// frame later, and the headgear came back while Glamourer's state still read hidden — so asking
+    /// again changed nothing, because nothing about the value had changed. Written again here, on the
+    /// far side of the redraw, where it lands on the character that is actually on screen.
+    /// <para>
+    /// Last in the redraw handler for the reason it is last in <see cref="WearOutfit"/>: a redraw is
+    /// exactly when the base design goes back on, and a design carries its own hat and weapon state.
+    /// The outfit's answer has to be written after it has had its say.
+    /// </para>
+    /// <para>
+    /// The player only, unlike the item re-apply above: two IPC calls for every stranger redrawing in
+    /// a crowded zone would be work done for no one. Held off entirely during a screenshot session,
+    /// which forces both toggles itself for the shot it is taking and puts them back at the end.
+    /// </para>
+    /// </remarks>
+    private void ReapplyOutfitVisibility(int objectIndex, Outfit? outfit)
+    {
+        if (objectIndex != PlayerObjectIndex || OutfitVisibilityHeld || outfit == null) return;
+        ApplyOutfitVisibility(outfit);
+    }
+
+    /// <summary>
+    /// Suspends putting the active outfit's hat and weapon toggles back after a redraw.
+    /// </summary>
+    /// <remarks>
+    /// For a screenshot session, which sets both itself — a hat forced on to photograph a head piece,
+    /// a weapon hidden so it is not across the shot — and would otherwise have the redraw between two
+    /// shots hand the outfit's answer straight back.
+    /// </remarks>
+    public bool OutfitVisibilityHeld { get; set; }
 
     /// <summary>
     /// Schedules repeated Glamourer re-applies on the framework thread to handle Penumbra's
@@ -384,6 +454,10 @@ public class WardrobeService : IDisposable
             _log.Debug($"[Wardrobe] '{item.Name}' is a {item.Slot.DisplayName()} mod — no Glamourer item to apply");
         }
 
+        // Before the hairstyle below, so a hair mod's own number still wins: a design carries a
+        // hairstyle too, and the one read out of the mod being worn is the more specific answer
+        ApplyItemDesign(item);
+
         ApplyHairstyleFor(item);
 
         // Enabling a mod redirects files but reloads nothing already drawn, so a mod with no
@@ -419,6 +493,164 @@ public class WardrobeService : IDisposable
     /// Force a Penumbra redraw when nothing else will refresh the character. Callers that unwear
     /// several items, or immediately wear another, pass false and redraw once themselves.
     /// </param>
+    /// <summary>
+    /// Applies a Glamourer design, optionally putting the hairstyle back the way it was afterwards.
+    /// </summary>
+    /// <param name="full">Apply the design's equipment as well as its customisations.</param>
+    /// <param name="applyHairstyle">
+    /// Let the design's hairstyle stand. False reads the hairstyle in force first and writes it back
+    /// after, which is the whole of "do not apply its hair".
+    /// </param>
+    /// <remarks>
+    /// Every design carries a hairstyle whether or not it was saved for one, so a design applied for
+    /// some other reason — a face sculpt's prerequisite, a base character's colouring, an outfit's
+    /// body — will happily switch the character off the hairstyle a hair mod needs, leaving that mod
+    /// enabled, correct and invisible. There is no Glamourer flag for "customisations except hair",
+    /// so the only way to have one is to put the value back.
+    /// <para>
+    /// The read has to happen before the apply, because that is the last moment it still says what
+    /// the character had. When Glamourer will not answer it, the design applies whole rather than not
+    /// at all: there is nothing to restore, and refusing would be a worse failure than the one being
+    /// avoided. The write only happens when the value actually changed, so the common case of a
+    /// design whose hair matches costs one extra read.
+    /// </para>
+    /// </remarks>
+    private bool ApplyDesign(Guid designId, bool full, bool applyHairstyle, string what)
+    {
+        var hairBefore = applyHairstyle ? null : _glamourer.GetHairstyle();
+
+        var applied = full
+            ? _glamourer.ApplyDesignFull(designId)
+            : _glamourer.ApplyDesignCustomization(designId);
+
+        if (applied && hairBefore is { } hair && _glamourer.GetHairstyle() is { } after && after != hair)
+        {
+            _glamourer.SetHairstyle(hair);
+            _log.Debug($"[Wardrobe] {what}: design would have set hairstyle {after}; put {hair} back");
+        }
+
+        return applied;
+    }
+
+    /// <summary>
+    /// Why an item's design and the part of the character its mod replaces do not go together, or
+    /// null when they do or when there is nothing to compare.
+    /// </summary>
+    /// <remarks>
+    /// The failure this catches is silent and total: a customisation mod replaces the files of
+    /// particular numbered variants — face 3, tail 2 — so a design that sets any other leaves the
+    /// mod enabled, correct, and invisible, with nothing on screen saying why. That is the failure
+    /// per-item designs exist to cure, and picking the wrong design reintroduces it exactly.
+    /// <para>
+    /// Two questions, and a slot may be asked only the first. Does the mod cover the character's race
+    /// at all — which every customisation slot can be asked, and is the whole of the check for skin,
+    /// whose files are <c>b0001</c> for everybody and have no customisation to disagree with. Then,
+    /// where <see cref="GlamourerIpc.ToCustomizeKey"/> names one, does the mod cover the number the
+    /// design would set.
+    /// </para>
+    /// <para>
+    /// Null wherever an honest answer is not available — an item whose coverage was never recorded, a
+    /// design that sets no such value, a race the player's character cannot be read for. A check that
+    /// guessed would be worse than none: this sits beside a picker people will otherwise trust, and a
+    /// warning that cries wolf teaches them to ignore the one that matters.
+    /// </para>
+    /// </remarks>
+    public string? DesignCustomizeMismatch(WardrobeItem item)
+    {
+        if (!item.Slot.IsCustomization()) return null;
+        if (item.DesignId is not { } designId) return null;
+        if (item.CustomizeIdsByRace.Count == 0) return null;
+        if (_glamourer.GetDesignContents(designId) is not { } contents) return null;
+
+        var key    = GlamourerIpc.ToCustomizeKey(item.Slot);
+        var wanted = key == null ? null : contents.Value(key);
+        var noun   = CustomizeNoun(item.Slot);
+
+        // Without a race to ask about, only the weaker question is left: does the mod touch that
+        // number anywhere. Still catches a design set to face 3 over a mod that only does face 1,
+        // and cannot produce the false alarm a guessed race would.
+        if (_glamourer.GetPlayerRaceCode() is not { } race)
+            return wanted is not { } anywhere ||
+                   item.CustomizeIdsByRace.Values.Any(ids => ids.Contains(anywhere))
+                ? null
+                : $"This design sets {noun} {anywhere}, which this mod does not replace on any " +
+                  $"race. It will be enabled and invisible.";
+
+        var covered = item.CustomizeIdsByRace
+            .Where(kv => int.TryParse(kv.Key, out var code) && code == race)
+            .Select(kv => kv.Value)
+            .FirstOrDefault();
+
+        if (covered == null)
+            return $"This mod has no files for your race (code {race:D4}), so nothing it contains " +
+                   $"can show on your character whatever design is picked.";
+
+        if (wanted is not { } value || covered.Contains(value)) return null;
+
+        return $"This design sets {noun} {value}, and this mod replaces {NumberList(noun, covered)} " +
+               $"on your race. It will be enabled and invisible.";
+    }
+
+    /// <summary>What to call the number a slot's mods are keyed by, in a sentence.</summary>
+    /// <remarks>
+    /// Tail and Viera ears are one customisation as far as the game is concerned, but calling a
+    /// Viera's ears a tail in a warning would read as the check having muddled the item up with
+    /// something else entirely.
+    /// </remarks>
+    private static string CustomizeNoun(EquipSlot slot) => slot switch
+    {
+        EquipSlot.Tail      => "tail shape",
+        EquipSlot.VieraEars => "ear shape",
+        _                   => "face",
+    };
+
+    /// <summary>"face 1", or "faces 1, 2 and 3", for a sentence rather than a debug line.</summary>
+    private static string NumberList(string noun, IReadOnlyList<ushort> values)
+    {
+        var sorted = values.OrderBy(v => v).ToList();
+        if (sorted.Count == 1) return $"{noun} {sorted[0]}";
+
+        var head = string.Join(", ", sorted.Take(sorted.Count - 1));
+        return $"{noun}s {head} and {sorted[^1]}";
+    }
+
+    /// <summary>
+    /// Applies the Glamourer design an item asks for, where it asks for one.
+    /// </summary>
+    /// <remarks>
+    /// For a mod that only shows on a character set up a particular way — a face sculpt replaces one
+    /// face number's files and is invisible on any other. Customisations only unless the item says
+    /// otherwise, because putting one piece on is not asking to be dressed.
+    /// <para>
+    /// Failure is reported and nothing else: the mod is already enabled and the rest of the wear has
+    /// happened, so throwing the whole apply away over a design deleted in Glamourer would take a
+    /// working item off the character to punish a broken link.
+    /// </para>
+    /// </remarks>
+    private void ApplyItemDesign(WardrobeItem item)
+    {
+        // Only where the field is offered. An item moved to a gear slot keeps whatever design was
+        // picked for it — that was a deliberate choice, not a detected value, so it is left alone
+        // rather than thrown away — but it stays dormant until the item is customisation again.
+        if (!item.Slot.IsCustomization()) return;
+        if (item.DesignId is not { } designId) return;
+
+        var applied = ApplyDesign(designId, item.DesignAppliesEquipment,
+            item.DesignAppliesHairstyle, item.Name);
+
+        // Said at the moment it matters, as well as on the panel where the design was picked: this
+        // one is applied by wearing an item, which is not where anybody is looking at a tick box
+        if (applied && DesignCustomizeMismatch(item) is { } mismatch)
+            _log.Warning($"[Wardrobe] '{item.Name}': {mismatch}");
+
+        if (applied)
+            _log.Debug($"[Wardrobe] '{item.Name}': applied design '{item.DesignName}'" +
+                       $"{(item.DesignAppliesEquipment ? " in full" : " (customisations only)")}");
+        else
+            _log.Warning($"[Wardrobe] '{item.Name}': could not apply design '{item.DesignName}' — " +
+                         $"it may have been deleted in Glamourer.");
+    }
+
     /// <summary>
     /// Switches the character to the hairstyle a hair mod replaces, remembering the previous one.
     /// </summary>
@@ -531,9 +763,17 @@ public class WardrobeService : IDisposable
 
         if (_config.RevertDesignId is { } designId)
         {
+            // Taking a hair mod off is the one revert that must bring the design's hair with it, or
+            // the character is left standing on the hairstyle the mod replaced with the mod gone —
+            // which is the very thing the revert exists to undo. For everything else the setting
+            // decides, so removing a face mod need not disturb hair you are still wearing.
+            var withHair = _config.RevertDesignAppliesHairstyle || item.Slot == EquipSlot.Hair;
+
             _log.Debug($"[Wardrobe] Reverting '{item.Name}' — applying design " +
-                       $"'{_config.RevertDesignName}' (customisations only)");
-            if (_glamourer.ApplyDesignCustomization(designId))
+                       $"'{_config.RevertDesignName}' (customisations only" +
+                       $"{(withHair ? string.Empty : ", keeping your hairstyle")})");
+
+            if (ApplyDesign(designId, full: false, withHair, $"Revert of '{item.Name}'"))
             {
                 _config.HairstyleBeforeWardrobe = null;
                 return;
@@ -574,20 +814,30 @@ public class WardrobeService : IDisposable
         {
             if (string.IsNullOrEmpty(mod.ModDirectory)) continue;
 
-            // Don't disable the mod if another currently-worn item still needs it
-            var stillNeeded = _config.WardrobeItems.Any(other =>
+            // Don't disable the mod if another currently-worn item still needs it.
+            // Held rather than tested inline so the log can name it: "something else needs it" is
+            // only a useful answer when it says what, and a stale entry here — an item recorded as
+            // worn that is not — pins a mod on with nothing on screen to explain why.
+            var heldBy = _config.WardrobeItems.FirstOrDefault(other =>
                 other.Id != item.Id &&
                 _config.WornItems.ContainsValue(other.Id) &&
                 other.Mods.Any(m =>
                     m.ModDirectory == mod.ModDirectory && SameCollection(m, mod)));
 
-            if (stillNeeded) continue;
+            if (heldBy != null)
+            {
+                _log.Debug($"[Wardrobe] Leaving '{mod.ModName}' enabled — '{heldBy.Name}' is worn and " +
+                           "uses it too");
+                continue;
+            }
 
             // Only ever switch off what the wardrobe switched on, and switch it off where it was
             // switched on — which is not always where a claim made today would go
             if (ClaimedCollection(mod) is not { } claimedIn)
             {
-                _log.Debug($"[Wardrobe] Leaving '{mod.ModName}' enabled — the wardrobe did not turn it on");
+                _log.Debug($"[Wardrobe] Leaving '{mod.ModName}' enabled — the wardrobe did not turn it " +
+                           "on. It was already enabled when the item was worn, so switching it off " +
+                           "would be undoing somebody else's choice.");
                 continue;
             }
 
@@ -595,6 +845,14 @@ public class WardrobeService : IDisposable
             {
                 ReleaseMod(mod);
                 disabledAny = true;
+            }
+            else
+            {
+                // Silent before. A refusal here is the one case where the wardrobe believes it has
+                // turned a mod off and Penumbra has not, which is exactly the state nothing else
+                // would ever say out loud.
+                _log.Warning($"[Wardrobe] Penumbra would not disable '{mod.ModName}' in collection " +
+                             $"'{claimedIn}' — it is still on, and the wardrobe still claims it.");
             }
         }
 
@@ -671,6 +929,69 @@ public class WardrobeService : IDisposable
         }
 
         return needsRedraw;
+    }
+
+    /// <summary>
+    /// Writes everything the wardrobe believes about what is worn and what it may switch off.
+    /// </summary>
+    /// <remarks>
+    /// Undocumented, and a fault finder rather than a feature — the same errand as
+    /// <c>/wardrobe camdump</c>. It exists because "a mod stayed enabled when something replaced it"
+    /// has four different causes that look identical on screen: the wardrobe never claimed the mod
+    /// because it was already on; another worn item still needs it; the entry recording that other
+    /// item is stale; or Penumbra refused. Each is a different fix, and a screenshot of Penumbra
+    /// cannot tell them apart. This can.
+    /// </remarks>
+    public void DumpModState()
+    {
+        ReconcileActiveCollection();
+
+        _log.Information($"[Wardrobe] Mod state: {_config.WornItems.Count} slot key(s) worn, " +
+                         $"{_config.ModsEnabledByWardrobe.Count} claim(s) held");
+
+        var accountedFor = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (slotKey, id) in _config.WornItems)
+        {
+            var worn = _config.WardrobeItems.Find(x => x.Id == id);
+            if (worn == null)
+            {
+                // The stale entry. It is invisible everywhere else and it makes every mod it names
+                // look "still needed" forever.
+                _log.Warning($"[Wardrobe]   {slotKey} = <no such item> ({id}) — stale entry. Anything " +
+                             "sharing its mods will never be switched off. /wardrobe unequip clears it.");
+                continue;
+            }
+
+            _log.Information($"[Wardrobe]   {slotKey} = '{worn.Name}'");
+
+            foreach (var mod in worn.Mods)
+            {
+                if (string.IsNullOrEmpty(mod.ModDirectory)) continue;
+
+                var resolved = _penumbra.ResolveCollection(mod.Collection);
+                var on       = _penumbra.IsModEnabledIn(resolved, mod.ModDirectory, mod.ModName);
+                var claim    = ClaimedCollection(mod);
+
+                accountedFor.Add(ModKey(claim ?? resolved, mod.ModDirectory));
+
+                _log.Information($"[Wardrobe]       '{mod.ModName}' saved={mod.Collection} " +
+                                 $"resolved={resolved} penumbra={(on ? "ENABLED" : "off")} " +
+                                 $"claim={claim ?? "NONE"}");
+
+                if (on && claim == null)
+                    _log.Warning($"[Wardrobe]       ^ '{mod.ModName}' is enabled but unclaimed — it will " +
+                                 "NOT be switched off when something replaces this item.");
+
+                if (!on && claim != null)
+                    _log.Warning($"[Wardrobe]       ^ '{mod.ModName}' is claimed but not enabled — " +
+                                 "something turned it off behind the wardrobe's back.");
+            }
+        }
+
+        foreach (var key in _config.ModsEnabledByWardrobe)
+            if (!accountedFor.Contains(key))
+                _log.Warning($"[Wardrobe]   orphan claim: {key} — held, but nothing worn references it.");
     }
 
     public bool IsItemWorn(WardrobeItem item) =>
@@ -1007,9 +1328,8 @@ public class WardrobeService : IDisposable
         {
             // Before the items below, so a base item always wins the slot it is in — the design is the
             // look underneath, and an item attached to the base is a deliberate override of it
-            var applied = baseChar.DesignAppliesEquipment
-                ? _glamourer.ApplyDesignFull(designId)
-                : _glamourer.ApplyDesignCustomization(designId);
+            var applied = ApplyDesign(designId, baseChar.DesignAppliesEquipment,
+                baseChar.DesignAppliesHairstyle, $"Base character '{baseChar.Name}'");
 
             if (!applied)
                 _log.Warning($"[Wardrobe] Base character '{baseChar.Name}': could not apply design " +
@@ -1244,19 +1564,32 @@ public class WardrobeService : IDisposable
     /// Checks which wardrobe items are currently worn and records them in WornItems (first match
     /// wins per key), and reports the ones whose mods are on but whose Glamourer half is missing.
     /// </summary>
-    public ScanResult ScanAndSyncWorn() => Scan(adopt: true);
+    public ScanResult ScanAndSyncWorn()
+    {
+        var result = Scan(adopt: true);
 
-    /// <summary>
-    /// Reports items whose mods are enabled but which Glamourer is not showing, changing nothing.
-    /// </summary>
-    /// <remarks>
-    /// Used for the check on opening the window, where silently marking things as worn would be a
-    /// state change the user never asked for.
-    /// </remarks>
-    public IReadOnlyList<WardrobeItem> FindDesynced() => Scan(adopt: false).Desynced;
+        // Re-asked, not left as it was. The scan has just recorded things as worn, and a leftover
+        // notice built before it would still be offering to disable the mods holding those very
+        // items up — which is the one way this notice could take something off a character that
+        // is wearing it. Told not to scan again: the read it would do is the one just done.
+        CheckForLeftovers(scanFirst: false);
+        return result;
+    }
 
     /// <summary>Set by <see cref="Evaluate"/> when it drops a stale claim, so the scan can save once.</summary>
     private bool _prunedClaims;
+
+    /// <summary>
+    /// Claim keys for every mod behind an item the last scan found on the character.
+    /// </summary>
+    /// <remarks>
+    /// Written by <see cref="Scan"/> and read by <see cref="FindLeftovers"/>, which runs immediately
+    /// after one on every path that builds the notice. It is the scan's own answer to "is anything
+    /// wearing this", which the worn list can only approximate: a worn list holds one item per slot,
+    /// and an item that is genuinely on but lost its slot key to another appears in no worn list at
+    /// all while its mods are unmistakably in use.
+    /// </remarks>
+    private HashSet<string> _modsInUse = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The collection the worn list was last reconciled against, empty before the first answer.</summary>
     private string _wornCollection = string.Empty;
@@ -1386,13 +1719,27 @@ public class WardrobeService : IDisposable
                      .Where(x => x.Split.Length == 2)
                      .GroupBy(x => x.Split[0], StringComparer.OrdinalIgnoreCase))
         {
-            if (byCollection.Key.Equals(activeCollection, StringComparison.OrdinalIgnoreCase)) continue;
+            // The collection the character is on used to be skipped outright, on the reasoning that
+            // a claim there belongs to something being worn. Most do — but not the ones left by an
+            // item the wardrobe has since forgotten it was wearing, which is what every claim
+            // becomes when WornItems is cleared on load while Penumbra keeps the mod enabled. Those
+            // were invisible: nothing wore them, so nothing would ever take them off, and putting
+            // another item in the same slot displaced nothing because nothing was recorded there.
+            // So the collection is no longer skipped — each claim in it is asked the question
+            // instead, and only the ones nothing worn accounts for are leftovers.
+            var isActive = byCollection.Key.Equals(activeCollection, StringComparison.OrdinalIgnoreCase);
 
             var mods = new List<LeftoverMod>();
             foreach (var (key, split) in byCollection)
             {
                 var directory = known.TryGetValue(split[1], out var reference) ? reference.ModDirectory : split[1];
                 var name      = reference?.ModName is { Length: > 0 } n ? n : directory;
+
+                // In the collection in force, a claim backing something on the character right now
+                // is doing its job and is nobody's leftover. Asked twice, of two different records:
+                // the worn list, and what the scan that ran a moment ago actually found on. They
+                // agree almost always, and where they do not the scan is the one that looked.
+                if (isActive && (WornAccountsFor(directory) || _modsInUse.Contains(key))) continue;
 
                 if (_penumbra.IsModEnabledIn(byCollection.Key, directory, name))
                     mods.Add(new LeftoverMod(directory, name));
@@ -1419,6 +1766,59 @@ public class WardrobeService : IDisposable
         return groups;
     }
 
+    /// <summary>Whether anything recorded as worn uses this mod.</summary>
+    /// <remarks>
+    /// Asked of claims in the collection the character is on, where the answer separates a mod
+    /// holding up something you are wearing from one the wardrobe has lost track of.
+    /// </remarks>
+    private bool WornAccountsFor(string modDirectory) =>
+        _config.WornItems.Values.Any(id =>
+            _config.WardrobeItems.Find(x => x.Id == id) is { } worn &&
+            worn.Mods.Any(m => string.Equals(m.ModDirectory, modDirectory,
+                                             StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>
+    /// Looks for mods the wardrobe switched on and is no longer wearing, without waiting for a
+    /// collection change to ask.
+    /// </summary>
+    /// <remarks>
+    /// For once per session on the first draw, which is the moment that matters: the load before it
+    /// cleared <see cref="Configuration.WornItems"/> while Penumbra kept every one of those mods
+    /// enabled, so this is exactly when a wardrobe is holding things nothing will ever put down.
+    /// Reports only — the notice it feeds is what decides, the same as on a collection change.
+    /// </remarks>
+    public void CheckForLeftovers() => CheckForLeftovers(scanFirst: true);
+
+    /// <param name="scanFirst">
+    /// Read the character before deciding what nothing is wearing. Only false for a caller that has
+    /// just scanned, since the answer would be identical and a scan is not free.
+    /// </param>
+    /// <remarks>
+    /// The scan is the whole reliability of this notice. Leftovers are decided by asking whether
+    /// anything <see cref="Configuration.WornItems"/> holds accounts for each claim — and that list
+    /// is cleared on load, which is the very situation this runs in. Without a scan first, every mod
+    /// the wardrobe had switched on before a restart looks abandoned, including the ones on the
+    /// character in front of you: a hair mod being worn right now would be listed as a leftover and
+    /// offered up to Disable Them.
+    /// <para>
+    /// The scan adopts, and that is the point rather than a side effect. An item whose mods are on
+    /// with matching options, and which Glamourer is showing where Glamourer has a say, is being
+    /// worn; recording it as worn is what makes it stop being a leftover, and what makes taking it
+    /// off work normally again afterwards. It is the same read the collection-change path has always
+    /// done before building this list, and the same one the Scan button does by hand.
+    /// </para>
+    /// </remarks>
+    private void CheckForLeftovers(bool scanFirst)
+    {
+        var active = _penumbra.GetActiveCollection();
+        if (string.IsNullOrEmpty(active)) return;
+
+        if (scanFirst) Scan(adopt: true);
+
+        Leftovers = FindLeftovers(active);
+        if (Leftovers is { Count: > 0 }) WardrobeChanged?.Invoke();
+    }
+
     /// <summary>Penumbra's own casing for a collection, since a claim key is all lower case.</summary>
     private string DisplayNameOf(string collection) =>
         _penumbra.GetCollections()
@@ -1437,10 +1837,22 @@ public class WardrobeService : IDisposable
     {
         if (Leftovers is not { } groups) return;
 
+        var active   = _penumbra.GetActiveCollection();
         var disabled = 0;
+
         foreach (var group in groups)
         foreach (var mod in group.Mods)
         {
+            // Last check before the write. The list was built at some earlier moment, and anything
+            // done since — wearing the item, pressing Scan — can have made one of these the mod of
+            // something on the character. Cheap, and the alternative is undressing somebody.
+            if (group.Collection.Equals(active, StringComparison.OrdinalIgnoreCase) &&
+                WornAccountsFor(mod.ModDirectory))
+            {
+                _log.Debug($"[Wardrobe] Keeping '{mod.ModName}' — something worn uses it now");
+                continue;
+            }
+
             if (!_penumbra.SetModEnabledIn(group.Collection, mod.ModDirectory, mod.ModName, false)) continue;
 
             _config.ModsEnabledByWardrobe.Remove($"{group.Collection}|{mod.ModDirectory}".ToLowerInvariant());
@@ -1450,8 +1862,8 @@ public class WardrobeService : IDisposable
         _log.Information($"[Wardrobe] Disabled {disabled} leftover mod(s) in {groups.Count} collection(s)");
 
         // Normally none of this is on the character in front of us, so there is nothing to redraw —
-        // except when they have since swapped back to a collection the notice names
-        var active = _penumbra.GetActiveCollection();
+        // except when they have since swapped back to a collection the notice names, or when the
+        // leftovers were in the collection in force to begin with
         if (groups.Any(g => g.Collection.Equals(active, StringComparison.OrdinalIgnoreCase)))
             _penumbra.RedrawPlayer();
 
@@ -1492,13 +1904,6 @@ public class WardrobeService : IDisposable
             {
                 case ItemState.On:
                     on.Add(item);
-                    var slotKey = item.WornKey();
-                    if (adopt && !_config.WornItems.ContainsKey(slotKey))
-                    {
-                        _config.WornItems[slotKey] = item.Id;
-                        added.Add(item.Id);
-                        _log.Debug($"[Wardrobe] Scan: detected '{item.Name}' as worn");
-                    }
                     break;
 
                 case ItemState.Off:
@@ -1510,6 +1915,43 @@ public class WardrobeService : IDisposable
                     break;
             }
         }
+
+        // Adopted after the whole list has been judged rather than as each item is reached, because
+        // the answer for one item depends on the answers for the others. Held back inside the loop,
+        // an item was only recorded if its slot key happened to be free at the moment it came up —
+        // so a stale entry left in the worn list by an earlier session, naming something the scan
+        // has just proved is not on, kept the slot for good and the item genuinely on the character
+        // was passed over in silence. That silence is the whole of the bug: nothing was logged, the
+        // item never counted as worn, and the mod behind it was reported as a leftover every time.
+        var onIds = on.Select(i => i.Id).ToHashSet();
+        if (adopt)
+        {
+            foreach (var item in on)
+            {
+                var slotKey = item.WornKey();
+
+                // A key held by something else the scan also found on is a real contest for the slot,
+                // and the one already recorded keeps it — first match wins, as it always has. A key
+                // held by anything else is stale, and the item in front of us takes it.
+                if (_config.WornItems.TryGetValue(slotKey, out var held))
+                {
+                    if (held == item.Id || onIds.Contains(held)) continue;
+                    _log.Debug($"[Wardrobe] Scan: '{item.Name}' takes {slotKey} from an entry that is not on");
+                }
+
+                _config.WornItems[slotKey] = item.Id;
+                added.Add(item.Id);
+                _log.Debug($"[Wardrobe] Scan: detected '{item.Name}' as worn");
+            }
+        }
+
+        // Every mod behind something the scan found on, in the same form a claim key takes. What the
+        // leftover notice consults so that it cannot offer up a mod holding up an item that is on —
+        // including one that lost its slot key to another item and so is in no worn list at all.
+        _modsInUse = on.SelectMany(i => i.Mods)
+            .Where(m => !string.IsNullOrEmpty(m.ModDirectory))
+            .Select(ModKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         // Desynced is deliberately not pruned: those mods are live on the character, and only the
         // Glamourer half has come away. Off is the one state that means "not on this character".
@@ -2024,6 +2466,26 @@ public class WardrobeService : IDisposable
         }
     }
 
+    /// <summary>Puts a worn outfit on again, without taking it off first.</summary>
+    /// <remarks>
+    /// What Wear already does — every piece re-equipped, every mod option written again, dyes and
+    /// hairstyles with them — reached from the one state where the card does not offer it. While an
+    /// outfit is on, its button says Remove, so the only way to pick up a change to one of its
+    /// items was to take the whole outfit off and put it back on.
+    /// <para>
+    /// Others are deliberately left alone, as pressing Wear would leave them: an outfit worn over
+    /// something else is a look someone built on purpose, and re-applying is not the moment to
+    /// decide they did not mean it. No redraw is forced either — the items that need one ask for it
+    /// themselves, and a redraw here would land after the character had been dressed rather than
+    /// during, which is the timing that undoes what was just applied.
+    /// </para>
+    /// </remarks>
+    public void ReapplyOutfit(Outfit outfit)
+    {
+        _log.Information($"[Wardrobe] Re-applying outfit '{outfit.Name}'");
+        WearOutfit(outfit, removeOthers: false);
+    }
+
     /// <summary>Removes every item in an outfit that is currently worn.</summary>
     public void UnwearOutfit(Outfit outfit)
     {
@@ -2511,9 +2973,8 @@ public class WardrobeService : IDisposable
     {
         if (outfit.DesignId is not { } id) return false;
 
-        var ok = outfit.DesignAppliesEquipment
-            ? _glamourer.ApplyDesignFull(id)
-            : _glamourer.ApplyDesignCustomization(id);
+        var ok = ApplyDesign(id, outfit.DesignAppliesEquipment, outfit.DesignAppliesHairstyle,
+            $"'{outfit.Name}'");
 
         if (!ok)
             _log.Warning($"[Wardrobe] '{outfit.Name}': could not apply Glamourer design " +
@@ -2544,10 +3005,17 @@ public class WardrobeService : IDisposable
     /// lands underneath the character rather than over the top of it.
     /// </para>
     /// </remarks>
+    /// <param name="ignoreBase">
+    /// Leave the base character off, whatever <see cref="Configuration.KeepBaseCharacterOnRevert"/>
+    /// says. For the Ctrl-held press, which asks the same question the setting does but only once —
+    /// "what do I really look like right now", with nothing of the wardrobe's put back over it.
+    /// </param>
     /// <returns>How many items were taken off.</returns>
-    public int RevertToInGameLook()
+    public int RevertToInGameLook(bool ignoreBase = false)
     {
-        var baseChar = _config.KeepBaseCharacterOnRevert ? _config.ActiveBaseCharacter : null;
+        var baseChar = !ignoreBase && _config.KeepBaseCharacterOnRevert
+            ? _config.ActiveBaseCharacter
+            : null;
         var kept     = KeptSlots(baseChar);
 
         // Items worn in a slot the base holds but which the base does not name itself — the tail on a

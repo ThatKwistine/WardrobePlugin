@@ -311,8 +311,24 @@ public class GlamourerIpc : IDisposable
     /// as "sets no equipment" would put the wrong label on a card. Not the same as the whole read being
     /// unavailable, which is a null <see cref="DesignContents"/>.
     /// </remarks>
+    /// <param name="Customize">
+    /// Every customisation value the design will actually write, keyed by Glamourer's own name for it
+    /// — <c>Face</c>, <c>TailShape</c>, <c>Hairstyle</c> and the rest.
+    /// </param>
+    /// <remarks>
+    /// Glamourer writes each entry as <c>{ "Value": n, "Apply": bool }</c>, checked against real
+    /// design files rather than guessed. Only the entries whose Apply is true are kept: a value the
+    /// design will not write says nothing about what the character ends up with, and treating it as a
+    /// promise is how a check ends up warning about something that was never going to happen.
+    /// </remarks>
     public sealed record DesignContents(
-        IReadOnlyList<DesignPiece> Pieces, bool? AppliesEquipment, bool AppliesCustomize);
+        IReadOnlyList<DesignPiece> Pieces, bool? AppliesEquipment, bool AppliesCustomize,
+        IReadOnlyDictionary<string, ushort> Customize)
+    {
+        /// <summary>The value this design would write for a customisation, or null if it writes none.</summary>
+        public ushort? Value(string key) =>
+            Customize.TryGetValue(key, out var v) ? v : null;
+    }
 
     /// <summary>
     /// The slot names Glamourer writes in a design's Equipment block, mapped to the wardrobe's slots.
@@ -468,10 +484,20 @@ public class GlamourerIpc : IDisposable
 
         // Every customise value Glamourer writes carries its own Apply flag, so "does this design touch
         // the character's appearance" is whether any of them is set
-        var customize = json["Customize"] is JObject block
-                     && block.Properties().Any(p => p.Value is JObject c && c["Apply"]?.Value<bool>() == true);
+        var customizeBlock = json["Customize"] as JObject;
+        var customize = customizeBlock is not null
+                     && customizeBlock.Properties().Any(p => p.Value is JObject c && c["Apply"]?.Value<bool>() == true);
 
-        return new DesignContents(pieces, equips, customize);
+        var values = new Dictionary<string, ushort>(StringComparer.OrdinalIgnoreCase);
+        foreach (var prop in customizeBlock?.Properties() ?? Enumerable.Empty<JProperty>())
+        {
+            if (prop.Value is not JObject entry) continue;
+            if (entry["Apply"]?.Value<bool>() != true) continue;
+            if (entry["Value"] is { Type: JTokenType.Integer } value)
+                values[prop.Name] = value.Value<ushort>();
+        }
+
+        return new DesignContents(pieces, equips, customize, values);
     }
 
     /// <summary>An item id as a design means it, including the ids that are not items.</summary>
@@ -1177,6 +1203,35 @@ public class GlamourerIpc : IDisposable
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The customisation a mod for this slot depends on, named as Glamourer names it, or null where
+    /// the slot has none to depend on.
+    /// </summary>
+    /// <remarks>
+    /// A mod replaces the files of one numbered variant — face 3, tail 2 — so it is invisible unless
+    /// the character is set to that number, and this is the value that has to agree with it.
+    /// <para>
+    /// Tail and Viera ears share <c>TailShape</c> because the game does: one customisation byte is
+    /// the tail on races that have one and the ears on Viera. Confirmed against
+    /// <c>Glamourer.GameData.CustomizeSet</c> in 1.6.1.7, where <c>CustomizeIndex.TailShape</c> reads
+    /// from a list named <c>TailEarShapes</c>, rather than assumed from the two being alike.
+    /// </para>
+    /// <para>
+    /// Null for Skin, which has no customisation behind it at all — the body id in a skin mod's paths
+    /// is <c>b0001</c> for every player character, and <c>BodyType</c> is a different thing. Null for
+    /// Hair as well, though for the opposite reason: its number is not left to a design to get right,
+    /// since wearing a hair mod sets the hairstyle from the mod itself. Both are still checked against
+    /// the race, which is the failure they really do have.
+    /// </para>
+    /// </remarks>
+    public static string? ToCustomizeKey(EquipSlot slot) => slot switch
+    {
+        EquipSlot.Face      => "Face",
+        EquipSlot.Tail      => "TailShape",
+        EquipSlot.VieraEars => "TailShape",
+        _                   => null,
+    };
 
     /// <summary>Maps our EquipSlot to the string key used in Glamourer's state JObject.</summary>
     public static string ToSlotName(EquipSlot slot) => slot switch

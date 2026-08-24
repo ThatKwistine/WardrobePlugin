@@ -33,6 +33,18 @@ public class ItemImportPanel : IDisposable
     private List<string>  _editTags     = new();
     private string        _editTagInput = string.Empty;
     private string        _editReplaces = string.Empty;
+    private string        _editLayer    = string.Empty;
+
+    /// <summary>Glamourer's design list, read once per edit rather than every frame.</summary>
+    private IList<(Guid Id, string Name)>? _editDesigns;
+
+    /// <summary>Detected layer per customisation slot, merged across the primary mod and its supplements.</summary>
+    /// <remarks>
+    /// Held here for the same reason the replace keys are merged into a dictionary above: the item is
+    /// built from a tuple that has no room for it, and a slot covered only by a supplementary mod
+    /// must be answered by the mod that actually covers it.
+    /// </remarks>
+    private readonly Dictionary<EquipSlot, string> _layerBySlot = new();
     private string        _editNotes    = string.Empty;
 
     /// <summary>
@@ -262,6 +274,10 @@ public class ItemImportPanel : IDisposable
         _editTags     = new List<string>(item.Tags);
         _editTagInput = string.Empty;
         _editReplaces = item.Replaces ?? string.Empty;
+        _editLayer    = item.Layer ?? string.Empty;
+        // Dropped rather than kept: a design added in Glamourer since the last edit should be
+        // in the list without anybody pressing Refresh to find out it is missing
+        _editDesigns  = null;
         _editNotes    = item.Notes ?? string.Empty;
         _editDetectMsg = string.Empty;
         _editForceRedraw = item.ForceRedraw;
@@ -495,6 +511,14 @@ public class ItemImportPanel : IDisposable
         if (SelectedSlot(_editSlotIdx).IsModCategory())
             DrawReplacesEditor(SelectedSlot(_editSlotIdx));
 
+        // Customisation is exclusive per slot but not per kind: a sculpt and the texture painted on
+        // it share the slot and are not alternatives, so which of the two this is has its own field
+        if (SelectedSlot(_editSlotIdx).IsCustomization())
+        {
+            DrawLayerEditor(SelectedSlot(_editSlotIdx));
+            DrawItemDesignPicker(_editTarget!, SelectedSlot(_editSlotIdx));
+        }
+
         // Follows the slot combo above rather than the item's saved slot: switching an item to Hair
         // should offer Hair's toggle straight away, not after a save and a re-open
         DrawForceRedrawToggle("edit", SelectedSlot(_editSlotIdx), ref _editForceRedraw);
@@ -590,6 +614,7 @@ public class ItemImportPanel : IDisposable
                 _editTarget!.Name     = _editName.Trim();
                 _editTarget.Slot      = SelectedSlot(_editSlotIdx);
                 _editTarget.Replaces  = EditedReplaces();
+                _editTarget.Layer     = EditedLayer();
                 _editTarget.Notes     = EditedNotes();
                 _editTarget.ForceRedraw = EditedForceRedraw();
                 _editTarget.Tags      = new List<string>(_editTags);
@@ -692,6 +717,7 @@ public class ItemImportPanel : IDisposable
             _editTarget.ImagePath  = string.IsNullOrEmpty(_editImage) ? null : _editImage.Trim();
             _editTarget.Slot       = SelectedSlot(_editSlotIdx);
             _editTarget.Replaces   = EditedReplaces();
+            _editTarget.Layer      = EditedLayer();
             _editTarget.Notes      = EditedNotes();
             _editTarget.ForceRedraw = EditedForceRedraw();
             _editTarget.Tags       = new List<string>(_editTags);
@@ -869,6 +895,7 @@ public class ItemImportPanel : IDisposable
         source.ImagePath = string.IsNullOrEmpty(_editImage) ? null : _editImage.Trim();
         source.Slot      = SelectedSlot(_editSlotIdx);
         source.Replaces  = EditedReplaces();
+        source.Layer     = EditedLayer();
         source.Notes     = EditedNotes();
         source.ForceRedraw = EditedForceRedraw();
         source.Tags      = new List<string>(_editTags);
@@ -883,6 +910,11 @@ public class ItemImportPanel : IDisposable
             // item it happened to be copied from
             VariantOfId       = source.VariantOfId ?? source.Id,
             Replaces          = source.Replaces,
+            Layer             = source.Layer,
+            DesignId          = source.DesignId,
+            DesignName        = source.DesignName,
+            DesignAppliesEquipment = source.DesignAppliesEquipment,
+            DesignAppliesHairstyle = source.DesignAppliesHairstyle,
             Notes             = source.Notes,
             ForceRedraw       = source.ForceRedraw,
             ImagePath         = source.ImagePath,
@@ -893,6 +925,8 @@ public class ItemImportPanel : IDisposable
             GlamourerItemName = source.GlamourerItemName,
             ModelSetId        = source.ModelSetId,
             HairIdByRace      = new Dictionary<string, ushort>(source.HairIdByRace),
+            CustomizeIdsByRace = source.CustomizeIdsByRace
+                .ToDictionary(kv => kv.Key, kv => new List<ushort>(kv.Value)),
             Tags              = new List<string>(source.Tags),
             IsFavorite        = false,
         };
@@ -1699,6 +1733,16 @@ public class ItemImportPanel : IDisposable
             : null;
 
     /// <summary>
+    /// The staged Layer field, or null outside customisation — for the same reason
+    /// <see cref="EditedReplaces"/> clears itself: a layer left on an item moved to a gear slot
+    /// would quietly change the key it is worn under, where gear has no layers at all.
+    /// </summary>
+    private string? EditedLayer() =>
+        SelectedSlot(_editSlotIdx).IsCustomization() && !string.IsNullOrWhiteSpace(_editLayer)
+            ? _editLayer.Trim()
+            : null;
+
+    /// <summary>
     /// The staged notes, or null when they are blank — an empty string would be written into every
     /// saved config for no reason and read as "has notes" by anything checking the field.
     /// </summary>
@@ -1740,6 +1784,160 @@ public class ItemImportPanel : IDisposable
                              "import; type the same value into two items to pair them up by hand.");
         ImGui.TextDisabled($"Leave blank to wear this independently of other " +
                            $"{slot.DisplayName()} items.");
+    }
+
+    /// <summary>
+    /// Editor for which layer of a customisation slot an item occupies, deciding what it displaces.
+    /// </summary>
+    /// <remarks>
+    /// Free text for the same reason <see cref="DrawReplacesEditor"/> is: it is matched between
+    /// items by string, so two mods the detection has no word for can be lined up, or held apart,
+    /// by typing into both. The two detected values are offered as buttons because they are what
+    /// almost every item wants and nobody should have to remember how they are spelled.
+    /// </remarks>
+    private void DrawLayerEditor(EquipSlot slot)
+    {
+        var part = slot.DisplayName().ToLowerInvariant();
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Layer");
+        ImGui.SetNextItemWidth(-1);
+        ImGui.InputTextWithHint("##elayer", "blank to take the whole slot", ref _editLayer, 64);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip($"Two {slot.DisplayName()} mods doing different jobs can be worn at once — a\n" +
+                             $"sculpt that reshapes the {part} and a texture painted on it are not\n" +
+                             "alternatives to each other.\n\n" +
+                             "Items sharing a layer still swap each other out, which is what keeps\n" +
+                             "two sculpts behaving as the alternatives they are. Detected on import;\n" +
+                             "press Re-detect on an older item to fill it in.");
+
+        if (ImGui.SmallButton($"Sculpt##layer_{slot}")) _editLayer = ModAnalysisResult.SculptLayer;
+        UiLayout.SameLineIfRoomForButton("Texture");
+        if (ImGui.SmallButton($"Texture##layer_{slot}")) _editLayer = ModAnalysisResult.TextureLayer;
+        UiLayout.SameLineIfRoomForButton("Whole slot");
+        if (ImGui.SmallButton($"Whole slot##layer_{slot}")) _editLayer = string.Empty;
+
+        ImGui.TextDisabled($"Blank takes the whole {part} slot, displacing every other " +
+                           $"{slot.DisplayName()} item.");
+    }
+
+    /// <summary>The customisation numbers an analysis found for a slot, in the shape an item stores.</summary>
+    /// <remarks>
+    /// Empty for anything but customisation, and for a slot the analysis never saw — an empty map
+    /// means "not known", which is what stops the design check claiming a mismatch it cannot prove.
+    /// </remarks>
+    internal static Dictionary<string, List<ushort>> CoverageFor(ModAnalysisResult? result, EquipSlot slot)
+    {
+        if (result == null || !slot.IsCustomization()) return new Dictionary<string, List<ushort>>();
+        if (!result.CustomizeCoverage.TryGetValue(slot, out var byRace))
+            return new Dictionary<string, List<ushort>>();
+
+        return byRace.ToDictionary(kv => kv.Key.ToString("D4"), kv => kv.Value.ToList());
+    }
+
+    /// <summary>
+    /// Picks a Glamourer design applied along with a customisation item.
+    /// </summary>
+    /// <remarks>
+    /// Written straight onto the item rather than staged for Save, as the image gallery and the tags
+    /// are: the two buttons under it apply and test the choice on the character, and a design that
+    /// had not been saved yet would test something other than what was picked.
+    /// </remarks>
+    private void DrawItemDesignPicker(WardrobeItem item, EquipSlot slot)
+    {
+        var part = slot.DisplayName().ToLowerInvariant();
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Glamourer design");
+        ImGui.TextDisabled($"Applied when this item goes on. A sculpt only replaces the files of one " +
+                           $"{part}, so it stays invisible on a character set to another — this is what " +
+                           $"puts them on the one it is for.");
+
+        _editDesigns ??= Plugin.Glamourer.GetDesigns();
+
+        var current = item.DesignId.HasValue
+            ? (string.IsNullOrEmpty(item.DesignName) ? "(unnamed design)" : item.DesignName)
+            : "(none)";
+
+        ImGui.SetNextItemWidth(-1);
+        if (ImGui.BeginCombo("##edesign", current))
+        {
+            if (ImGui.Selectable("(none)", !item.DesignId.HasValue))
+            {
+                item.DesignId   = null;
+                item.DesignName = string.Empty;
+                _config.Save();
+            }
+
+            foreach (var (id, name) in _editDesigns)
+            {
+                if (!ImGui.Selectable($"{name}##edesign_{id}", item.DesignId == id)) continue;
+
+                item.DesignId   = id;
+                item.DesignName = name;
+                _config.Save();
+            }
+            ImGui.EndCombo();
+        }
+
+        if (ImGui.SmallButton("Refresh##edesigns"))
+            _editDesigns = Plugin.Glamourer.GetDesigns();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Re-read the design list from Glamourer.");
+
+        if (_editDesigns.Count == 0)
+        {
+            ImGui.TextDisabled("No designs found — create one in Glamourer first.");
+            return;
+        }
+
+        if (!item.DesignId.HasValue) return;
+
+        // Between the picker and the switches, where somebody who has just chosen a design is still
+        // looking. Orange rather than red: the design applies either way and might be exactly what
+        // was wanted — a mod whose coverage was recorded before its options were changed, say
+        if (_wardrobe.DesignCustomizeMismatch(item) is { } mismatch)
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f), "● Check this design");
+            ImGui.TextWrapped(mismatch);
+            ImGui.TextDisabled("Pick the design saved for the face this mod replaces, or press " +
+                               "Re-detect if you have changed the mod's options since importing it.");
+            ImGui.Spacing();
+        }
+
+        UiLayout.SameLineIfRoomForButton("Apply now");
+        if (ImGui.SmallButton("Apply now##edesign"))
+            Plugin.Glamourer.ApplyDesignCustomization(item.DesignId.Value);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Apply this design's customisations once, now, without wearing the item.\n\n" +
+                             "For checking it is the right one.");
+
+        var equipment = item.DesignAppliesEquipment;
+        if (ImGui.Checkbox("Apply its gear too", ref equipment))
+        {
+            item.DesignAppliesEquipment = equipment;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Off: only the design's face, body and colouring go on, which is what a\n" +
+                             "sculpt needs and nothing more.\n\n" +
+                             "On: its clothes go on as well. For a design that is the whole\n" +
+                             "character rather than the setting one piece needs.");
+
+        var hairstyle = item.DesignAppliesHairstyle;
+        if (ImGui.Checkbox("Apply its hairstyle too", ref hairstyle))
+        {
+            item.DesignAppliesHairstyle = hairstyle;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Off: the hairstyle you have stays, whatever the design was saved\n" +
+                             "with. A hair mod only replaces one hairstyle's files, so a design\n" +
+                             "applied for its face would otherwise switch you off the hairstyle\n" +
+                             "your hair mod needs and leave it enabled but invisible.\n\n" +
+                             "On: its hairstyle applies with the rest. For a design that is the\n" +
+                             "whole character.");
     }
 
     /// <summary>
@@ -2057,6 +2255,10 @@ public class ItemImportPanel : IDisposable
         foreach (var (slot, key) in _analysisResult.ReplaceKeys)
             replace.TryAdd(slot, key);
 
+        _layerBySlot.Clear();
+        foreach (var slot in _analysisResult.DetectedSlots)
+            if (_analysisResult.LayerFor(slot) is { } layer) _layerBySlot.TryAdd(slot, layer);
+
         foreach (var extra in _extraMods)
         {
             var analysis = EnsureExtraAnalysis(extra);
@@ -2073,6 +2275,8 @@ public class ItemImportPanel : IDisposable
                 setIds.TryAdd(slot, id);
             foreach (var (slot, key) in analysis.ReplaceKeys)
                 replace.TryAdd(slot, key);
+            foreach (var slot in analysis.DetectedSlots)
+                if (analysis.LayerFor(slot) is { } layer) _layerBySlot.TryAdd(slot, layer);
         }
 
         // Mod categories the user has not opted into would import as items that are then hidden
@@ -2257,6 +2461,9 @@ public class ItemImportPanel : IDisposable
                 Name              = name,
                 Slot              = slot,
                 Replaces          = slot.IsModCategory() ? replaces : null,
+                // Only customisation carries one, and only where a mod was actually read for the
+                // slot — a hand-made item is left blank, taking the whole slot as it always did
+                Layer             = slot.IsCustomization() ? _layerBySlot.GetValueOrDefault(slot) : null,
                 // Only where the toggle was actually offered, so a gear item does not carry a
                 // setting that has no meaning for it
                 ForceRedraw       = slot.IsModOnly() ? forceRedraw : null,
@@ -2267,6 +2474,7 @@ public class ItemImportPanel : IDisposable
                 HairIdByRace      = slot == EquipSlot.Hair && _analysisResult != null
                     ? _analysisResult.HairIdsByRace.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value)
                     : new Dictionary<string, ushort>(),
+                CustomizeIdsByRace = CoverageFor(_analysisResult, slot),
 
                 // Copied per item, not shared — one list across several items would have every one
                 // of them re-tagged when any single item was edited later
@@ -2766,15 +2974,49 @@ public class ItemImportPanel : IDisposable
                 item.HairIdByRace = result.HairIdsByRace
                     .ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
 
+            // Re-read every time, including to empty: options changed in Penumbra since the import
+            // can genuinely narrow what a mod covers, and a stale map would go on vouching for faces
+            // the mod no longer replaces
+            item.CustomizeIdsByRace = CoverageFor(result, slot);
+
             _config.Save();
 
             if (slot.IsCustomization())
             {
                 var perRace = item.HairIdByRace.Count > 0
                     ? $" ({item.HairIdByRace.Count} race variants)" : string.Empty;
+
+                // Only for the slots whose number a design has to agree with. Skin's is b0001 for
+                // everybody and hair's is set from the mod itself, so reciting either would be noise
+                var covered = item.CustomizeIdsByRace.Values.SelectMany(v => v).Distinct().OrderBy(v => v).ToList();
+                var coverNoun = slot switch
+                {
+                    EquipSlot.Face      => "face",
+                    EquipSlot.Tail      => "tail",
+                    EquipSlot.VieraEars => "ear",
+                    _                   => null,
+                };
+                var coverNote = coverNoun != null && covered.Count > 0
+                    ? $", replaces {coverNoun} {string.Join(", ", covered)}"
+                    : string.Empty;
+
+                // The one route by which an item imported before layers existed gets one. Reported
+                // as part of the answer rather than changed quietly: it decides what this item
+                // displaces, so a Re-detect that rearranged the slot without saying so would be
+                // the same silent surprise the leftovers notice used to be.
+                var layer = result.LayerFor(slot);
+                var layerNote = string.Empty;
+                if (layer != null && !string.Equals(item.Layer, layer, StringComparison.OrdinalIgnoreCase))
+                {
+                    item.Layer    = layer;
+                    _editLayer    = layer;
+                    layerNote     = $", layer '{layer}'";
+                    _config.Save();
+                }
+
                 _editDetectOk  = true;
-                _editDetectMsg = $"Detected {slot.DisplayName().ToLowerInvariant()} number {setId}{perRace}.";
-                _log.Information($"[Wardrobe] Re-detected '{item.Name}': {slot.DisplayName()} id {setId}{perRace}");
+                _editDetectMsg = $"Detected {slot.DisplayName().ToLowerInvariant()} number {setId}{perRace}{coverNote}{layerNote}.";
+                _log.Information($"[Wardrobe] Re-detected '{item.Name}': {slot.DisplayName()} id {setId}{perRace}{layerNote}");
                 return;
             }
 
@@ -2823,7 +3065,11 @@ public class ItemImportPanel : IDisposable
         item.GlamourerItemName = null;
         item.HairIdByRace      = new Dictionary<string, ushort>();
         item.Replaces          = null;
+        // Cleared with the rest: a layer belongs to the slot it was detected on, and one carried
+        // over to another slot would silently change the key the item is worn under there
+        item.Layer             = null;
         _editReplaces          = string.Empty;
+        _editLayer             = string.Empty;
         _config.Save();
     }
 
@@ -2879,6 +3125,7 @@ public class ItemImportPanel : IDisposable
         _editImage    = string.Empty;
         _editSlotIdx  = 0;
         _editReplaces = string.Empty;
+        _editLayer    = string.Empty;
         _editNotes    = string.Empty;
         _editForceRedraw = null;
         _slotChoices  = EquipSlotEx.Choices(_config.ModCategoriesEnabled);

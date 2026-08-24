@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Ipc;
@@ -39,6 +40,12 @@ public class PenumbraIpc : IDisposable
 
     // GetModDirectory() → the Penumbra mods root directory on disk (no args)
     private readonly ICallGateSubscriber<string> _getModDirectory;
+
+    // GetGameObjectResourcePaths.V5(ushort[] objectIndices) → one dictionary per index, mapping the
+    // ACTUAL path of every resource in play to the game paths it stands in for. A redirected file
+    // gives its path on disk; anything vanilla or swapped gives a game path instead.
+    private readonly ICallGateSubscriber<ushort[], Dictionary<string, HashSet<string>>?[]>
+        _getGameObjectResourcePaths;
 
     // ApiVersion.V5() → (major, minor). Throws if Penumbra is not loaded.
     private readonly ICallGateSubscriber<(int Major, int Minor)> _apiVersion;
@@ -93,6 +100,10 @@ public class PenumbraIpc : IDisposable
 
         _getModDirectory = pi.GetIpcSubscriber<string>(
             "Penumbra.GetModDirectory");
+
+        _getGameObjectResourcePaths =
+            pi.GetIpcSubscriber<ushort[], Dictionary<string, HashSet<string>>?[]>(
+                "Penumbra.GetGameObjectResourcePaths.V5");
 
         _apiVersion = pi.GetIpcSubscriber<(int, int)>("Penumbra.ApiVersion.V5");
     }
@@ -250,6 +261,58 @@ public class PenumbraIpc : IDisposable
             .ThenBy(x => x.Mod.ModName, StringComparer.OrdinalIgnoreCase)
             .Select(x => x.Mod)
             .ToList();
+    }
+
+    /// <summary>The Penumbra mods root directory on disk, or <c>null</c> if it cannot be read.</summary>
+    public string? GetModRoot()
+    {
+        try
+        {
+            var root = _getModDirectory.InvokeFunc();
+            return string.IsNullOrEmpty(root) ? null : root;
+        }
+        catch (Exception ex) { _log.Warning(ex, "[Wardrobe] Penumbra GetModDirectory failed"); return null; }
+    }
+
+    /// <summary>
+    /// Every file Penumbra is actually feeding a character, as absolute paths on disk.
+    /// </summary>
+    /// <remarks>
+    /// The difference between what a mod folder contains and what a character is wearing. A mod ships
+    /// every option it has — all the colours, all the variants — and Penumbra hands over only the ones
+    /// selected, so reading the folder answers a different and much larger question than "what is on
+    /// this character". Anything vanilla or file-swapped comes back as a game path rather than a path
+    /// on disk and is dropped here: nothing is redirecting it, so there is no mod file behind it.
+    /// <para>
+    /// Penumbra's own note is that this is best called just after a redraw, since it can fail to
+    /// resolve paths when mod settings have moved since. Callers should treat a short answer as
+    /// "ask again later" rather than as "nothing is there".
+    /// </para>
+    /// </remarks>
+    public IReadOnlyCollection<string>? GetResolvedFilePaths(ushort objectIndex = 0)
+    {
+        try
+        {
+            var result = _getGameObjectResourcePaths.InvokeFunc([objectIndex]);
+            var paths  = result is { Length: > 0 } ? result[0] : null;
+            if (paths == null) return null;
+
+            var files = new List<string>(paths.Count);
+            foreach (var actual in paths.Keys)
+            {
+                if (string.IsNullOrEmpty(actual)) continue;
+                // Game paths are relative; only a rooted path names a file a mod actually supplied
+                if (!Path.IsPathRooted(actual)) continue;
+                files.Add(actual);
+            }
+
+            return files;
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"[Wardrobe] Penumbra GetGameObjectResourcePaths failed: {ex.Message}");
+            return null;
+        }
     }
 
     /// <summary>Returns the absolute filesystem path to a specific mod's folder on disk.</summary>

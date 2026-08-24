@@ -43,6 +43,22 @@ Mods enabled by a version older than this one are not recognised as the wardrobe
 there was nothing tracking that at the time. Those stay on once and are best cleared with **Disable
 Their Mods** on the leftovers notice; after that they are enabled and disabled normally.
 
+## "N mod(s) the wardrobe enabled are still on, with nothing wearing them"
+
+The wardrobe forgets what was worn when the game closes, while Penumbra keeps every one of those mods
+enabled. Nothing else would ever say so, which is what this notice is for.
+
+Your character is read before the list is built — every wardrobe item whose mods are on, whose options
+match, and which Glamourer is showing where Glamourer has a say, is recorded as worn first and left
+out of the list. So a mod holding up something you have on at that moment is not offered up to
+**Disable Them**.
+
+A mod that still appears after that is one nothing in the wardrobe accounts for. Usually the item was
+deleted while its mods stayed on, or its options have been changed in Penumbra since, so the wardrobe
+no longer recognises what is enabled as that item. **Disable Them** turns those off; **Keep Them**
+leaves them and hides the notice until next time. Pressing **Scan** will not change the list, since
+that is the read that has already happened.
+
 ## A hair mod puts on the wrong hairstyle, or none
 
 The wardrobe switches you to the hairstyle a hair mod replaces, working that out from the mod's files.

@@ -113,15 +113,33 @@ public class PluginUi : Window, IDisposable
     /// Both on, because the grid showing everything is what someone opening it expects — these are
     /// for getting twenty plates out of the way when you want to look at the outfits you built.
     /// <para>
-    /// Not saved. The same as favourites and worn, which are also a way of looking at the grid for a
-    /// minute rather than a setting — and a category still hidden after a restart would be a wardrobe
-    /// that had quietly lost half its cards.
+    /// Saved, unlike favourites and worn. Those really are a way of looking at the grid for a minute;
+    /// this is a decision about which of the wardrobe's three sources of cards someone wants to see,
+    /// and one they had been made to take again at every login.
     /// </para>
     /// </remarks>
-    private bool _showPlates = true;
+    private bool ShowPlates
+    {
+        get => _config.ShowPlateOutfits;
+        set
+        {
+            if (_config.ShowPlateOutfits == value) return;
+            _config.ShowPlateOutfits = value;
+            _config.Save();
+        }
+    }
 
-    /// <inheritdoc cref="_showPlates"/>
-    private bool _showDesigns = true;
+    /// <inheritdoc cref="ShowPlates"/>
+    private bool ShowDesigns
+    {
+        get => _config.ShowDesignOutfits;
+        set
+        {
+            if (_config.ShowDesignOutfits == value) return;
+            _config.ShowDesignOutfits = value;
+            _config.Save();
+        }
+    }
 
     // Items the grid drew last frame, for the toolbar count. The toolbar draws before the grid,
     // so this trails by one frame — imperceptible, and avoids running the filters twice.
@@ -501,13 +519,19 @@ public class PluginUi : Window, IDisposable
             return;
         }
 
-        // Once per session, on the first proper draw: a crash leaves Penumbra mods enabled while
-        // WornItems is cleared on load, and nothing else would ever surface that. Read-only —
-        // it reports, and the user decides.
+        // Once per session, on the first proper draw: a crash — or an ordinary restart — leaves
+        // Penumbra mods enabled while WornItems is cleared on load, and nothing else would ever
+        // surface that. Both halves of the problem come out of one scan: items whose mods are on
+        // with the Glamourer half missing, and mods still on with no item claiming them at all.
+        //
+        // The scan adopts, so anything genuinely on the character is recorded as worn before either
+        // notice is built. That is what stops the leftover notice offering to disable the mods
+        // holding up a look you are wearing at that moment, which is all a wardrobe reloaded from
+        // disk can see: nothing worn, and every mod still on.
         if (!_desyncChecked)
         {
             _desyncChecked = true;
-            _desynced      = new List<WardrobeItem>(_wardrobe.FindDesynced());
+            _desynced      = new List<WardrobeItem>(_wardrobe.ScanAndSyncWorn().Desynced);
         }
 
         // Every frame, and free unless the character's collection has actually changed: worn ticks
@@ -535,6 +559,7 @@ public class PluginUi : Window, IDisposable
         DrawModOwnershipNotice();
         DrawDesyncNotice();
         DrawLeftoverCollectionNotice();
+        DrawUncompressedTextureNotice();
         ImGui.Separator();
         DrawSlotFilter();
         ImGui.Separator();
@@ -1099,10 +1124,22 @@ public class PluginUi : Window, IDisposable
             {
                 _showImageBrowser = false;
                 _showSettings     = false;
+
+                // Explicitly not the automatic kind. The two buttons are what say which sort of run
+                // this is, so pressing this one has to mean it even when the last was the other.
+                _session.Auto = false;
                 _session.Start();
             }
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Automatically wear each unimaged item and watch for a\nnew screenshot, then crop it to 1:1 and assign it.");
+                ImGui.SetTooltip("Automatically wear each unimaged item and watch for a\n" +
+                                 "new screenshot, then crop it to 1:1 and assign it.\n\n" +
+                                 "You take the screenshots." +
+                                 (_session.AutoEnabled
+                                     ? "\n\nSuper Screenshot Session beside this takes them for you."
+                                     : "\n\nSettings → Experimental can have the wardrobe take them\n" +
+                                       "for you instead."));
+
+            DrawSuperSessionButton();
         }
 
         DrawItemCount();
@@ -1173,16 +1210,24 @@ public class PluginUi : Window, IDisposable
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.24f, 0.44f, 0.68f, 1f));
         if (ImGui.Button(" In-Game Look "))
         {
-            var removed = _wardrobe.RevertToInGameLook();
+            // Ctrl leaves the base off, as it does on Unequip All. The setting beside this button in
+            // a plate's panel is the standing answer; this is the one-off, for the moment you want to
+            // see the character with nothing of the wardrobe's on them at all.
+            var ignoreBase = ImGui.GetIO().KeyCtrl;
+            var removed    = _wardrobe.RevertToInGameLook(ignoreBase);
 
             // As Strip does: anything left running keeps its marker, so the grid does not claim the
             // animation mods that are still enabled were turned off
             _detectedWorn.RemoveWhere(id =>
                 _config.WardrobeItems.Find(x => x.Id == id) is not { } item || !item.Slot.IsModCategory());
 
+            var without = ignoreBase && _config.ActiveBaseCharacter is { } dropped
+                ? $" '{dropped.Name}' left off."
+                : string.Empty;
+
             _scanStatus = removed > 0
-                ? $"Took off {removed} item(s) — showing the game's own look."
-                : "Already showing the game's own look.";
+                ? $"Took off {removed} item(s) — showing the game's own look.{without}"
+                : $"Already showing the game's own look.{without}";
         }
         ImGui.PopStyleColor(2);
         if (ImGui.IsItemHovered())
@@ -1191,8 +1236,9 @@ public class PluginUi : Window, IDisposable
                              "including any glamour plate you have applied.\n\n" +
                              "Animations, VFX and mounts are left running, as with Strip." +
                              (_config.KeepBaseCharacterOnRevert && _config.ActiveBaseCharacter is { } revertBase
-                                 ? $"\n\n'{revertBase.Name}' goes back on top. Turn that off beside\n" +
-                                   "Show In-Game Look in any glamour plate's edit panel."
+                                 ? $"\n\n'{revertBase.Name}' goes back on top. Hold Ctrl to leave it\n" +
+                                   "off for this press, or turn it off for good beside Show\n" +
+                                   "In-Game Look in any glamour plate's edit panel."
                                  : _config.ActiveBaseCharacter != null
                                      ? "\n\nYour base character is not held back — the revert is\n" +
                                        "absolute, showing the unmodded character."
@@ -1304,12 +1350,26 @@ public class PluginUi : Window, IDisposable
 
         var total = groups.Sum(g => g.Mods.Count);
 
+        // The notice covers two situations now and must not describe the wrong one: mods held in a
+        // collection the character has left, and mods held in the one they are on that nothing is
+        // wearing. The second is the more alarming of the two, since those are live on the
+        // character in front of you, so it is what the notice leads with when it applies.
+        var active  = Plugin.Penumbra.GetActiveCollection();
+        var onYou   = groups.Any(g => g.Collection.Equals(active, StringComparison.OrdinalIgnoreCase));
+
         ImGui.Spacing();
         ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
-            $"● {total} mod(s) the wardrobe enabled are still on in another collection.");
-        ImGui.TextDisabled("Your character changed collection. These were switched on for the " +
-                           "character you left and are still on there, where removing an item " +
-                           "here cannot reach them.");
+            onYou
+                ? $"● {total} mod(s) the wardrobe enabled are still on, with nothing wearing them."
+                : $"● {total} mod(s) the wardrobe enabled are still on in another collection.");
+
+        ImGui.TextDisabled(onYou
+            ? "The wardrobe switched these on and nothing it can find is wearing them. Your character " +
+              "was read first, so anything actually on right now has already been accounted for and " +
+              "left out of this list — what is left is usually an item since deleted, or one whose mod " +
+              "options have been changed in Penumbra since. Nothing will take them off by itself."
+            : "Your character changed collection. These were switched on for the character you " +
+              "left and are still on there, where removing an item here cannot reach them.");
         ImGui.Spacing();
 
         foreach (var group in groups)
@@ -1326,9 +1386,14 @@ public class PluginUi : Window, IDisposable
         var disable = ImGui.Button(" Disable Them ");
         ImGui.PopStyleColor(2);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Turns them off in the collection they are on,\n" +
-                             "which is not the one your character is using.\n\n" +
-                             "Only mods this wardrobe switched on are touched.");
+            ImGui.SetTooltip(onYou
+                ? "Turns them off in Penumbra.\n\n" +
+                  "Only mods this wardrobe switched on and is no longer\n" +
+                  "wearing are touched — nothing you enabled yourself, and\n" +
+                  "nothing an item you are wearing still needs."
+                : "Turns them off in the collection they are on,\n" +
+                  "which is not the one your character is using.\n\n" +
+                  "Only mods this wardrobe switched on are touched.");
         if (disable)
         {
             _wardrobe.DisableLeftovers();
@@ -1343,9 +1408,15 @@ public class PluginUi : Window, IDisposable
             return;
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Leaves them enabled and hides this.\n" +
-                             "Right if you swap back to that character:\n" +
-                             "their wardrobe is waiting exactly as it was.");
+            ImGui.SetTooltip(onYou
+                ? "Leaves them enabled and hides this until next time.\n\n" +
+                  "Right if you recognise them as part of a look you are\n" +
+                  "wearing. The character is read before this list is built,\n" +
+                  "so one that still turns up here is one nothing in the\n" +
+                  "wardrobe matches — pressing Scan will not change it."
+                : "Leaves them enabled and hides this.\n" +
+                  "Right if you swap back to that character:\n" +
+                  "their wardrobe is waiting exactly as it was.");
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -2211,19 +2282,23 @@ public class PluginUi : Window, IDisposable
         // dropdown means the same thing on either side and the filter survives switching between them
         _frameStyles = styles;
 
-        // Outfits is a view of its own rather than a slot filter, so it sits first and apart
+        // Outfits and All are the two views, not two filters. Picking one picks it — pressing Outfits
+        // while already on it does nothing, exactly as pressing All while already on All does, and
+        // pressing any slot button leaves the outfits view rather than filtering underneath it.
+        // Toggling instead made Outfits behave like ♥ or Worn, which layer on top of a view, and let
+        // both it and All light up at once with only one of them describing what was on screen.
         var outfitsActive = _outfitsView;
         if (outfitsActive)
         {
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.42f, 0.3f, 0.62f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.52f, 0.38f, 0.74f, 1f));
         }
-        if (ImGui.Button("Outfits", FilterRowButton("Outfits"))) _outfitsView = !_outfitsView;
+        if (ImGui.Button("Outfits", FilterRowButton("Outfits"))) _outfitsView = true;
         var outfitsHovered = ImGui.IsItemHovered();
         if (outfitsActive) ImGui.PopStyleColor(2);
         if (outfitsHovered)
             ImGui.SetTooltip(outfitsActive
-                ? "Showing saved outfits. Click to go back to items."
+                ? "Showing saved outfits. Press All, or any slot, for items."
                 : "Show saved outfits instead of items.");
 
         UiLayout.SameLineIfRoomForButton("All");
@@ -2820,7 +2895,10 @@ public class PluginUi : Window, IDisposable
 
     private void DrawFilterButton(string label, EquipSlot? slot)
     {
-        var active = _slotFilter == slot;
+        // Not lit while the outfits view is on, whatever the slot filter underneath happens to be:
+        // two buttons showing as the current view when only one of them is what you are looking at
+        // is what made Outfits read as a filter in the first place
+        var active = !_outfitsView && _slotFilter == slot;
         if (active)
         {
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.5f, 0.8f, 1f));
@@ -2841,7 +2919,13 @@ public class PluginUi : Window, IDisposable
             hovered = ImGui.IsItemHovered();
         }
 
-        if (clicked) _slotFilter = slot;
+        if (clicked)
+        {
+            // These are the items view. Pressing one from the outfits view is asking for items,
+            // which was previously a filter change nobody could see: the outfits grid stayed up
+            _slotFilter  = slot;
+            _outfitsView = false;
+        }
         if (active) ImGui.PopStyleColor(2);
 
         if (!hovered) return;
@@ -3822,6 +3906,8 @@ public class PluginUi : Window, IDisposable
                 ImGui.SetTooltip("Detected as worn (mods are enabled in Penumbra)");
         }
 
+        DrawTextureFlagBadge(item, worn);
+
         // A pilcrow rather than a pencil or a note glyph: both of those live in the Dingbats block,
         // which the default font does not carry, and would draw as an empty box.
         if (!string.IsNullOrWhiteSpace(item.Notes))
@@ -3956,6 +4042,119 @@ public class PluginUi : Window, IDisposable
         ImGui.EndChild();
         ImGui.PopStyleColor(2);
         ImGui.PopID();
+    }
+
+    /// <summary>
+    /// One line for the whole character, for the times nobody is going to hover a card.
+    /// </summary>
+    /// <remarks>
+    /// The badges say which item is to blame; this says whether it is worth caring today. It counts
+    /// everything Penumbra is feeding the character rather than only what the wardrobe has items
+    /// for, because a skin or a hair costs a synced friend exactly what a dress does and leaving
+    /// those out would understate the answer to the only question being asked.
+    /// <para>
+    /// Held to the same threshold as the badges, so the two never disagree about whether there is
+    /// anything to say. There is no button because there is nothing here that can act: the wardrobe
+    /// does not convert textures, and the tooltip names the mods worth taking to the tool that does.
+    /// </para>
+    /// </remarks>
+    private void DrawUncompressedTextureNotice()
+    {
+        if (!_config.FlagUncompressedTextures) return;
+
+        var total = Plugin.TextureFlags.Total();
+        if (!total.Any) return;
+
+        var floor = (long)Math.Max(0, _config.UncompressedTextureFlagThresholdMiB) * 1024 * 1024;
+        if (total.UncompressedBytes < floor) return;
+
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(1f, 0.65f, 0.25f, 1f),
+            $"\u25cf {FormatSize(total.UncompressedBytes)} of uncompressed texture on your character " +
+            $"({total.UncompressedCount} of {total.TotalTextures} file(s)).");
+
+        if (ImGui.IsItemHovered())
+        {
+            var worst = Plugin.TextureFlags.Worst(5);
+            var lines = new List<string>();
+            foreach (var (mod, flag) in worst)
+                lines.Add($"    {FormatSize(flag.UncompressedBytes),9}  {mod}");
+
+            ImGui.SetTooltip(
+                "Everything Penumbra is feeding your character, not just wardrobe items —\n" +
+                "skins, hair and body mods are counted too, because they cost a synced\n" +
+                "friend exactly what an outfit does.\n\n" +
+                (lines.Count > 0 ? "Worst offenders:\n" + string.Join("\n", lines) + "\n\n" : string.Empty) +
+                "Only what is actually in use is counted. Options you have switched off\n" +
+                "are not here, however large they are on disk.");
+        }
+
+        ImGui.TextDisabled($"About {FormatSize(total.UncompressedBytes * 3 / 4)} of that would go away " +
+                           "block-compressed. Convert them in Lightless' Character Analysis window, " +
+                           "under the tex tab — its own auto-compress never touches your own mods.");
+        ImGui.Spacing();
+    }
+
+    /// <summary>
+    /// A byte count in the largest unit that leaves it readable.
+    /// </summary>
+    /// <remarks>
+    /// Written because the first version formatted everything as MiB to one decimal, so an item
+    /// carrying two small mask textures announced "totalling 0 MiB" — a warning about nothing, in a
+    /// unit that could not express what it had found.
+    /// </remarks>
+    private static string FormatSize(long bytes)
+    {
+        if (bytes >= 1024L * 1024 * 1024) return $"{bytes / 1024f / 1024f / 1024f:0.#} GiB";
+        if (bytes >= 1024L * 1024)        return $"{bytes / 1024f / 1024f:0.#} MiB";
+        if (bytes >= 1024L)               return $"{bytes / 1024f:0.#} KiB";
+        return $"{bytes} B";
+    }
+
+    /// <summary>
+    /// Marks a worn item whose mods still ship textures in a format that stores every pixel whole.
+    /// </summary>
+    /// <remarks>
+    /// Only on a worn card, which is the setting's whole shape: what is on the character is what a
+    /// sync plugin uploads to everyone looking at you, and an uncompressed texture sitting in a mod
+    /// nobody is wearing costs nobody anything. Badging the grid instead would be a wall of warnings
+    /// about a problem that is not currently happening.
+    /// <para>
+    /// A triangle from Font Awesome rather than a warning sign from the text font, which the game
+    /// draws as an empty box.
+    /// </para>
+    /// </remarks>
+    private void DrawTextureFlagBadge(WardrobeItem item, bool worn)
+    {
+        if (!worn || !_config.FlagUncompressedTextures) return;
+
+        // Null while the scan is still running — the badge simply arrives a frame or two later
+        var flag = Plugin.TextureFlags.For(item);
+        if (flag is not { Any: true }) return;
+
+        // Weighed, not counted. Two 8 KB masks are not worth a warning; one uncompressed 4K normal
+        // map is 85 MiB and is the whole reason this exists
+        var floor = (long)Math.Max(0, _config.UncompressedTextureFlagThresholdMiB) * 1024 * 1024;
+        if (flag.UncompressedBytes < floor) return;
+
+        ImGui.SameLine();
+        ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.65f, 0.25f, 1f));
+        using (Plugin.PluginInterface.UiBuilder.IconFontHandle?.Push())
+            ImGui.TextUnformatted(FontAwesomeIcon.ExclamationTriangle.ToIconString());
+        ImGui.PopStyleColor();
+
+        if (!ImGui.IsItemHovered()) return;
+
+        ImGui.SetTooltip(
+            $"{flag.UncompressedCount} of the {flag.TotalTextures} texture(s) this item is putting " +
+            $"on your character are uncompressed, totalling {FormatSize(flag.UncompressedBytes)}.\n\n" +
+            "Worn, so anyone synced to you downloads them at that size. Block-compressing\n" +
+            $"them typically cuts it to about a quarter — roughly {FormatSize(flag.UncompressedBytes * 3 / 4)} saved.\n\n" +
+            "Lightless does not do this for your own mods — its auto-compress only touches\n" +
+            "its own download cache. Convert them in its Character Analysis window, under\n" +
+            "the tex tab.\n\n" +
+            "That rewrites the files in place, so keep the mod's .pmp or .ttmp2 if you want\n" +
+            "the originals back. The badge clears itself once they are converted.");
     }
 
     /// <summary>
@@ -4339,6 +4538,19 @@ public class PluginUi : Window, IDisposable
         {
             if (worn) _wardrobe.UnwearOutfit(outfit);
             else      _wardrobe.WearOutfit(outfit, removeOthers: true);
+        }
+
+        // Same reason as on the card: while the outfit is on, this button says Remove, and without
+        // this there is nothing here that puts it on again
+        if (worn)
+        {
+            ImGui.SameLine();
+            if (ImGui.Button("Re-apply", new Vector2(btnW, 0)))
+                _wardrobe.ReapplyOutfit(outfit);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Puts this outfit on again without taking it off first, so a change\n" +
+                                 "to one of its items takes effect. Anything else you have on is\n" +
+                                 "left alone.");
         }
 
         ImGui.SameLine();
@@ -4757,7 +4969,7 @@ public class PluginUi : Window, IDisposable
         switch (_session.State)
         {
             case SessionState.WaitingForShot:
-                ImGui.TextColored(new Vector4(1f, 0.85f, 0.3f, 1f), "Waiting for screenshot…");
+                DrawSessionWaitingLine(withHint: false);
                 break;
             case SessionState.Processing:
                 ImGui.TextColored(new Vector4(0.5f, 0.8f, 1f, 1f), "Processing image…");
@@ -4774,6 +4986,7 @@ public class PluginUi : Window, IDisposable
 
         ImGui.Separator();
         ImGui.Spacing();
+        DrawShutterRow();
         DrawSessionActionRow(_session.CurrentItem != null ? "Item" : "Outfit");
         UiLayout.PopWrap();
     }
@@ -4919,6 +5132,8 @@ public class PluginUi : Window, IDisposable
                              "Off, the session moves on as soon as a screenshot lands — one per\n" +
                              "item, plus any camera angles you have ticked.");
 
+        DrawAutoModeCheckbox();
+
         var stripOthers = _session.StripOthers;
         if (ImGui.Checkbox("Strip other items before each shot", ref stripOthers))
             _session.StripOthers = stripOthers;
@@ -4977,10 +5192,7 @@ public class PluginUi : Window, IDisposable
             switch (_session.State)
             {
                 case SessionState.WaitingForShot:
-                    ImGui.TextColored(new Vector4(1f, 0.85f, 0.3f, 1f), "Waiting for screenshot…");
-                    ImGui.TextDisabled(_session.Manual
-                        ? "Take as many as you like. The first is the card's picture and the rest join it."
-                        : "Position your character, then press your screenshot key.");
+                    DrawSessionWaitingLine(withHint: true);
                     ImGui.Spacing();
                     DrawSessionCameraPresets();
                     break;
@@ -4993,6 +5205,7 @@ public class PluginUi : Window, IDisposable
             ImGui.Separator();
             ImGui.Spacing();
 
+            DrawShutterRow();
             DrawSessionActionRow(label);
         }
 
@@ -5000,6 +5213,261 @@ public class PluginUi : Window, IDisposable
         ImGui.End();
 
         if (!open) _session.Stop();
+    }
+
+    /// <summary>
+    /// Starts a session that photographs the whole wardrobe by itself.
+    /// </summary>
+    /// <remarks>
+    /// Beside the ordinary one rather than folded into it, because the difference between them is the
+    /// whole feature: one waits on you for every picture and the other waits on nobody, and which of
+    /// those is about to happen should be the button you pressed rather than the state of a tick box
+    /// in a panel behind the character.
+    /// <para>
+    /// Only when the feature is turned on in Experimental, so the toolbar of anyone who has not asked
+    /// for it looks exactly as it did.
+    /// </para>
+    /// </remarks>
+    private void DrawSuperSessionButton()
+    {
+        if (!_session.AutoEnabled) return;
+
+        const string label = " Super Screenshot Session ";
+        UiLayout.SameLineIfRoomForButton(label);
+
+        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.18f, 0.32f, 0.5f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.24f, 0.44f, 0.68f, 1f));
+        var pressed = ImGui.Button(label);
+        ImGui.PopStyleColor(2);
+
+        if (pressed)
+        {
+            _showImageBrowser = false;
+            _showSettings     = false;
+            _session.StartSuper();
+        }
+
+        if (!ImGui.IsItemHovered()) return;
+
+        // The two things that make a run come out wrong are both knowable before it starts, so they
+        // are said here rather than found out three hundred pictures later
+        var warning = !Plugin.Camera.InGpose
+            ? "\n\nYou are not in GPose — camera angles will not be applied and every\n" +
+              "picture will be taken from wherever the camera is standing."
+            : string.Empty;
+
+        ImGui.SetTooltip("Photograph every item without a picture, start to finish: each one is\n" +
+                         "worn in turn, the camera moves to the angle its slot asks for, the shot\n" +
+                         "is taken, cropped and filed, and it moves on. Nothing to press.\n\n" +
+                         "Set your camera angles up first, and start it in GPose. Everything it\n" +
+                         "does is written to the log — open it with /xllog.\n\n" +
+                         "Experimental. Watch the first few shots before leaving it to run." +
+                         warning);
+    }
+
+    /// <summary>
+    /// What the session is waiting for, said the way the mode it is in makes true.
+    /// </summary>
+    /// <remarks>
+    /// Shared by both session windows so they cannot drift apart, and worth sharing because there are
+    /// now four different answers: a person is expected to press a key, a person may press it as often
+    /// as they like, a countdown is running, or the shot has been asked for and the picture is on its
+    /// way. Telling someone to press their screenshot key while the session is about to press it for
+    /// them is the one thing this must never do.
+    /// </remarks>
+    /// <param name="withHint">Whether there is room under it for a line saying what to do.</param>
+    private void DrawSessionWaitingLine(bool withHint)
+    {
+        var amber = new Vector4(1f, 0.85f, 0.3f, 1f);
+        var blue  = new Vector4(0.5f, 0.8f, 1f, 1f);
+
+        if (_session.Auto && _session.AutoPaused)
+        {
+            ImGui.TextColored(amber, "Paused.");
+            if (withHint)
+                ImGui.TextDisabled("Move the camera wherever you want it, then press Resume.");
+            return;
+        }
+
+        if (_session.Auto && _session.AutoShotPending)
+        {
+            ImGui.TextColored(blue, "Taking the shot…");
+            return;
+        }
+
+        if (_session.Auto)
+        {
+            ImGui.TextColored(amber, $"Shooting in {_session.AutoCountdown:0.0}s…");
+            if (withHint)
+                ImGui.TextDisabled("Nothing to press. Pause if you want to change the framing first.");
+            return;
+        }
+
+        ImGui.TextColored(amber, "Waiting for screenshot…");
+        if (!withHint) return;
+
+        ImGui.TextDisabled(_session.Manual
+            ? "Take as many as you like. The first is the card's picture and the rest join it."
+            : "Position your character, then press your screenshot key.");
+    }
+
+    /// <summary>
+    /// Take the shot now, and hold the automatic run — the two controls a shutter of our own adds.
+    /// </summary>
+    /// <remarks>
+    /// Shoot Now is offered in every mode rather than only the automatic one: manual mode is about
+    /// deciding when a picture is worth taking, not about which key takes it, and by the time the
+    /// session is waiting the character is posed already.
+    /// <para>
+    /// Nothing at all is drawn when the game will not let us take screenshots, which is the honest
+    /// thing to do with a button that could not work — the checkbox that would have turned the
+    /// automatic mode on is hidden on the same terms.
+    /// </para>
+    /// </remarks>
+    private void DrawShutterRow()
+    {
+        if (_session.State != SessionState.WaitingForShot) return;
+
+        // Behind the opt-in, not merely behind the game supporting it. Shoot Now presses exactly the
+        // same screenshot call the automatic run does, so it is the same experiment.
+        if (!_session.AutoEnabled) return;
+
+        var auto = _session.Auto;
+
+        // The failure a whole unattended run turns into: presets are written to the GPose camera and
+        // nowhere else, so outside it every angle is silently the angle the camera was already at
+        if (auto && !Plugin.Camera.InGpose)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
+                "Not in GPose — camera angles will not be applied.");
+            ImGui.TextDisabled("Every shot will be taken from wherever the camera is standing.");
+            ImGui.Spacing();
+        }
+
+        var spacing = ImGui.GetStyle().ItemSpacing.X;
+        var others  = auto ? 1 : 0;
+        var size    = new Vector2((ImGui.GetContentRegionAvail().X - spacing * others) / (others + 1), 0);
+
+        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.18f, 0.32f, 0.5f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.24f, 0.44f, 0.68f, 1f));
+        if (ImGui.Button("Shoot Now", size)) _session.TakeShotNow();
+        ImGui.PopStyleColor(2);
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Take the screenshot this session is waiting for, now.\n\n" +
+                             "The game takes it, so it is the same picture your screenshot key\n" +
+                             "would have taken, cropped and filed the same way.");
+
+        if (!auto) return;
+
+        ImGui.SameLine();
+        if (ImGui.Button(_session.AutoPaused ? "Resume" : "Pause", size))
+            _session.SetAutoPaused(!_session.AutoPaused);
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(_session.AutoPaused
+                ? "Carry on from where the countdown stopped."
+                : "Hold the run here so you can move the camera. The countdown keeps\n" +
+                  "the time it had left, so resuming does not start it over.");
+    }
+
+    /// <summary>
+    /// The Experimental opt-in for automatic sessions, and the delay they run on.
+    /// </summary>
+    /// <remarks>
+    /// The opt-in, not the mode. Turning this on does not make the next session automatic — it puts
+    /// <b>Super Screenshot Session</b> on the toolbar and the tick on the session HUD, and those say
+    /// which kind of run is happening. One tick meaning both made the plain <b>Screenshot Session</b>
+    /// button, which has to mean a session that is not automatic, switch the whole feature off.
+    /// <para>
+    /// Hidden entirely when the game does not expose its screenshot task: a tick box that cannot do
+    /// anything is worse than none, since the failure would show up as a session counting down forever
+    /// against a shutter that never fires.
+    /// </para>
+    /// </remarks>
+    private void DrawAutoEnableSetting()
+    {
+        if (!_session.AutoSupported)
+        {
+            ImGui.TextDisabled("Unavailable: this build of the game does not expose the screenshot " +
+                               "function the wardrobe would press.");
+            return;
+        }
+
+        var enabled = _session.AutoEnabled;
+        if (ImGui.Checkbox("Fully automatic sessions", ref enabled))
+            _session.AutoEnabled = enabled;
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Turns the feature on. It does not start anything by itself.\n\n" +
+                             "With this on, a Super Screenshot Session button appears beside\n" +
+                             "Screenshot Session in the toolbar, and the session HUD gains a tick\n" +
+                             "for switching a run between the two.\n\n" +
+                             "Experimental: it presses the game's own screenshot function, which is\n" +
+                             "not an API and has not been run over a large wardrobe yet.");
+
+        if (!enabled)
+        {
+            ImGui.TextDisabled("Off, every session waits for you to press your screenshot key — though " +
+                               "Shoot Now on the session HUD takes one without it.");
+            return;
+        }
+
+        ImGui.TextDisabled("Super Screenshot Session is now beside Screenshot Session in the toolbar. " +
+                           "The plain one still waits for you.");
+        ImGui.Spacing();
+
+        DrawAutoDelaySlider(compact: false);
+    }
+
+    /// <summary>
+    /// The session HUD's tick for whether this run is taking its own pictures.
+    /// </summary>
+    /// <remarks>
+    /// The mode rather than the opt-in, and on the HUD because this is where changing your mind
+    /// happens: a run left to itself that is framing something badly wants stopping, and a manual one
+    /// you have got bored of wants finishing on its own.
+    /// </remarks>
+    private void DrawAutoModeCheckbox()
+    {
+        if (!_session.AutoEnabled) return;
+
+        var auto = _session.Auto;
+        if (ImGui.Checkbox("Fully automatic", ref auto))
+            _session.Auto = auto;
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The session takes the screenshots itself for the rest of this run.\n\n" +
+                             "Each item is worn, the camera moves to the angle its slot asks for, the\n" +
+                             "shot is taken and filed, and it moves on — the automatic session with\n" +
+                             "the one keypress it still needed taken out of it.\n\n" +
+                             "Set your camera angles up first: without them every picture is taken\n" +
+                             "from wherever the camera happens to be.\n\n" +
+                             "Turns manual mode off, since the two ask for opposite things.");
+
+        if (auto) DrawAutoDelaySlider(compact: true);
+    }
+
+    /// <summary>How long an automatic session waits before each shot.</summary>
+    /// <param name="compact">Size it for the narrow HUD rather than the settings page.</param>
+    private void DrawAutoDelaySlider(bool compact)
+    {
+        var delay = _config.AutoScreenshotDelay;
+        ImGui.SetNextItemWidth(compact ? UiScale.S(150) : UiScale.S(220));
+        if (ImGui.SliderFloat("##autodelay", ref delay,
+                ScreenshotSessionService.MinAutoDelay, ScreenshotSessionService.MaxAutoDelay,
+                "%.1f s before each shot"))
+        {
+            _config.AutoScreenshotDelay = delay;
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("How long to wait before each shot, so what is being photographed has\n" +
+                             "settled. Raise it if pictures come out mid-redraw or at the previous\n" +
+                             "angle; a slower drive wants more.\n\n" +
+                             "The first shot of each item is given longer again on top of this, since\n" +
+                             "that is the one that follows a redraw.");
     }
 
     /// <summary>
@@ -5592,16 +6060,27 @@ public class PluginUi : Window, IDisposable
                 _session.StartOutfits();
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Wears each outfit that has no preview yet and waits for a\n" +
-                                 "screenshot, exactly like an item session.");
+                                 "screenshot, exactly like an item session.\n\n" +
+                                 // The mode is sticky and set by the two toolbar buttons, so this one
+                                 // inherits it — which is worth saying rather than leaving to be found
+                                 // out by an outfit run that started photographing itself
+                                 (_session.Auto
+                                     ? "Fully automatic is on, so this run takes its own screenshots."
+                                     : "You take the screenshots."));
         }
 
+        // Read before the row draws: the sync button and its counts are part of that row now, and the
+        // tick boxes beside it are about the same two kinds of card
+        var sources = ReadOutfitSources();
+
         DrawOutfitSourceChecks();
+        DrawPlateSyncControls(sources.PlatesLoaded, sources.SavedPlates, sources.NewPlates);
 
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
 
-        DrawOutfitSourcesBar();
+        DrawOutfitSourceNotices(sources);
 
         if (_config.Outfits.Count == 0)
         {
@@ -5616,8 +6095,8 @@ public class PluginUi : Window, IDisposable
             // a switched-off mod category are — so turning it back on brings them back untouched
             .Where(o => _config.ShowGlamourerDesigns || !o.IsDesign)
             // The two tick boxes above the grid. Unticking both leaves the outfits you built yourself.
-            .Where(o => _showPlates  || !o.IsGlamourPlate)
-            .Where(o => _showDesigns || !o.IsDesign)
+            .Where(o => ShowPlates  || !o.IsGlamourPlate)
+            .Where(o => ShowDesigns || !o.IsDesign)
             .Where(OutfitMatchesTagFilters);
 
         // Search is part of that same row, and for a long time it narrowed only the item grid — so
@@ -5640,8 +6119,8 @@ public class PluginUi : Window, IDisposable
         {
             var narrowing = ActiveFilters(includeItemFilters: false);
 
-            if (!_showPlates)  narrowing.Add("plates hidden");
-            if (!_showDesigns) narrowing.Add("designs hidden");
+            if (!ShowPlates)  narrowing.Add("plates hidden");
+            if (!ShowDesigns) narrowing.Add("designs hidden");
 
             ImGui.TextDisabled(SearchWords().Length > 0
                 ? narrowing.Count > 0
@@ -5724,6 +6203,10 @@ public class PluginUi : Window, IDisposable
     /// only way round a tick box can be read, and both start ticked because a grid that opens
     /// hiding things is a grid that has lost cards.
     /// <para>
+    /// Kept across sessions from <see cref="Configuration.ShowPlateOutfits"/>, so the wardrobe opens
+    /// the way it was left rather than making the same choice be made every login.
+    /// </para>
+    /// <para>
     /// Each appears only when there is a card of that kind to hide, the same rule the Variants
     /// filter follows: a box that can only ever empty the grid is worse than no box.
     /// </para>
@@ -5738,8 +6221,8 @@ public class PluginUi : Window, IDisposable
         if (plates)
         {
             UiLayout.SameLineIfRoomForText("Plates");
-            var show = _showPlates;
-            if (ImGui.Checkbox("Plates", ref show)) _showPlates = show;
+            var show = ShowPlates;
+            if (ImGui.Checkbox("Plates", ref show)) ShowPlates = show;
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Show your glamour plates in the grid.\n\n" +
                                  "Untick to leave only the outfits you built yourself.");
@@ -5748,15 +6231,22 @@ public class PluginUi : Window, IDisposable
         if (designs)
         {
             UiLayout.SameLineIfRoomForText("Designs");
-            var show = _showDesigns;
-            if (ImGui.Checkbox("Designs", ref show)) _showDesigns = show;
+            var show = ShowDesigns;
+            if (ImGui.Checkbox("Designs", ref show)) ShowDesigns = show;
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Show your Glamourer designs in the grid.\n\n" +
                                  "Untick to leave only the outfits you built yourself.");
         }
     }
 
-    private void DrawOutfitSourcesBar()
+    /// <summary>What the two borrowed card sources look like this frame.</summary>
+    /// <remarks>
+    /// Read in one place and handed to both halves that need it, because the sync button now sits on
+    /// the toolbar row and its notices below the separator — and a button whose counts were read at a
+    /// different moment from the notice under it is a row that can contradict itself.
+    /// </remarks>
+    private (bool PlatesLoaded, int SavedPlates, int NewPlates,
+             List<Outfit> OrphanPlates, List<Outfit> Desynced, List<Outfit> Stranded) ReadOutfitSources()
     {
         // Recomputed every frame so the cards below and the notices here cannot disagree. Cheap: the
         // plate read is cached for half a second in its service, the design read in the IPC.
@@ -5780,10 +6270,25 @@ public class PluginUi : Window, IDisposable
         _designsMissing.Clear();
         foreach (var o in stranded) _designsMissing.Add(o.Id);
 
-        DrawPlateSyncControls(platesLoaded, plates.Count, newPlates);
+        return (platesLoaded, plates.Count, newPlates, orphanPlates, desynced, stranded);
+    }
 
-        DrawPlateNotices(orphanPlates, desynced);
-        DrawStrandedDesignNotice(stranded);
+    /// <summary>The notices about plates and designs, under the toolbar row that acts on them.</summary>
+    /// <remarks>
+    /// Its own separator, and only when it has drawn something: with nothing wrong there is nothing
+    /// here, and a second separator over an empty gap reads as a section that failed to load.
+    /// </remarks>
+    private void DrawOutfitSourceNotices(
+        (bool PlatesLoaded, int SavedPlates, int NewPlates,
+         List<Outfit> OrphanPlates, List<Outfit> Desynced, List<Outfit> Stranded) sources)
+    {
+        var anyPlateNotice = sources.OrphanPlates.Count > 0 ||
+                             (sources.Desynced.Count > 0 && !_plateNoticeIgnored);
+
+        if (!anyPlateNotice && sources.Stranded.Count == 0) return;
+
+        DrawPlateNotices(sources.OrphanPlates, sources.Desynced);
+        DrawStrandedDesignNotice(sources.Stranded);
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -5798,9 +6303,15 @@ public class PluginUi : Window, IDisposable
     /// </remarks>
     private void DrawPlateSyncControls(bool loaded, int saved, int unsynced)
     {
+        var label = saved == 0 ? " Sync Plates " : " Resync Plates ";
+
+        // On the toolbar row with the tick boxes that show and hide the same cards, rather than alone
+        // on a line of its own underneath it. Joined the same way as everything else on that row, so
+        // it drops to the next line in a narrow window instead of running off the edge.
+        UiLayout.SameLineIfRoomForButton(label);
+
         if (!loaded) ImGui.BeginDisabled();
 
-        var label = saved == 0 ? " Sync Plates " : " Resync Plates ";
         if (ImGui.Button(label))
         {
             var (created, updated) = _wardrobe.SyncGlamourPlates();
@@ -5808,6 +6319,10 @@ public class PluginUi : Window, IDisposable
                 ? "Plates already up to date."
                 : $"Plates: {created} added, {updated} updated.";
             _plateNoticeIgnored = false;
+
+            // Now that the tick box is remembered, someone can sync with plates hidden and be told
+            // twenty were added while the grid shows none. Asking for them is asking to see them.
+            if (created > 0) ShowPlates = true;
         }
 
         if (!loaded) ImGui.EndDisabled();
@@ -6238,6 +6753,20 @@ public class PluginUi : Window, IDisposable
 
         ImGui.SameLine();
 
+        // Only while the outfit is on, which is exactly when the row above says Remove and there is
+        // no way left to press Wear. A partly-worn outfit already shows Wear, so it needs no second
+        // one beside it.
+        if (worn)
+        {
+            if (ImGui.SmallButton("Re-apply"))
+                _wardrobe.ReapplyOutfit(outfit);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Puts this outfit on again without taking it off first, so a change\n" +
+                                 "to one of its items — its mod options, its dyes, the piece itself —\n" +
+                                 "takes effect. Anything else you have on is left alone.");
+            ImGui.SameLine();
+        }
+
         // A partly-worn outfit shows Wear above, so without this there would be nothing to press to
         // take off what is still applied — most often the animation a Strip deliberately left running
         if (partly)
@@ -6583,6 +7112,20 @@ public class PluginUi : Window, IDisposable
                   "or a body without emptying the slots this card's own items and\n" +
                   "vanilla pieces are there to fill.");
 
+        var outfitHair = outfit.DesignAppliesHairstyle;
+        if (ImGui.Checkbox("Apply its hairstyle too##outfitdesign", ref outfitHair))
+        {
+            outfit.DesignAppliesHairstyle = outfitHair;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Off: the hairstyle you have stays, whatever the design was saved\n" +
+                             "with. A hair mod only replaces one hairstyle's files, so a design\n" +
+                             "applied for anything else would otherwise switch you off the one\n" +
+                             "your hair mod needs and leave it enabled but invisible.\n\n" +
+                             "On: its hairstyle applies with the rest, which is what this did\n" +
+                             "before the switch existed.");
+
         ImGui.Spacing();
 
         if (missing) ImGui.BeginDisabled();
@@ -6816,15 +7359,27 @@ public class PluginUi : Window, IDisposable
 
         if (ImGui.Button("Show In-Game Look", new Vector2(-1, 0)))
         {
-            var removed = _wardrobe.RevertToInGameLook();
+            // The same Ctrl as the toolbar's copy of this button and as Unequip All: the tick
+            // above is the standing answer, this is the one-off that overrides it
+            var ignoreBase = ImGui.GetIO().KeyCtrl;
+            var removed    = _wardrobe.RevertToInGameLook(ignoreBase);
+
+            var without = ignoreBase && baseChar != null
+                ? $" '{baseChar.Name}' left off."
+                : string.Empty;
+
             _plateApplyStatus = removed > 0
-                ? $"Took off {removed} item(s). You are now showing the game's own look."
-                : "You were already showing the game's own look.";
+                ? $"Took off {removed} item(s). You are now showing the game's own look.{without}"
+                : $"You were already showing the game's own look.{without}";
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Takes the wardrobe's clothes off and clears Glamourer, so the character\n" +
                              "shows exactly what the game has on them — plate included.\n\n" +
-                             "Animations, VFX and mounts are left running.");
+                             "Animations, VFX and mounts are left running." +
+                             (baseChar != null && _config.KeepBaseCharacterOnRevert
+                                 ? $"\n\n'{baseChar.Name}' goes back on top. Hold Ctrl to leave\n" +
+                                   "it off for this press without changing the tick above."
+                                 : string.Empty));
     }
 
     /// <summary>
@@ -8038,7 +8593,32 @@ public class PluginUi : Window, IDisposable
             ImGui.SetTooltip("Re-read the design list from Glamourer.");
 
         if (_settingsDesigns.Count == 0)
+        {
             ImGui.TextDisabled("No designs found — create one in Glamourer first.");
+            return;
+        }
+
+        if (!_config.RevertDesignId.HasValue) return;
+
+        ImGui.Spacing();
+        var revertHair = _config.RevertDesignAppliesHairstyle;
+        if (ImGui.Checkbox("Apply its hairstyle too##revertdesign", ref revertHair))
+        {
+            _config.RevertDesignAppliesHairstyle = revertHair;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Off: the hairstyle you have stays, whatever the design was saved\n" +
+                             "with. A hair mod only replaces one hairstyle's files, so a design\n" +
+                             "applied for anything else would otherwise switch you off the one\n" +
+                             "your hair mod needs and leave it enabled but invisible.\n\n" +
+                             "On: its hairstyle applies with the rest, which is what this did\n" +
+                             "before the switch existed.");
+
+        if (!_config.RevertDesignAppliesHairstyle)
+            ImGui.TextDisabled("Taking a hair mod off still brings the design's hairstyle with it, " +
+                               "whatever this says — otherwise you would be left on the hairstyle the " +
+                               "mod replaced, with the mod switched off.");
     }
 
     /// <summary>
@@ -8221,12 +8801,159 @@ public class PluginUi : Window, IDisposable
         SettingsBreak();
         DrawChangelogSettings();
         SettingsBreak();
+        DrawExperimentalSettings();
+        SettingsBreak();
         DrawSetupSettings();
     }
 
-    // The Experimental section is gone with the graduation of advanced dyes, which was the only
-    // thing in it. Worth putting back the next time something ships that has not been proven in the
-    // game — saying so out loud is better than letting it look as settled as the rest of the panel.
+    /// <summary>
+    /// Features that are finished enough to try but have not been proven in the game yet.
+    /// </summary>
+    /// <remarks>
+    /// Last before Setup, and off by default, because the honest thing to do with something written
+    /// against a plugin's undocumented internals is to say so rather than let it look as settled as
+    /// the rest of the panel. Anything here either graduates into a section of its own or goes.
+    /// <para>
+    /// It went away when advanced dyes graduated and is back for fully automatic sessions, which
+    /// reach into the game's own screenshot task — not an API, not documented, and not something
+    /// anyone has yet run over a wardrobe of several hundred pieces.
+    /// </para>
+    /// </remarks>
+    private void DrawExperimentalSettings()
+    {
+        ImGui.TextUnformatted("Experimental");
+        ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f),
+            "Not fully tested. Turn these on if you want to help find out how well they work.");
+        ImGui.Spacing();
+
+        DrawAutoSessionSettings();
+
+        SettingsBreak();
+
+        DrawTextureFlagSettings();
+    }
+
+    /// <summary>
+    /// The uncompressed-texture badge: what it reads, why the wardrobe is the place it gets said, and
+    /// the tick itself.
+    /// </summary>
+    /// <remarks>
+    /// The prose is here rather than on the tick box because the badge is meaningless without it.
+    /// Somebody who has never synced to another player has no reason to want this, and somebody who
+    /// has is usually surprised that their sync plugin's own auto-compress was never going to cover
+    /// their own mods in the first place.
+    /// </remarks>
+    private void DrawTextureFlagSettings()
+    {
+        ImGui.TextUnformatted("Flag uncompressed textures");
+        ImGui.TextDisabled("Marks a worn item that is putting textures on your character in a format " +
+                           "storing every pixel whole. Those upload and download at roughly four " +
+                           "times the size of the same texture block-compressed, so a synced friend " +
+                           "pays for them every time they load you.");
+        ImGui.Spacing();
+
+        ImGui.TextDisabled("It counts only what Penumbra is actually feeding the character. A mod " +
+                           "ships every option it has and hands over just the selected ones, so an " +
+                           "uncompressed texture in an option you are not using is not counted - it " +
+                           "costs nobody anything.");
+        ImGui.Spacing();
+
+        var flag = _config.FlagUncompressedTextures;
+        if (ImGui.Checkbox("Flag uncompressed textures on worn items", ref flag))
+        {
+            _config.FlagUncompressedTextures = flag;
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Asks Penumbra which files it is actually feeding your character and\n" +
+                             "reads their headers, off the main thread, every 15 seconds.\n\n" +
+                             "Not the contents of the mod folders: a mod ships every option it has,\n" +
+                             "and only the selected ones reach your character. The rest cost nobody\n" +
+                             "anything and are not counted.\n\n" +
+                             "It only ever reports. Nothing here converts or writes anything.\n\n" +
+                             "Experimental: the format list covers what mods normally ship, but a\n" +
+                             "format it does not recognise is passed over rather than guessed at.");
+
+        if (!flag)
+        {
+            ImGui.TextDisabled("Off, nothing is read and no badges are drawn.");
+            return;
+        }
+
+        ImGui.Spacing();
+
+        var threshold = _config.UncompressedTextureFlagThresholdMiB;
+        ImGui.SetNextItemWidth(UiScale.S(260));
+        if (ImGui.SliderInt("Only flag above##texflagthreshold", ref threshold, 0, 64, "%d MiB"))
+        {
+            _config.UncompressedTextureFlagThresholdMiB = Math.Clamp(threshold, 0, 64);
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("How much uncompressed texture an item has to be putting on your\n" +
+                             "character before it is worth saying so.\n\n" +
+                             "Weighed rather than counted, because the two are not the same thing:\n" +
+                             "two small mask textures come to a few KB and are not worth knowing\n" +
+                             "about, while a single uncompressed 4K normal map is about 85 MiB.\n\n" +
+                             "An uncompressed 1K texture is roughly 5 MiB and a 2K roughly 21 MiB,\n" +
+                             "so the default of 4 catches anything that costs a real download.\n\n" +
+                             "Set it to 0 to flag every last one.");
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("A warning triangle appears beside the name on any worn card over that " +
+                           "figure. Hover it for the count and the size.");
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(1f, 0.8f, 0.4f, 1f),
+            "The wardrobe does not compress anything. Convert them in Lightless' Character " +
+            "Analysis window — its auto-compress setting only ever touches its own download " +
+            "cache, never your own mods.");
+
+        if (ImGui.Button("Re-check now"))
+            Plugin.TextureFlags.Clear();
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Reads it again now instead of waiting out the 15-second interval.\n\n" +
+                             "Rarely needed — a converted mod clears its own badge — but it is the\n" +
+                             "way to confirm a conversion landed without taking the item off.");
+    }
+
+    /// <summary>
+    /// The fully automatic session: what it is, what it needs set up first, and the tick itself.
+    /// </summary>
+    /// <remarks>
+    /// The prose belongs here rather than on the tick box because this is the setting whose failure
+    /// mode is silent and expensive: a run started with no camera angles saved, or outside GPose, or
+    /// against the wrong screenshots folder, produces several hundred pictures of the wrong thing
+    /// before anybody looks. Saying what it needs costs four lines and saves that.
+    /// </remarks>
+    private void DrawAutoSessionSettings()
+    {
+        ImGui.TextUnformatted("Fully automatic sessions");
+        ImGui.TextDisabled("The session takes the screenshots itself. Each item is worn, the camera " +
+                           "moves to the angle its slot asks for, the shot is taken, cropped and " +
+                           "filed, and it moves on — the automatic session with the one keypress it " +
+                           "still needed taken out of it.");
+        ImGui.Spacing();
+
+        ImGui.TextDisabled("It needs three things set up first, and none of them announce themselves " +
+                           "when they are wrong:");
+        ImGui.Bullet();
+        ImGui.SameLine();
+        ImGui.TextDisabled("A camera angle saved for every slot you are photographing — without one, " +
+                           "the shot is taken from wherever the camera is standing.");
+        ImGui.Bullet();
+        ImGui.SameLine();
+        ImGui.TextDisabled("GPose. Angles are written to the GPose camera and nowhere else.");
+        ImGui.Bullet();
+        ImGui.SameLine();
+        ImGui.TextDisabled("The right screenshots folder, above. A run pauses itself after three " +
+                           "pictures fail to arrive, but three is still three.");
+        ImGui.Spacing();
+
+        DrawAutoEnableSetting();
+    }
 
     /// <summary>Spacing and a rule between two settings sections.</summary>
     private static void SettingsBreak()
@@ -8693,7 +9420,11 @@ public class PluginUi : Window, IDisposable
 
             if (!_wardrobe.IsItemWorn(item))
             {
-                ImGui.SameLine();
+                // Measured rather than joined outright. This panel is a fixed 360px and wraps
+                // its text at the edge, so a long mod name can leave a few pixels here — and a
+                // bare SameLine put the marker in them, where the wrap broke it one letter to a
+                // line and stood it up as a column of single characters beside the row.
+                UiLayout.SameLineIfRoomForText(" (not worn)");
                 ImGui.TextDisabled("(not worn)");
             }
 
@@ -8859,6 +9590,20 @@ public class PluginUi : Window, IDisposable
                   "nails on the hands slot, a piece worn as skin — which customisations\n" +
                   "alone cannot describe.");
         ImGui.Spacing();
+
+        var hairstyle = baseChar.DesignAppliesHairstyle;
+        if (ImGui.Checkbox("Apply its hairstyle too##basedesign", ref hairstyle))
+        {
+            baseChar.DesignAppliesHairstyle = hairstyle;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Off: the hairstyle you have stays, whatever the design was saved\n" +
+                             "with. A hair mod only replaces one hairstyle's files, so a design\n" +
+                             "applied for anything else would otherwise switch you off the one\n" +
+                             "your hair mod needs and leave it enabled but invisible.\n\n" +
+                             "On: its hairstyle applies with the rest, which is what this did\n" +
+                             "before the switch existed.");
 
         var keepApplied = baseChar.KeepDesignApplied;
         if (ImGui.Checkbox("Keep this design on, not just on a strip", ref keepApplied))
@@ -9234,6 +9979,12 @@ public class PluginUi : Window, IDisposable
         ImGui.TextDisabled(manualSession
             ? "Framing a piece well usually takes a few attempts, and this is the mode for that."
             : "One screenshot per item, plus a shot at each camera angle you have ticked.");
+
+        ImGui.TextDisabled(_session.AutoEnabled
+            ? "Fully automatic sessions are turned on — use Super Screenshot Session in the toolbar. " +
+              "The switch and its delay are under Experimental, at the bottom of this panel."
+            : "A session can also take the screenshots for you, unattended. That is under " +
+              "Experimental, at the bottom of this panel.");
 
         var stripDuringSession = _session.StripOthers;
         if (ImGui.Checkbox("Strip other items before each shot", ref stripDuringSession))

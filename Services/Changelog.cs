@@ -41,6 +41,184 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 5, 4, 0), "24 August 2026", new List<ChangelogSection>
+        {
+            new("What's new", new List<ChangelogNote>
+            {
+                new("Fully automatic screenshot sessions. Experimental.",
+                    "Settings → Experimental, or the tick on the session HUD. The session takes " +
+                    "the screenshots itself: each item is worn, the camera moves to the angle its " +
+                    "slot asks for, the shot is taken, cropped and filed, and it moves on to the " +
+                    "next — the automatic session with the one keypress it still needed taken " +
+                    "out of it. Point it at a wardrobe of a few hundred pieces and go and do " +
+                    "something else.\n\n" +
+                    "It is under Experimental because it presses the game's own screenshot " +
+                    "function, which is not an API, and because nobody has yet run it over a " +
+                    "large wardrobe. Off until you turn it on. Watch the first few shots."),
+
+                new("A delay setting for it.",
+                    "How long to wait before each shot, so what is being photographed has settled. " +
+                    "Raise it if pictures come out mid-redraw or at the previous angle; a slower " +
+                    "drive wants more. The first shot of each item is given longer again on top of " +
+                    "it, since that is the one that follows a redraw."),
+
+                new("Pause, and Shoot Now.",
+                    "An automatic run can be held where it is so you can move the camera, and " +
+                    "carries on from the time the countdown had left rather than starting it over. " +
+                    "Shoot Now takes the picture the session is waiting for immediately, and is " +
+                    "there in every mode — including manual, where it saves reaching for the " +
+                    "screenshot key at all."),
+
+                new("An automatic run stops rather than grinding on.",
+                    "If three shots in a row are asked for and nothing is filed — which almost " +
+                    "always means Settings → Screenshots is pointed at the wrong folder — it " +
+                    "pauses on the shot that failed and says so in the log, instead of " +
+                    "photographing the whole wardrobe into somewhere nobody is watching."),
+
+                new("Plates and Designs stay as you leave them.",
+                    "The two tick boxes over the outfits grid used to come back ticked at every " +
+                    "login, so a wardrobe kept clear of twenty glamour plates had to be cleared " +
+                    "again every time you opened the game. They are remembered now. Syncing " +
+                    "plates ticks Plates back on if it added any."),
+
+                new("Sync Plates moved up onto the toolbar row.",
+                    "It had a line to itself directly under the row it belongs to. It now sits " +
+                    "beside the tick boxes for the same cards, with its counts after it, and the " +
+                    "notices about plates that have drifted or been emptied stay below the " +
+                    "separator where they were."),
+            }),
+
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("The leftover mods notice listed things you were wearing.",
+                    "The notice that says N mods the wardrobe enabled are still on with nothing " +
+                    "wearing them was built from the worn list, which is empty every time the " +
+                    "game starts — so after " +
+                    "a restart it named every mod the wardrobe had switched on, including the ones " +
+                    "holding up the look on your character at that moment, and offered them all to " +
+                    "Disable Them.\n\n" +
+                    "Your character is now read first, every time, and anything genuinely on is " +
+                    "recorded as worn before the list is built. What is left is what nothing in " +
+                    "the wardrobe accounts for — usually an item since deleted, or one whose mod " +
+                    "options have been changed in Penumbra since."),
+
+                new("A scan could pass over an item you were wearing without a word.",
+                    "A scan recorded what it found one slot at a time, and would not touch a slot " +
+                    "the worn list already had an entry for — even when that entry named " +
+                    "something the same scan had just proved was not on. The item actually on " +
+                    "your character lost the slot to it, was never recorded as worn, and said " +
+                    "nothing about it in the log: pressing Scan looked like it had worked and " +
+                    "changed nothing.\n\n" +
+                    "Most visibly, the mod behind it was then reported as a leftover after every " +
+                    "restart, and no amount of scanning would clear it. Slots are now settled " +
+                    "after the whole wardrobe has been looked at, so a stale entry gives way to " +
+                    "the item that is really there, and the leftovers notice asks the scan " +
+                    "directly rather than reading it off the worn list."),
+
+                new("A customisation item can apply a Glamourer design with it.",
+                    "A face sculpt replaces the files of one particular face, so on a character " +
+                    "set to any other it is enabled, correct and completely invisible. Hair has " +
+                    "never had this problem — the wardrobe reads the hairstyle number out of the " +
+                    "mod and switches you to it — but a face has no single number to read: what " +
+                    "makes a sculpt look right is the face together with the skin, eye and hair " +
+                    "colouring around it.\n\n" +
+                    "So a hair, face, tail, ear or skin item can now name a Glamourer design, " +
+                    "applied whenever it goes on. Its customisations only — its gear and its " +
+                    "hairstyle are each a tick box, and both are off. The hairstyle " +
+                    "especially: every design carries one, and a design applied for its face " +
+                    "would otherwise switch you off the hairstyle your hair mod needs and " +
+                    "leave that mod enabled and invisible. A live link, not a copy: edit the " +
+                    "design in Glamourer and the next apply has the edit.\n\n" +
+                    "Taking the item off does not undo it. Settings → Revert customisation mods " +
+                    "to is what puts your own face back, as it already was for these mods."),
+
+                new("Ctrl on In-Game Look leaves the base character off.",
+                    "Unequip All has always taken a Ctrl-held press to take the base off " +
+                    "with everything else. In-Game Look now does the same, on both the " +
+                    "toolbar button and the one in a glamour plate’s panel.\n\n" +
+                    "The setting beside it is the standing answer; this is the one-off, " +
+                    "for when you want to see what you really look like without changing " +
+                    "a setting you will only have to change back. The status line says so " +
+                    "when the base was left off."),
+
+                new("Any design the wardrobe applies can leave your hairstyle alone.",
+                    "Every Glamourer design carries a hairstyle whether or not it was saved " +
+                    "for one. A hair mod only replaces one hairstyle's files — so a design " +
+                    "applied for something else entirely, a base character's colouring or an " +
+                    "outfit's body, would switch you off the hairstyle your hair mod needs " +
+                    "and leave it enabled, correct and invisible.\n\n" +
+                    "Apply its hairstyle too now sits beside Apply its gear too on base " +
+                    "characters, outfits, the revert design in Settings, and customisation " +
+                    "items. On everywhere it existed before, so nothing changes until you " +
+                    "turn it off; off by default on the new per-item designs, which are " +
+                    "applied for a face and have no business touching hair.\n\n" +
+                    "One exception, whatever the setting says: taking a hair mod off always " +
+                    "brings the revert design's hairstyle with it. Otherwise you would be " +
+                    "left on the hairstyle the mod replaced with the mod switched off."),
+
+                new("It warns when a design and a customisation mod disagree.",
+                    "A face mod replaces the files of particular face numbers, so a design " +
+                    "setting any other face leaves it enabled, correct and invisible — which " +
+                    "is the failure the design was picked to prevent. The edit panel now " +
+                    "says so under the picker, and the log says so when the item is worn.\n\n" +
+                    "Checked against every face the mod covers for your race rather than " +
+                    "one number, because mods routinely cover several at once: option " +
+                    "groups let a single mod ship f0001 through f0004, often across more " +
+                    "than one race. It also says when a mod has no files for your race at " +
+                    "all.\n\n" +
+                    "Tail and Viera ear mods are checked the same way, against the tail " +
+                    "shape — one customisation is the tail on races that have one and the " +
+                    "ears on Viera. Skin and hair are checked against your race only: a " +
+                    "skin mod’s files are b0001 for everybody, and a hair mod’s number is " +
+                    "set from the mod itself rather than left to a design.\n\n" +
+                    "It stays quiet where it cannot answer honestly — a design that sets no " +
+                    "such number, a race it cannot read, or an item imported before this " +
+                    "existed. Press Re-detect on one of those and the result says what the " +
+                    "mod replaces."),
+
+                new("A face sculpt and a face texture can be worn at once.",
+                    "Customisation slots were exclusive: one Face item at a time, one Hair, one " +
+                    "Skin. But a sculpt and the texture painted on it are not alternatives to " +
+                    "each other, so applying one took the other off and there was no way to have " +
+                    "both.\n\n" +
+                    "Each customisation item now carries a Layer — sculpt for a mod that ships a " +
+                    "model, texture for one that ships only textures — and only items sharing a " +
+                    "layer displace each other. Two sculpts still swap, as they should. It is " +
+                    "free text, so a mod the detection has no word for can be given one: type " +
+                    "lashes into two items and only those two will ever replace each other.\n\n" +
+                    "Items imported before this have a blank layer and still take the whole slot, " +
+                    "which is what they did before — filling them all in would have left two " +
+                    "sculpts enabled at once. Press Re-detect on one to fill it in."),
+
+                new("Outfits is a view, not a filter.",
+                    "It used to toggle, which let it and All both look like the current view at " +
+                    "once, and let a slot button quietly change the filter under an outfits grid " +
+                    "that stayed where it was. Pressing Outfits now goes to outfits, and pressing " +
+                    "All or any slot goes to items — one of them is lit at a time. Favourites, " +
+                    "Worn and Variants are unchanged: those narrow whichever view you are in."),
+
+                new("An outfit's headgear and weapon toggles were undone a moment after being set.",
+                    "An outfit set to hide the headgear applied it correctly and then lost it: " +
+                    "wearing the outfit asks for a character redraw, that redraw finishes a frame " +
+                    "or two later, and the hat came back with it while Glamourer still had it " +
+                    "recorded as hidden — so asking again changed nothing, because nothing about " +
+                    "the value had changed. Both toggles are now written again after each redraw, " +
+                    "the same as the outfit's items and dyes already were.\n\n" +
+                    "A screenshot of an outfit ignored them too, using whatever you had set " +
+                    "before the session instead. The outfit's own answer is used where it has " +
+                    "one; where it says leave alone, nothing changes."),
+            }),
+
+            new("Worth doing once", new List<ChangelogNote>
+            {
+                new("Set your camera angles up before running one.",
+                    "Settings → Screenshots → Edit Angles For Every Slot. An automatic session " +
+                    "has nobody to frame a shot, so a slot with no angle saved is photographed from " +
+                    "wherever the camera happens to be standing — and it needs the GPose camera, " +
+                    "so start the run in GPose. The session HUD says so if you are not."),
+            }),
+        }),
+
         new(new Version(1, 5, 3, 2), "20 August 2026", new List<ChangelogSection>
         {
             new("What's new", new List<ChangelogNote>

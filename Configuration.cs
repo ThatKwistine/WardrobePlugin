@@ -297,6 +297,85 @@ public class Configuration : IPluginConfiguration
     public bool ManualScreenshotMode { get; set; }
 
     /// <summary>
+    /// Whether fully automatic sessions are offered at all. The Experimental opt-in.
+    /// </summary>
+    /// <remarks>
+    /// Separate from <see cref="AutoScreenshotMode"/>, which is a different question: this one is
+    /// "do I want this feature", and that one is "is the session in front of me running itself".
+    /// Folding the two into one tick made pressing <b>Screenshot Session</b> — which has to mean a
+    /// session that is not automatic — turn the whole feature off and take its button off the
+    /// toolbar with it.
+    /// <para>
+    /// Off until turned on, because it reaches into the game's own screenshot task rather than any
+    /// API, and because an unattended run over a whole wardrobe is not something to arrive in an
+    /// update unasked.
+    /// </para>
+    /// </remarks>
+    public bool AutoScreenshotEnabled { get; set; }
+
+    /// <summary>
+    /// Whether worn items whose mods ship uncompressed textures are marked as such. The Experimental
+    /// opt-in.
+    /// </summary>
+    /// <remarks>
+    /// Worn only, and deliberately: an uncompressed texture in a mod nobody is wearing costs nothing
+    /// to anyone, and badging the whole grid would be several hundred warnings about a problem that
+    /// is not currently happening. What is on the character is what a sync plugin uploads, so that is
+    /// what is worth being told about.
+    /// <para>
+    /// Off until turned on. It reads the header of every <c>.tex</c> in a worn item's mods, which is
+    /// cheap but not free, and the badge means nothing to anyone not syncing to other people.
+    /// </para>
+    /// </remarks>
+    public bool FlagUncompressedTextures { get; set; }
+
+    /// <summary>
+    /// How much uncompressed texture an item has to be putting on the character before it is worth
+    /// a badge, in MiB.
+    /// </summary>
+    /// <remarks>
+    /// Counting rather than weighing was the first version's mistake and it made the badge useless:
+    /// an item delivering two 8 KB mask textures got the same warning as one delivering an 85 MiB
+    /// uncompressed 4K normal map. The first is not worth knowing about and the second is the entire
+    /// point, so the threshold is what separates them.
+    /// <para>
+    /// Four is the default because an uncompressed 1K texture is about 5 MiB and a 2K about 21 MiB,
+    /// so it catches everything that costs a download while leaving the small masks alone.
+    /// </para>
+    /// </remarks>
+    public int UncompressedTextureFlagThresholdMiB { get; set; } = 4;
+
+    /// <summary>
+    /// A session takes its own screenshots, so a whole wardrobe can be photographed unattended.
+    /// </summary>
+    /// <remarks>
+    /// The other end of the scale from <see cref="ManualScreenshotMode"/>, and the two are exclusive:
+    /// one waits on a person for every picture, this one waits on nobody. Each item is worn, the camera
+    /// moves to the angle the slot's preset list asks for, the shot is taken and filed, and the session
+    /// moves on — the ordinary automatic session with the one keypress it still needed taken out of it.
+    /// <para>
+    /// Set by whichever toolbar button was pressed — <b>Screenshot Session</b> clears it,
+    /// <b>Super Screenshot Session</b> sets it — and persisted so it is in effect for the first item,
+    /// and so the other ways into a session (outfits, a selection, a single item from its edit panel)
+    /// follow the kind of run you last asked for. Means nothing unless
+    /// <see cref="AutoScreenshotEnabled"/> is on.
+    /// </para>
+    /// </remarks>
+    public bool AutoScreenshotMode { get; set; }
+
+    /// <summary>
+    /// Seconds an automatic session waits before each shot, so what it is photographing has settled.
+    /// </summary>
+    /// <remarks>
+    /// The setting the request for this feature asked for by name, because the right value is a
+    /// property of the machine rather than of the wardrobe: a redraw and a camera move both take time
+    /// nobody can put a fixed number on, and a shot fired too early is a picture of the previous item.
+    /// The first shot of each item is given longer again on top of this — see
+    /// <see cref="ScreenshotSessionService"/> — since that is the one that follows a redraw.
+    /// </remarks>
+    public float AutoScreenshotDelay { get; set; } = 2f;
+
+    /// <summary>
     /// List Penumbra's mods newest first when importing, instead of alphabetically.
     /// </summary>
     /// <remarks>
@@ -327,6 +406,25 @@ public class Configuration : IPluginConfiguration
     /// </para>
     /// </remarks>
     public bool ShowGlamourerDesigns { get; set; }
+
+    /// <summary>
+    /// Show glamour plate cards in the outfits grid.
+    /// </summary>
+    /// <remarks>
+    /// The tick box on the outfits toolbar, and remembered rather than reset each session. It started
+    /// out as a way of looking at the grid for a minute, like favourites or worn — but somebody with
+    /// twenty plates and a handful of outfits of their own is not glancing past them, they have
+    /// decided, and having to decide it again at every login is the whole of the complaint.
+    /// <para>
+    /// Ticked by default, and only ever offered while there is a card of that kind to hide, so a
+    /// wardrobe that has never seen a plate cannot be left with this off and nothing to say why.
+    /// </para>
+    /// </remarks>
+    public bool ShowPlateOutfits { get; set; } = true;
+
+    /// <summary>Show Glamourer design cards in the outfits grid.</summary>
+    /// <inheritdoc cref="ShowPlateOutfits" path="/remarks"/>
+    public bool ShowDesignOutfits { get; set; } = true;
 
     /// <summary>
     /// Manage mods that are not equipment — animations, VFX, mounts and minions.
@@ -511,6 +609,19 @@ public class Configuration : IPluginConfiguration
 
     /// <summary>Display name of <see cref="RevertDesignId"/>, so settings can show it without a lookup.</summary>
     public string RevertDesignName { get; set; } = string.Empty;
+
+    /// <summary>Whether the revert design's hairstyle is applied along with the rest of it.</summary>
+    /// <remarks>
+    /// True, which is what reverting did before the switch existed. Turn it off and taking a face or
+    /// skin mod off no longer disturbs a hair mod you are still wearing — the design puts your face
+    /// back and leaves your hair where it is.
+    /// <para>
+    /// Overridden for one case, whatever this says: taking a <b>hair</b> mod off always brings the
+    /// design's hairstyle with it. Without that the character would be left standing on the hairstyle
+    /// the mod replaced with the mod now disabled, which is precisely what reverting is for.
+    /// </para>
+    /// </remarks>
+    public bool RevertDesignAppliesHairstyle { get; set; } = true;
 
     /// <summary>
     /// Hide mods that are already imported from the import panel's mod list entirely, rather

@@ -851,7 +851,7 @@ public class MassImportPanel : Window, IDisposable
             var children = ChildrenOf(row).ToList();
             foreach (var child in children) EnsureAnalysis(child);
 
-            var slots = BuildSlots(row, children, out var setIds, out var replaces);
+            var slots = BuildSlots(row, children, out var setIds, out var replaces, out var layers);
             if (slots.Count == 0) { skipped++; continue; }
 
             var extraRefs = children
@@ -895,9 +895,11 @@ public class MassImportPanel : Window, IDisposable
                     Name              = name,
                     Slot              = slot,
                     Replaces          = slot.IsModCategory() ? replaces.GetValueOrDefault(slot) : null,
+                    Layer             = slot.IsCustomization() ? layers.GetValueOrDefault(slot) : null,
                     GlamourerItemId   = glamId,
                     GlamourerItemName = glamName,
                     ModelSetId        = slotSetId,
+                    CustomizeIdsByRace = ItemImportPanel.CoverageFor(analysis, slot),
                     HairIdByRace      = slot == EquipSlot.Hair
                         ? analysis.HairIdsByRace.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value)
                         : new Dictionary<string, ushort>(),
@@ -955,14 +957,18 @@ public class MassImportPanel : Window, IDisposable
     /// never have produced.
     /// </summary>
     private List<EquipSlot> BuildSlots(Row row, List<Row> children,
-        out Dictionary<EquipSlot, ushort> setIds, out Dictionary<EquipSlot, string> replaces)
+        out Dictionary<EquipSlot, ushort> setIds, out Dictionary<EquipSlot, string> replaces,
+        out Dictionary<EquipSlot, string> layers)
     {
         setIds   = new Dictionary<EquipSlot, ushort>();
         replaces = new Dictionary<EquipSlot, string>();
+        layers   = new Dictionary<EquipSlot, string>();
 
         var slots = new HashSet<EquipSlot>(row.Analysis!.DetectedSlots);
         foreach (var (slot, id) in row.Analysis.SlotSetIds) setIds.TryAdd(slot, id);
         foreach (var (slot, key) in row.Analysis.ReplaceKeys) replaces.TryAdd(slot, key);
+        foreach (var slot in row.Analysis.DetectedSlots)
+            if (row.Analysis.LayerFor(slot) is { } layer) layers.TryAdd(slot, layer);
 
         foreach (var child in children)
         {
@@ -972,6 +978,8 @@ public class MassImportPanel : Window, IDisposable
             // wherever both it and a supplement describe the same slot.
             foreach (var (slot, id) in child.Analysis.SlotSetIds) setIds.TryAdd(slot, id);
             foreach (var (slot, key) in child.Analysis.ReplaceKeys) replaces.TryAdd(slot, key);
+            foreach (var slot in child.Analysis.DetectedSlots)
+                if (child.Analysis.LayerFor(slot) is { } layer) layers.TryAdd(slot, layer);
         }
 
         if (!_config.ModCategoriesEnabled)

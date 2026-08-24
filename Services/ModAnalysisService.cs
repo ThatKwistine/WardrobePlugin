@@ -176,8 +176,49 @@ public record ModAnalysisResult(
     /// animation, the monster id for a mount. Equipment identifies itself by set ID instead, so only
     /// mod categories ever appear here. See <see cref="Models.WardrobeItem.Replaces"/>.
     /// </summary>
-    IReadOnlyDictionary<EquipSlot, string> ReplaceKeys
-);
+    IReadOnlyDictionary<EquipSlot, string> ReplaceKeys,
+    /// <summary>
+    /// Slots the mod ships an actual model for, as opposed to only materials and textures.
+    /// </summary>
+    /// <remarks>
+    /// What separates a sculpt from a retexture, and so what decides a customisation item's
+    /// <see cref="Models.WardrobeItem.Layer"/>. A mod shipping both is a sculpt: the textures are
+    /// its own, painted on the model beside them.
+    /// </remarks>
+    IReadOnlySet<EquipSlot> ModelSlots,
+    /// <summary>
+    /// Every customisation number the mod covers, keyed by slot and then by model race code — the
+    /// face numbers of a face mod, and so on.
+    /// </summary>
+    /// <remarks>
+    /// A set per race rather than one number, because a mod routinely covers several at once: option
+    /// groups let one face mod ship f0001 through f0004, and for more than one race beside. The
+    /// single number in <see cref="SlotSetIds"/> is whichever was seen first, which is fine for
+    /// naming the mod and useless for asking "does this cover the face I am about to be given".
+    /// </remarks>
+    IReadOnlyDictionary<EquipSlot, IReadOnlyDictionary<int, IReadOnlyList<ushort>>> CustomizeCoverage
+)
+{
+    /// <summary>Layer name for a customisation mod that reshapes the part it is on.</summary>
+    public const string SculptLayer = "sculpt";
+
+    /// <summary>Layer name for one that only repaints it.</summary>
+    public const string TextureLayer = "texture";
+
+    /// <summary>
+    /// The layer an item for this slot should be given, or null when the question does not arise.
+    /// </summary>
+    /// <remarks>
+    /// Null for everything but customisation, which is the only place two mods can be on one slot
+    /// doing different jobs — and null too for a customisation slot this analysis never saw, so a
+    /// hand-made item with no mod behind it is left blank rather than guessed at. Blank means the
+    /// item takes the whole slot, which is what every item did before layers existed.
+    /// </remarks>
+    public string? LayerFor(EquipSlot slot) =>
+        !slot.IsCustomization() || !DetectedSlots.Contains(slot)
+            ? null
+            : ModelSlots.Contains(slot) ? SculptLayer : TextureLayer;
+}
 
 public class ModAnalysisService
 {
@@ -191,6 +232,16 @@ public class ModAnalysisService
     /// <see cref="CustomTexturePattern"/>.
     /// </summary>
     private int _customTextures;
+
+    /// <summary>Every customisation id seen this Analyze call, by slot then model race code.</summary>
+    private readonly Dictionary<EquipSlot, Dictionary<int, SortedSet<ushort>>> _coverage = new();
+
+    /// <summary>Slots a <c>.mdl</c> was seen for during the current Analyze call.</summary>
+    /// <remarks>
+    /// An instance field rather than another parameter threaded through <c>ClassifyPath</c> and
+    /// <c>AddGroup</c>, which the two counters above already do for the same reason.
+    /// </remarks>
+    private readonly HashSet<EquipSlot> _modelSlots = new();
 
     public ModAnalysisService(IPluginLog? log = null) => _log = log;
 
@@ -219,6 +270,14 @@ public class ModAnalysisService
     /// <summary>Drops the provenance, leaving the ids the rest of the plugin works in.</summary>
     private static Dictionary<TKey, ushort> Ids<TKey>(Dictionary<TKey, Detected> map) where TKey : notnull =>
         map.ToDictionary(kv => kv.Key, kv => kv.Value.Id);
+
+    /// <summary>Freezes the coverage gathered this call into the result's read-only shape.</summary>
+    private IReadOnlyDictionary<EquipSlot, IReadOnlyDictionary<int, IReadOnlyList<ushort>>> Coverage() =>
+        _coverage.ToDictionary(
+            slot => slot.Key,
+            slot => (IReadOnlyDictionary<int, IReadOnlyList<ushort>>)slot.Value.ToDictionary(
+                race => race.Key,
+                race => (IReadOnlyList<ushort>)race.Value.ToList()));
 
     /// <summary>Whether a game path points at a model rather than a material or texture.</summary>
     private static bool IsModelPath(string gamePath) =>
@@ -346,6 +405,8 @@ public class ModAnalysisService
     {
         _pathsSeen      = 0;
         _customTextures = 0;
+        _modelSlots.Clear();
+        _coverage.Clear();
         var slots   = new HashSet<EquipSlot>();
         var setIds  = new Dictionary<EquipSlot, Detected>();
         var hairIds = new Dictionary<int, Detected>();
@@ -353,7 +414,8 @@ public class ModAnalysisService
         var groups  = new List<ModOptionGroup>();
 
         if (!Directory.Exists(modFolderPath))
-            return new ModAnalysisResult(slots, groups, Ids(setIds), Ids(hairIds), replace);
+            return new ModAnalysisResult(slots, groups, Ids(setIds), Ids(hairIds), replace,
+                new HashSet<EquipSlot>(_modelSlots), Coverage());
 
         var meta = ReadMeta(Path.Combine(modFolderPath, "meta.json"));
 
@@ -424,7 +486,8 @@ public class ModAnalysisService
                               $"custom textures — taking it for a skin.");
         }
 
-        return new ModAnalysisResult(slots, groups, Ids(setIds), Ids(hairIds), replace);
+        return new ModAnalysisResult(slots, groups, Ids(setIds), Ids(hairIds), replace,
+                new HashSet<EquipSlot>(_modelSlots), Coverage());
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -706,6 +769,21 @@ public class ModAnalysisService
             // under another id is a supporting file — see Detected — so it only answers when no model
             // does, which is what keeps a plain retexture working.
             var fromModel = IsModelPath(gamePath);
+
+            // A model for this part means the mod reshapes it rather than repainting it, which is
+            // what a customisation item's layer is decided from
+            if (fromModel) _modelSlots.Add(slot);
+
+            // Every id, not the first: a mod covering four faces across two races has to be able to
+            // say so, or a design setting the third of them looks like a mismatch
+            if (int.TryParse(m.Groups[1].Value, out var coverRace))
+            {
+                if (!_coverage.TryGetValue(slot, out var byRace))
+                    _coverage[slot] = byRace = new Dictionary<int, SortedSet<ushort>>();
+                if (!byRace.TryGetValue(coverRace, out var ids))
+                    byRace[coverRace] = ids = new SortedSet<ushort>();
+                ids.Add(customizeId);
+            }
 
             // Kept as a fallback for when the player's race is unknown or the mod covers only one
             Record(setIds, slot, customizeId, fromModel);

@@ -82,6 +82,24 @@ public class WardrobeItem : IImageOwner
     public Dictionary<string, ushort> HairIdByRace { get; set; } = new();
 
     /// <summary>
+    /// Every customisation number this mod covers, keyed by model race code ("0101", "1801", …) — the
+    /// face numbers of a face mod, and so on.
+    /// </summary>
+    /// <remarks>
+    /// A list per race, not one number, because a mod routinely covers several: option groups let a
+    /// single face mod ship f0001 through f0004, and often for more than one race beside. This is
+    /// what makes it possible to say whether the face a <see cref="DesignId"/> would set is one the
+    /// mod actually replaces, without warning about a mod that covers it perfectly well under a
+    /// number that happened not to be read first.
+    /// <para>
+    /// Empty on items imported before this was recorded, and on anything that is not customisation.
+    /// Empty means no check rather than a failed one: nothing is claimed about a mod nobody has
+    /// re-read. Press Re-detect to fill it in.
+    /// </para>
+    /// </remarks>
+    public Dictionary<string, List<ushort>> CustomizeIdsByRace { get; set; } = new();
+
+    /// <summary>
     /// What this mod replaces within its category, for the mod categories that have no equipment
     /// slot to be exclusive on — the .pap file name for an animation, the monster id for a mount.
     /// </summary>
@@ -93,6 +111,89 @@ public class WardrobeItem : IImageOwner
     /// by hand when their file names differ.
     /// </remarks>
     public string? Replaces { get; set; }
+
+    /// <summary>
+    /// Which layer of a customisation slot this item occupies, so two mods doing different jobs to
+    /// the same part of the character can be worn together.
+    /// </summary>
+    /// <remarks>
+    /// A face sculpt and a face retexture are both on the Face slot and are not alternatives to each
+    /// other — the texture goes on the sculpt. Keying customisation purely on the slot made them
+    /// mutually exclusive, so applying one took the other off and there was no way to have both.
+    /// Items sharing a layer still displace each other, which is what keeps two sculpts, or two
+    /// retextures, behaving as the alternatives they are.
+    /// <para>
+    /// Detected on import as <c>sculpt</c> when the mod ships a model for the slot and
+    /// <c>texture</c> when it ships only materials and textures, and editable afterwards — it is free
+    /// text, so a mod doing something the detection has no word for can be given one (<c>lashes</c>,
+    /// <c>brows</c>) and will then only ever displace others marked the same.
+    /// </para>
+    /// <para>
+    /// Blank means the item takes the whole slot, displacing everything else in it. That is what
+    /// every item imported before this existed has, and deliberately so: the alternative was every
+    /// old item becoming independent overnight, which would stop two face sculpts displacing each
+    /// other and leave both enabled at once. Press Re-detect to fill it in.
+    /// </para>
+    /// <para>
+    /// Ignored outside <see cref="EquipSlotExtensions.IsCustomization"/>. Equipment slots are
+    /// exclusive because the character has one head, and mod categories have
+    /// <see cref="Replaces"/> for the same job.
+    /// </para>
+    /// </remarks>
+    public string? Layer { get; set; }
+
+    /// <summary>
+    /// A Glamourer design applied along with this item, for a mod that only shows on a character
+    /// set up a particular way.
+    /// </summary>
+    /// <remarks>
+    /// A face sculpt replaces the files of one specific face number, so it is invisible on a
+    /// character wearing any other — the mod is enabled, everything is correct, and the face does not
+    /// change. Hair has been handled since the beginning by reading the hairstyle number out of the
+    /// mod and setting it; a face has no such single number to set, because what makes a sculpt look
+    /// right is the face number together with the skin, eye and hair colouring around it. A design is
+    /// the thing that already holds all of that.
+    /// <para>
+    /// A live link and never a copy, as everywhere else a design is referenced: only the id is
+    /// stored, and it is handed to Glamourer at the moment of wearing, so editing the design in
+    /// Glamourer puts the edit in the next apply.
+    /// </para>
+    /// <para>
+    /// Null means the item applies no design, which is what every item has until somebody picks one.
+    /// Offered only for <see cref="EquipSlotExtensions.IsCustomization"/> slots: gear has a Glamourer
+    /// item of its own to equip, and outfits and base characters are where a design belongs when it
+    /// is the whole look rather than one piece's prerequisite.
+    /// </para>
+    /// </remarks>
+    public Guid? DesignId { get; set; }
+
+    /// <summary>Display name of <see cref="DesignId"/>, so the UI needs no lookup to show it.</summary>
+    public string DesignName { get; set; } = string.Empty;
+
+    /// <summary>Whether <see cref="DesignId"/>'s gear is applied as well as its customisations.</summary>
+    /// <remarks>
+    /// False by default, and for a stronger reason than on a base character: this design is a
+    /// prerequisite for one face or one body, and putting a wardrobe item on is not asking to be
+    /// dressed. On, for the case where the design really is the whole character and the sculpt is
+    /// part of it.
+    /// </remarks>
+    public bool DesignAppliesEquipment { get; set; }
+
+    /// <summary>Whether <see cref="DesignId"/>'s hairstyle is applied along with the rest of it.</summary>
+    /// <remarks>
+    /// Off by default, and the odd one out among the design switches: gear is opt-in because it does
+    /// too much, and the hairstyle is opt-in because it undoes something the wardrobe has usually
+    /// just done on purpose. A hair mod only replaces one hairstyle's files, so wearing one switches
+    /// the character to that hairstyle — and a face sculpt worn afterwards, carrying a design saved
+    /// with some other hair, would put that hair straight back and leave the hair mod enabled and
+    /// invisible. The design is being applied for its face, not for its hair.
+    /// <para>
+    /// Off, the hairstyle in force is read before the design is applied and written back after, so
+    /// whatever you had — a hair mod's number or your own — survives. On, the design's hairstyle
+    /// applies with everything else, for a design that really is the whole character.
+    /// </para>
+    /// </remarks>
+    public bool DesignAppliesHairstyle { get; set; }
 
     /// <summary>
     /// Free text about the item — where it came from, what it goes with, anything worth
@@ -201,13 +302,21 @@ public class WardrobeItem : IImageOwner
     /// whether wearing it displaces something already worn.
     /// </summary>
     /// <remarks>
-    /// Equipment and customisation are exclusive per slot, so the slot name is key enough. Mod
-    /// categories are not — several animation mods can be active at once — so they key on what they
-    /// replace instead, falling back to the item's own id when that is unknown so the item is
-    /// simply independent rather than colliding with every other item in its category.
+    /// Equipment is exclusive per slot, so the slot name is key enough. Mod categories are not —
+    /// several animation mods can be active at once — so they key on what they replace instead,
+    /// falling back to the item's own id when that is unknown so the item is simply independent
+    /// rather than colliding with every other item in its category.
+    /// <para>
+    /// Customisation sits between the two: exclusive by default, but a slot can carry more than one
+    /// kind of mod at once — a sculpt and the texture painted on it — so a <see cref="Layer"/> may
+    /// narrow the key to that kind. Blank leaves the item on the bare slot name, exclusive as
+    /// before, which is why an item that has never been given a layer behaves exactly as it did.
+    /// </para>
     /// A method rather than a property so it is not written into the saved config.
     /// </remarks>
     public string WornKey() => Slot.IsModCategory()
         ? $"{Slot}:{(string.IsNullOrWhiteSpace(Replaces) ? Id.ToString() : Replaces.Trim())}"
-        : Slot.ToString();
+        : Slot.IsCustomization() && !string.IsNullOrWhiteSpace(Layer)
+            ? $"{Slot}:{Layer.Trim()}"
+            : Slot.ToString();
 }

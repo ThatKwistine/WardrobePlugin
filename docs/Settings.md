@@ -319,7 +319,10 @@ options:
   queued item is showing
 - **Compact main window during session** shrinks the plugin window to keep it out of the shot
 
-All three persist between sessions. Stripping stops at your
+All three persist between sessions.
+
+A session can also take the screenshots for you, unattended. That is under
+[Experimental](#experimental) at the bottom of the panel. Stripping stops at your
 [base character](Wearing-Items.md#base-character) if one is active, so the slots and customisation
 mods you marked as part of the character survive every shot.
 
@@ -384,6 +387,93 @@ advanced dyes, and reverting them would be one more touch. Use Glamourer to clea
 
 Capturing, re-capturing and clearing rows all happen per item in an outfit's edit panel — see
 [Advanced dyes](Outfits.md#advanced-dyes). This section is only the switch.
+
+---
+
+## Experimental
+
+Features that are finished enough to try but have not been proven in the game yet. Off by default.
+Anything here either graduates into a section of its own or goes.
+
+### Fully automatic sessions
+
+**Fully automatic sessions** has a screenshot session take the pictures itself: each item is worn, the
+camera moves to the angle its slot asks for, the shot is taken, cropped and filed, and it moves on.
+Nothing has to be pressed. The **delay** slider beside it is how long to wait before each shot so what
+is being photographed has settled — raise it if pictures come out mid-redraw or at the previous angle.
+The first shot of each item is given longer again on top of it, since that is the one that follows a
+redraw. It is manual mode's opposite, so turning one on turns the other off.
+
+It is experimental because it presses the game's own screenshot function, which is not an API and is
+not documented, and because nobody has yet run it over a wardrobe of several hundred pieces.
+
+Three things have to be set up first, and none of them announce themselves when they are wrong:
+
+- **A camera angle saved for every slot** you are photographing. Without one, the shot is taken from
+  wherever the camera is standing. See
+  [camera presets](Images-and-Screenshots.md#camera-presets).
+- **GPose.** Angles are written to the GPose camera and nowhere else. The session HUD says so if you
+  are not in it.
+- **The right screenshots folder**, above. A run pauses itself after three pictures fail to arrive,
+  but three is still three.
+
+While it runs, **Pause** holds it where it is so you can move the camera, and **Shoot Now** takes the
+picture immediately rather than waiting out the countdown. Shoot Now is there in every mode, manual
+included. Everything it does is written to the log; open it with `/xllog`. See
+[Fully automatic sessions](Images-and-Screenshots.md#fully-automatic-sessions).
+
+### Flag uncompressed textures
+
+**Flag uncompressed textures on worn items** puts a warning triangle beside the name on any worn card
+that is putting textures on your character in a format storing every pixel whole. Hover it for how
+many there are and what they weigh.
+
+Those textures cost roughly four times what the same picture costs block-compressed. That is paid by
+anyone synced to you: it is what they download, and what it occupies in their video memory for as
+long as you are on screen.
+
+It counts **only what Penumbra is actually feeding the character**, which is not the same as what is
+sitting in the mod folders. A mod ships every option it has — every colour, every variant, every
+alternative body — and hands over just the ones you have selected. An uncompressed texture in an
+option you are not using never reaches anyone, so it is not counted. Reading the folders instead
+would flag outfits that are already perfectly fine, and one here holds twelve uncompressed textures
+inside option groups while the character is wearing none of them.
+
+Worn items only, for the same reason one level up: a mod nobody is wearing costs nobody anything.
+
+Above the grid, a **banner** gives the total in one line, for the times nobody is going to hover a
+card. It counts everything Penumbra is feeding the character rather than only what the wardrobe has
+items for — a skin, a hairstyle or a body replacer costs a synced friend exactly what an outfit does,
+and leaving those out would understate the only figure being asked for. Hover it for the mods
+carrying the most, heaviest first, which is usually one or two rather than a spread. It appears under
+the same threshold as the badges, so the two never disagree about whether there is anything to say.
+
+**Only flag above** is the size an item's uncompressed textures have to come to before it is worth
+saying so, because weight and count are not the same question. Two small mask textures come to a few
+KB and are not worth a warning; a single uncompressed 4K normal map is about 85 MiB and is the entire
+reason this exists. An uncompressed 1K texture is roughly 5 MiB and a 2K roughly 21 MiB, so the
+default of 4 MiB catches anything that costs a real download and leaves the rest alone. Set it to 0
+to flag every last one.
+
+It only ever reports. The wardrobe converts nothing and writes nothing: compression is lossy and
+cannot be undone without the mod's original `.pmp` or `.ttmp2`, which is not a thing to do behind
+your back while you are picking an outfit. Converting them is a manual pass in Lightless' **Character
+Analysis** window, under its **tex** tab — and the set it lists there is the same set this counts, so
+the two should agree.
+
+A sync plugin's own auto-compress setting will not do this for you. Lightless' only ever touches
+textures in its own download cache — the ones it fetched from other people — and refuses any path
+outside it, so your own mods are never in scope. Character Analysis is the one place allowed to
+rewrite files in Penumbra's folders.
+
+Conversion is per file on disk rather than per outfit, so a mod converted once stays converted and
+changing clothes undoes nothing. Only newly installed or updated mods fall back out of step, which is
+what makes it easy to forget. The reading refreshes every fifteen seconds; **Re-check now** does it
+immediately if you want to confirm a conversion without waiting.
+
+It is experimental because the list of formats it recognises covers what mods normally ship but is
+not exhaustive. A format it does not know is passed over rather than guessed at, so it will
+under-report before it cries wolf.
 
 ---
 

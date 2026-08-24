@@ -325,6 +325,110 @@ Note this toggles how a hairstyle *looks*; it cannot switch which hairstyle your
 Glamourer's IPC exposes no customisation setter (only `SetItem`, `SetBonusItem` and `SetMetaState`).
 Pick the matching hairstyle in the character screen or Glamourer yourself.
 
+### Layers: two mods on one slot
+
+A face sculpt and a face retexture are both Face items, and they are not alternatives to each other —
+the texture goes *on* the sculpt. The same is true of a body sculpt under a skin texture, or a hair
+model under a hair retexture. Keying customisation on the slot alone made every pair like this
+mutually exclusive: applying one took the other off, with no way to have both.
+
+Each customisation item therefore carries a **Layer**, shown on the import and edit panels:
+
+- **sculpt** — the mod ships a model for that part, so it reshapes it.
+- **texture** — it ships only materials and textures, so it repaints whatever is underneath.
+- **blank** — the item takes the whole slot, displacing every other item in it.
+
+It is detected on import from whether the mod contains a `.mdl` for the slot, and it is free text, so
+a mod doing something with no obvious word for it can be given one — type `lashes` or `brows` into two
+items and only those two will ever displace each other. Items sharing a layer still swap each other
+out, which is what keeps two face sculpts behaving as the alternatives they are.
+
+**Items imported before this existed have a blank layer**, and so still take the whole slot. That is
+deliberate — filling them all in as independent would leave two sculpts enabled at once. Press
+**Re-detect** in an item's edit panel to fill it in; the detection message says which layer it chose.
+Moving an item to a different slot clears it, since a layer belongs to the slot it was read on.
+
+### A design applied with the item
+
+A face sculpt replaces the files of one specific face number, so on a character set to any other face
+it is enabled, correct, and completely invisible. Hair has never had this problem: the wardrobe reads
+the hairstyle number out of the mod and switches you to it. A face has no single number to read — what
+makes a sculpt look right is the face number *together with* the skin, eye and hair colouring around
+it, and a Glamourer design is the thing that already holds all of that.
+
+So a customisation item can name a **Glamourer design**, picked in its edit panel, applied whenever
+the item goes on. It is a live link and never a copy: only the design's id is stored, so editing it in
+Glamourer puts the edit in the next apply, with nothing to re-import.
+
+- **Apply now** applies the design's customisations once without wearing the item, for checking you
+  picked the right one.
+- **Apply its gear too** is off by default. A sculpt needs the face, body and colouring and nothing
+  else — putting one wardrobe item on is not asking to be dressed. Turn it on where the design really
+  is the whole character.
+- **Apply its hairstyle too** is off by default as well. Every design carries a hairstyle whether or
+  not it was saved for one, and a hair mod only replaces one hairstyle's files — so a design applied
+  for its face would otherwise switch you off the hairstyle your hair mod needs and leave that mod
+  enabled and invisible, which is the exact failure this whole feature exists to cure. Left off, the
+  hairstyle in force is read before the design goes on and written back after, so a hair mod's number
+  or your own survives either way. Turn it on where the design is the whole character.
+
+**The same switch is on every design the wardrobe applies**: base characters, outfit design cards, and
+**Settings → Revert customisation mods to**. There it is **on** by default, because that is what those
+did before it existed — turn it off and a base or an outfit can supply a face and a body without
+disturbing hair you are wearing. Only per-item designs default to off, since those are applied for a
+face and have no business touching hair.
+
+Reverting is the one place with an exception: taking a **hair** mod off always brings the revert
+design's hairstyle with it, whatever the switch says. Without that you would be left standing on the
+hairstyle the mod replaced, with the mod now disabled — which is exactly what reverting is for.
+
+It goes on before the hairstyle step, so a hair mod's own number still wins over whatever hairstyle
+the design carried, and it is put back after a redraw, so the base character's design cannot land on
+top of it a frame later.
+
+Taking the item off does not undo it by itself. **Settings → Revert customisation mods to** is what
+puts your normal face back, and it already covers every customisation item — see
+[Reverting customisation mods](#reverting-customisation-mods).
+
+#### It warns when the design and the mod disagree
+
+A customisation mod replaces the files of particular numbered variants — face 3, tail 2 — so a design
+that sets any *other* number leaves the mod enabled, correct and invisible: the exact failure the
+design is there to prevent, reintroduced by picking the wrong one. So the panel checks, and says so in
+orange under the picker:
+
+> ● Check this design
+> This design sets face 3, and this mod replaces faces 1 and 101 on your race. It will be enabled and
+> invisible.
+
+The check is against every number the mod covers *for your race*, not one of them. Mods routinely
+cover several at once — option groups let one mod ship f0001 through f0004, often for more than one
+race — and a check against a single number would be wrong far more often than right. It also says so
+when the mod has no files for your race at all, which no design can fix.
+
+| Slot | Checked against |
+|---|---|
+| Face | the design's **face**, and your race |
+| Tail | the design's **tail shape**, and your race |
+| Viera ears | the design's **ear shape**, and your race |
+| Skin | your race only |
+| Hair | your race only |
+
+Tail and Viera ears share one number because the game does: a single customisation is the tail on
+races that have one and the ears on Viera. Skin has none to check — the body id in a skin mod's paths
+is `b0001` for every player character — so only the race question applies, which is the failure skin
+mods actually have. Hair has a number, but a design is not trusted to get it right: wearing a hair mod
+sets the hairstyle from the mod itself, so only the race is checked there too.
+
+It stays quiet whenever it cannot give an honest answer: a design that sets no such number, a
+character whose race cannot be read, or an item whose coverage was never recorded. **Items imported
+before this existed have no coverage recorded**, so they are never checked — press **Re-detect** and
+the result line says what the mod replaces. Re-detect also re-reads it, so narrowing a mod's options in
+Penumbra is picked up rather than vouched for by a stale answer.
+
+The same warning goes to the log when the item is worn, since that is not a moment anyone is looking
+at the edit panel.
+
 ### Redraw on apply
 
 Switching a mod on redirects files, but it does not reload what is already drawn on your character.

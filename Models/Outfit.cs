@@ -157,6 +157,15 @@ public class Outfit : IImageOwner
     /// </remarks>
     public bool DesignAppliesEquipment { get; set; } = true;
 
+    /// <summary>Whether the design's hairstyle applies along with the rest of it.</summary>
+    /// <remarks>
+    /// True, which is what this did before the switch existed — a design carries a hairstyle and it
+    /// went on with everything else. Turn it off where the design is being applied for something
+    /// other than its hair: a hair mod only replaces one hairstyle's files, so a design that switches
+    /// you off that hairstyle leaves the mod enabled, correct and invisible.
+    /// </remarks>
+    public bool DesignAppliesHairstyle { get; set; } = true;
+
     /// <summary>
     /// Show or hide headgear when this outfit is worn, or null to leave it as it is.
     /// </summary>
