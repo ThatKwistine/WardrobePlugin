@@ -298,6 +298,23 @@ public class WardrobeItem : IImageOwner
     public DateTime DateAdded { get; set; } = DateTime.UtcNow;
 
     /// <summary>
+    /// The <see cref="SharedItem.SourceId"/> this item came in as, on an item imported from somebody
+    /// else's share bundle. Null on everything imported from a mod in the ordinary way.
+    /// </summary>
+    /// <remarks>
+    /// Kept so importing the same bundle twice can tell what it already brought in and offer to
+    /// update those rather than making a second copy of every piece. Not the item's own
+    /// <see cref="Id"/>, which is always fresh — see <see cref="SharedItem.SourceId"/> for why
+    /// carrying a sender's id would eventually collide.
+    /// <para>
+    /// Deliberately not a claim of authorship. It records which file an item arrived in, and the
+    /// only thing it is read for is matching on re-import; it is not shown as a credit, because who
+    /// made a mod is a question about the mod and not about who sent a description of it.
+    /// </para>
+    /// </remarks>
+    public Guid? SharedFromId { get; set; }
+
+    /// <summary>
     /// Key this item occupies in <see cref="Configuration.WornItems"/>, which is what decides
     /// whether wearing it displaces something already worn.
     /// </summary>

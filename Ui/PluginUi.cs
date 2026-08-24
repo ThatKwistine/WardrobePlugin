@@ -29,6 +29,7 @@ public class PluginUi : Window, IDisposable
     private readonly ScreenshotSessionService _session;
     private readonly BackupService            _backup;
     private readonly MassImportPanel          _massImport;
+    private readonly SharePanel               _share;
 
     // Holds ISharedImmediateTexture references so Dalamud won't free the GPU resource while
     // we still have the handle. GetWrapOrDefault() is called each frame to get a live handle.
@@ -402,7 +403,8 @@ public class PluginUi : Window, IDisposable
 
     public PluginUi(Configuration config, WardrobeService wardrobe,
         ITextureProvider textures, IPluginLog log, ItemImportPanel panel,
-        ScreenshotSessionService session, BackupService backup, MassImportPanel massImport)
+        ScreenshotSessionService session, BackupService backup, MassImportPanel massImport,
+        SharePanel share)
         : base("Wardrobe###WardrobeMain",
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -414,6 +416,7 @@ public class PluginUi : Window, IDisposable
         _session  = session;
         _backup   = backup;
         _massImport = massImport;
+        _share      = share;
 
         // The edit panel has the item and the picture, but the popup that shows it full size lives
         // here, over the whole window rather than inside a panel that is 360px wide
@@ -1079,6 +1082,16 @@ public class PluginUi : Window, IDisposable
         if (ImGui.Button("  Mass Import  "))
             _massImport.Open();
 
+        UiLayout.SameLineIfRoomForButton("  Share  ");
+        if (ImGui.Button("  Share  "))
+            _share.Open();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Send your wardrobe to somebody as a single file, or open\n" +
+                             "one they sent you and take pieces from it.\n\n" +
+                             "A share file describes items — which mod, which options —\n" +
+                             "and never contains the mods themselves, so both sides need\n" +
+                             "to own a mod for an item to work.");
+
         UiLayout.SameLineIfRoomForButton(" Select ");
         var wasSelecting = _selectMode;
         ToggleButton(" Select ", ref _selectMode);
@@ -1593,6 +1606,22 @@ public class PluginUi : Window, IDisposable
         if (none) ImGui.EndDisabled();
         if (none && ImGui.IsItemHovered())
             ImGui.SetTooltip("Tick some items first.");
+
+        UiLayout.SameLineIfRoomForButton(" Share Selected ");
+        if (none) ImGui.BeginDisabled();
+        if (ImGui.Button(" Share Selected "))
+        {
+            // Hands the selection straight to the share window rather than making it re-picked
+            // there. The window keeps its own ticks, so what opens is this selection and editing it
+            // there does not disturb the one in the grid.
+            _share.Open(_selected);
+            _bulkStatus = $"{_selected.Count} item(s) ready to share.";
+        }
+        if (none) ImGui.EndDisabled();
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(none
+                ? "Tick some items first."
+                : "Opens the share window with these items ticked.");
 
         UiLayout.SameLineIfRoomForButton(" Done ");
         if (ImGui.Button(" Done ")) ExitSelectMode();

@@ -38,11 +38,13 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ItemLookupService        _itemLookup;
     private readonly ScreenshotSessionService _screenshotSession;
     private readonly BackupService            _backupService;
+    private readonly WardrobeShareService     _shareService;
     private readonly ItalicFontService        _italicFont;
     private readonly WindowSystem             _windowSystem;
     private readonly PluginUi                _ui;
     private readonly MassImportPanel         _massImport;
     private readonly ChangelogWindow         _changelog;
+    private readonly SharePanel              _share;
 
     private const string CommandName  = "/wardrobe";
     private const string CommandAlias = "/wr";
@@ -90,6 +92,7 @@ public sealed class Plugin : IDalamudPlugin
         _wardrobeService   = new WardrobeService(Penumbra, Glamourer, _config, Log, Framework);
         _screenshotSession = new ScreenshotSessionService(_wardrobeService, _config, Framework, Log, Camera, Shutter);
         _backupService     = new BackupService(_config, Framework, Log);
+        _shareService      = new WardrobeShareService(Penumbra, Log);
 
         _windowSystem = new WindowSystem("WardrobePlugin");
         _italicFont = new ItalicFontService(Log);
@@ -98,13 +101,15 @@ public sealed class Plugin : IDalamudPlugin
 
         var panel = new ItemImportPanel(_config, _wardrobeService, Penumbra, Glamourer, _analysisService, _itemLookup, _screenshotSession, Log, _italicFont);
         _massImport = new MassImportPanel(_config, Penumbra, _analysisService, _itemLookup, Log, _italicFont);
-        _ui = new PluginUi(_config, _wardrobeService, Textures, Log, panel, _screenshotSession, _backupService, _massImport);
+        _share = new SharePanel(_config, _wardrobeService, _shareService, Penumbra, Textures, Log);
+        _ui = new PluginUi(_config, _wardrobeService, Textures, Log, panel, _screenshotSession, _backupService, _massImport, _share);
         _changelog = new ChangelogWindow(_config);
         _ui.Changelog = _changelog;
 
         _windowSystem.AddWindow(_ui);
         _windowSystem.AddWindow(_massImport);
         _windowSystem.AddWindow(_changelog);
+        _windowSystem.AddWindow(_share);
 
         ShowChangelogIfUpdated();
 
@@ -220,6 +225,7 @@ public sealed class Plugin : IDalamudPlugin
 
         _ui.Dispose();
         _massImport.Dispose();
+        _share.Dispose();
         _italicFont.Dispose();
         _backupService.Dispose();
         _screenshotSession.Dispose();
