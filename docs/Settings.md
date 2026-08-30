@@ -119,8 +119,8 @@ There is nothing to sync: the cards are a live link rather than a copy, so a des
 appears by itself, a rename follows through, and deleting it there removes the card.
 
 **Only show designs filed under this folder** limits which designs get a card. Leave it empty for
-all of them. It is matched on folder boundaries, so `Emma` covers `Emma/Casual` and leaves
-`Emmaline` alone; designs at Glamourer's top level are in no folder and so never match a filter.
+all of them. It is matched on folder boundaries, so `Night` covers `Night/Formal` and leaves
+`Nightshade` alone; designs at Glamourer's top level are in no folder and so never match a filter.
 
 The box decides which designs get a card *from now on* — a text box that deleted hundreds of cards
 as you reached the middle of a word would be one nobody could type in. **Remove cards outside it**
@@ -157,8 +157,8 @@ attached to them — those are kept rather than dropped. See
 ## Tags From Glamourer
 
 **Tag new design cards from their folder** takes each design card's tags from where that design is
-filed in Glamourer. Folders and sub-tags both nest on `/`, so a design in `Emma/Casual` is tagged
-`Emma/Casual` and filters under `Emma` with everything else there. Designs at the top level have no
+filed in Glamourer. Folders and sub-tags both nest on `/`, so a design in `Night/Formal` is tagged
+`Night/Formal` and filters under `Night` with everything else there. Designs at the top level have no
 folder and get no tag.
 
 **Also take the design's own tags** brings across the tags a design carries in Glamourer, flat rather

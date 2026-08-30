@@ -57,15 +57,15 @@ public static class Changelog
                     "designs → Not synced lists everything removed and puts any of it back."),
 
                 new("Only show designs filed under one Glamourer folder.",
-                    "Settings → Glamourer designs. Matched on folder boundaries, so Emma covers " +
-                    "Emma/Casual and leaves Emmaline alone. It decides which designs get a card " +
+                    "Settings → Glamourer designs. Matched on folder boundaries, so Night covers " +
+                    "Night/Formal and leaves Nightshade alone. It decides which designs get a card " +
                     "from now on; removing the cards already outside it is a separate button, so " +
                     "typing in the box cannot delete hundreds of cards as you reach the middle of " +
                     "a word."),
 
                 new("Design cards take their tags from where they are filed in Glamourer.",
                     "Glamourer folders and wardrobe sub-tags both nest on /, so a design filed " +
-                    "under Emma/Casual gets exactly the tag Emma/Casual and filters under Emma " +
+                    "under Night/Formal gets exactly the tag Night/Formal and filters under Night " +
                     "with everything else. The tags a design carries in Glamourer come across " +
                     "too, flat rather than nested.\n\n" +
                     "It only ever adds. Reorganise your designs and import again and the old tags " +

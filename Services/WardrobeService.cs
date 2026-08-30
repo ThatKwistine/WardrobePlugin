@@ -2798,7 +2798,7 @@ public class WardrobeService : IDisposable
     /// <remarks>
     /// Two sources, both optional and both additive. The folder path becomes one nested tag, because
     /// Glamourer's tree and <see cref="TagTree"/> both nest on <c>/</c> and a path is therefore
-    /// already a tag — <c>Emma/Casual</c> filed under Emma, exactly as the tree shows it. The
+    /// already a tag — <c>Night/Formal</c> filed under Night, exactly as the tree shows it. The
     /// design's own tags come across flat, since they are labels rather than filing.
     /// <para>
     /// <b>Never removes.</b> Tags on a card are the user's, whoever put them there, and a folder
@@ -2898,8 +2898,8 @@ public class WardrobeService : IDisposable
     /// Whether a design is inside <see cref="Configuration.DesignFolderFilter"/>.
     /// </summary>
     /// <remarks>
-    /// A prefix match that stops on a folder boundary, so <c>Emma</c> takes <c>Emma</c> and
-    /// <c>Emma/Casual</c> and leaves <c>Emmaline</c> alone — the distinction a plain
+    /// A prefix match that stops on a folder boundary, so <c>Night</c> takes <c>Night</c> and
+    /// <c>Night/Formal</c> and leaves <c>Nightshade</c> alone — the distinction a plain
     /// <c>StartsWith</c> would lose, and the one that decides whether somebody's filter quietly
     /// pulls in a second character's wardrobe.
     /// <para>

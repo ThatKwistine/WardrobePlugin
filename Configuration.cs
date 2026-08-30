@@ -800,8 +800,8 @@ public class Configuration : IPluginConfiguration
     /// Naming a folder makes it a window onto the part of Glamourer that belongs in the wardrobe.
     /// <para>
     /// Matched as a path prefix on a folder boundary, in the same slash-separated form
-    /// <see cref="Ipc.GlamourerIpc.GetDesignFolders"/> reports — so <c>Emma</c> covers
-    /// <c>Emma/Casual</c> without also catching <c>Emmaline</c>. Nothing is compared against the
+    /// <see cref="Ipc.GlamourerIpc.GetDesignFolders"/> reports — so <c>Night</c> covers
+    /// <c>Night/Formal</c> without also catching <c>Nightshade</c>. Nothing is compared against the
     /// design's own name: this filters on where a design is filed, not on what it is called.
     /// </para>
     /// <para>

@@ -97,8 +97,8 @@ If you show your Glamourer designs in the outfits grid, Wardrobe can tag each de
 that design is filed in Glamourer.
 
 Glamourer's folder tree and sub-tags nest the same way, on `/`, so a path is already a tag. A design
-filed under `Emma/Casual` gets exactly the tag `Emma/Casual` — it appears under `Emma` in the panel
-beside everything else there, and filtering on `Emma` covers the lot. Designs sitting at the top
+filed under `Night/Formal` gets exactly the tag `Night/Formal` — it appears under `Night` in the panel
+beside everything else there, and filtering on `Night` covers the lot. Designs sitting at the top
 level in Glamourer have no folder, so they get no tag.
 
 Designs can also carry tags of their own in Glamourer. Those come across too, flat rather than

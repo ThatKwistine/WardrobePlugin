@@ -11008,14 +11008,14 @@ public class PluginUi : Window, IDisposable
 
         var filter = _config.DesignFolderFilter;
         ImGui.SetNextItemWidth(UiScale.S(240));
-        if (ImGui.InputTextWithHint("##designfolder", "Emma/Casual", ref filter, 256))
+        if (ImGui.InputTextWithHint("##designfolder", "Night/Formal", ref filter, 256))
         {
             _config.DesignFolderFilter = filter;
             _config.Save();
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Matched on folder boundaries, so 'Emma' covers 'Emma/Casual'\n" +
-                             "and leaves 'Emmaline' alone. Designs sitting at Glamourer's\n" +
+            ImGui.SetTooltip("Matched on folder boundaries, so 'Night' covers 'Night/Formal'\n" +
+                             "and leaves 'Nightshade' alone. Designs sitting at Glamourer's\n" +
                              "top level are in no folder, so a filter never matches them.\n\n" +
                              "This decides which designs get a card from now on. Cards you\n" +
                              "already have are left where they are.");
@@ -11128,8 +11128,8 @@ public class PluginUi : Window, IDisposable
     {
         ImGui.TextUnformatted("Tags From Glamourer");
         ImGui.TextDisabled("Take a design card's tags from where the design is filed in Glamourer. " +
-                           "Folders nest the same way tags do, so a design in Emma/Casual is tagged " +
-                           "Emma/Casual and filters under Emma with everything else there.");
+                           "Folders nest the same way tags do, so a design in Night/Formal is tagged " +
+                           "Night/Formal and filters under Night with everything else there.");
         ImGui.Spacing();
 
         var folders = _config.DesignFolderTags;
@@ -11219,7 +11219,7 @@ public class PluginUi : Window, IDisposable
         ImGui.TextColored(new Vector4(0.78f, 0.6f, 0.95f, 1f), "Tag design cards from Glamourer?");
         ImGui.TextWrapped("Wardrobe can read where each design sits in Glamourer's folders and tag " +
                           "its card to match. Folders nest the way tags do, so a design filed under " +
-                          "Emma/Casual gets exactly that tag.");
+                          "Night/Formal gets exactly that tag.");
         ImGui.TextWrapped("This only ever adds. Nothing already on your cards is changed or removed.");
         ImGui.Spacing();
 
