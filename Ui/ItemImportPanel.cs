@@ -338,6 +338,20 @@ public class ItemImportPanel : IDisposable
             if (entry.PathExists)
             {
                 entry.Analysis = _analysis.Analyze(path!);
+
+                // Penumbra's live selection for this mod, read at most once however many groups ask
+                // for it. It used to be fetched inside the single-select branch, so a mod with two
+                // hundred groups asked two hundred times for the same answer — which a texture mod
+                // built by Loose Texture Compiler genuinely is.
+                Dictionary<string, List<string>>? liveSettings = null;
+                Dictionary<string, List<string>> Live() =>
+                    liveSettings ??= _penumbra.GetModSettingsFull(
+                        mod.Collection, mod.ModDirectory, mod.ModName);
+
+                // Groups this item has never said anything about, counted for the log. A high count
+                // is the signature of the mod that used to come out of here mangled.
+                var unattributed = 0;
+
                 foreach (var g in entry.Analysis.OptionGroups)
                 {
                     if (g.GroupType == ModGroupType.Multi)
@@ -368,15 +382,26 @@ public class ItemImportPanel : IDisposable
                             foreach (var name in g.OptionNames)
                                 if (!sel.Contains(name)) off.Add(name);
                         }
-                        else if (!g.AffectsSlot(_editTarget.Slot))
-                        {
-                            // Never stored, and the group's files do not touch this item's slot:
-                            // it belongs to a sibling item from the same mod, so this one starts
-                            // with no opinion about it rather than inheriting whatever was live
-                        }
                         else
                         {
-                            foreach (var name in g.OptionNames) off.Add(name);
+                            // No tri-states at all, and this group is not in MultiOptions either —
+                            // so the item has never said anything about it, and reading it as
+                            // anything else invents an opinion on the item's behalf.
+                            //
+                            // The proof is in the apply path: ApplyMultiModSettings iterates
+                            // MultiOptions, so a group missing from it is never sent to Penumbra
+                            // and is left exactly as found when the item is worn. The editor used
+                            // to show every option off here and save made that true, which turned
+                            // "leaves this alone" into "turns all of this off" on the first edit —
+                            // the same ambiguity as #12, reached through the one door that fix
+                            // never closed.
+                            //
+                            // It went unnoticed because it is harmless on gear, where the groups an
+                            // item does not tick are rival colours it would not want anyway. On a
+                            // mod built by Loose Texture Compiler it is ruinous: those are dozens
+                            // of independent one-checkbox groups that do not compete, and opening
+                            // the editor once unticked every texture in the mod (#27).
+                            unattributed++;
                         }
 
                         entry.MultiSel[g.GroupName] = sel;
@@ -384,10 +409,10 @@ public class ItemImportPanel : IDisposable
                     }
                     else
                     {
-                        var idx = 0;
-                        // Prefer stored config value, then live Penumbra state, then index 0.
-                        // Using live Penumbra state as fallback prevents options mismatch
-                        // from breaking detection when groups were never explicitly stored.
+                        // Prefer the stored value, then Penumbra's live state — the latter is what
+                        // stops an options mismatch breaking detection for a group never explicitly
+                        // stored, and it is a fair reading of a dropdown, which holds exactly one
+                        // option whether or not anyone chose it.
                         string? stored = null;
                         if (mod.Options.TryGetValue(g.GroupName, out var fromConfig))
                             stored = fromConfig;
@@ -399,22 +424,79 @@ public class ItemImportPanel : IDisposable
                             entry.SingleSel[g.GroupName] = ModOptionPicker.Ignore;
                             continue;
                         }
-                        else
+                        else if (Live().TryGetValue(g.GroupName, out var active) && active.Count > 0)
+                            stored = active[0];
+
+                        // Nothing stored and nothing live. This used to fall through to index 0,
+                        // which had the item assert the group's first option — the "only ever
+                        // enables the top one" half of #27, and an assertion the item never made:
+                        // ApplyModSettings iterates Options, so a group missing from it is never
+                        // sent to Penumbra at all. Leave alone is the honest reading.
+                        if (stored == null)
                         {
-                            var live = _penumbra.GetModSettings(mod.Collection, mod.ModDirectory, mod.ModName);
-                            if (live.TryGetValue(g.GroupName, out var fromPenumbra))
-                                stored = fromPenumbra;
+                            unattributed++;
+                            entry.SingleSel[g.GroupName] = ModOptionPicker.Ignore;
+                            continue;
                         }
-                        if (stored != null)
-                            for (var i = 0; i < g.OptionNames.Count; i++)
-                                if (g.OptionNames[i].Equals(stored, StringComparison.OrdinalIgnoreCase))
-                                { idx = i; break; }
+
+                        var idx = 0;
+                        for (var i = 0; i < g.OptionNames.Count; i++)
+                            if (g.OptionNames[i].Equals(stored, StringComparison.OrdinalIgnoreCase))
+                            { idx = i; break; }
                         entry.SingleSel[g.GroupName] = idx;
                     }
                 }
+
+                // One line per mod, not per group. A high count is the signature of a texture mod
+                // rather than a fault, and is worth having in a log next to whatever the user is
+                // reporting about it.
+                if (unattributed > 0)
+                    _log.Debug($"[Wardrobe] Edit options: '{_editTarget.Name}' has never set " +
+                               $"{unattributed} of '{mod.ModName}'s group(s) — left alone rather " +
+                               "than turned off.");
             }
             _editModOptions.Add(entry);
         }
+    }
+
+    /// <summary>
+    /// Clears every opinion this item holds about one mod's options, in one press.
+    /// </summary>
+    /// <remarks>
+    /// The way back for an item mangled before #27 was fixed. The reader no longer invents a
+    /// forced-off state for a group the item never set, but an item edited while it did has those
+    /// states genuinely saved — they are indistinguishable from ones somebody chose, so nothing
+    /// undoes them automatically. A Loose Texture Compiler mod carries them by the hundred, which
+    /// makes clicking "leave alone" through the list an unreasonable ask.
+    /// <para>
+    /// Offered per mod rather than per item: an item can hold both a gear mod whose options it
+    /// genuinely sets and a texture mod it should never have been asserting, and only one of those
+    /// wants clearing. It edits the picker's state, so nothing is written until Save — Cancel still
+    /// backs out of it.
+    /// </para>
+    /// </remarks>
+    private void DrawLeaveModAlone(ModReference mod, EditModOptions opts)
+    {
+        // Every group already ignored: nothing to clear, and a live button would suggest otherwise
+        var asserted = opts.SingleSel.Count(kv => kv.Value != ModOptionPicker.Ignore)
+                     + opts.MultiSel.Sum(kv => kv.Value.Count)
+                     + opts.MultiOff.Sum(kv => kv.Value.Count);
+        if (asserted == 0) return;
+
+        ImGui.PushID($"leavealone_{mod.ModDirectory}_{mod.Label}");
+        if (ImGui.SmallButton(" Leave this mod's options alone "))
+        {
+            foreach (var group in opts.SingleSel.Keys.ToList())
+                opts.SingleSel[group] = ModOptionPicker.Ignore;
+            foreach (var set in opts.MultiSel.Values) set.Clear();
+            foreach (var set in opts.MultiOff.Values) set.Clear();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Sets every group below to leave alone, so wearing this item stops\n" +
+                             "changing this mod's options at all — whatever you have set in\n" +
+                             "Penumbra is what you keep.\n\n" +
+                             $"Clears {asserted} setting(s). Takes effect when you Save.");
+        ImGui.PopID();
     }
 
     public void Close()
@@ -496,6 +578,40 @@ public class ItemImportPanel : IDisposable
             _config.Save();
             ImagesChanged?.Invoke(edited);
         });
+
+        // With the pictures, not eight sections below them. This is the button that *makes* one, and
+        // it used to sit under Linked items at the bottom of the panel, where the only way to find it
+        // was to already know it was there.
+        //
+        // Safe this far up despite reading the staged fields below it: they are ordinary state set
+        // when the panel opened and rewritten by each frame's widgets, so on the frame this is
+        // clicked they hold everything typed up to the end of the previous frame — which is all of
+        // it, since a click cannot share a frame with the typing that preceded it.
+        if (_session.FoldersReady)
+        {
+            ImGui.Spacing();
+
+            if (ImGui.Button("Take Screenshot", new Vector2(-1, 0)))
+            {
+                // Save current edits first so the item is up to date
+                _editTarget!.Name     = _editName.Trim();
+                _editTarget.Slot      = SelectedSlot(_editSlotIdx);
+                _editTarget.Replaces  = EditedReplaces();
+                _editTarget.Layer     = EditedLayer();
+                _editTarget.Notes     = EditedNotes();
+                _editTarget.ForceRedraw = EditedForceRedraw();
+                _editTarget.Tags      = new List<string>(_editTags);
+                _config.Save();
+                _session.StartSingle(_editTarget);
+                Close();
+                return; // Close() nulls _editTarget — nothing below may run this frame
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Wears this item and waits for a screenshot.\n" +
+                                 "The result is cropped to a square and saved as its picture.\n\n" +
+                                 "Anything you have changed here is saved first, so the shot\n" +
+                                 "is of the item as you have just edited it.");
+        }
 
         ImGui.Spacing();
         ImGui.TextDisabled("Slot");
@@ -603,30 +719,6 @@ public class ItemImportPanel : IDisposable
         ImGui.Separator();
         DrawLinkedItemsEditor(_editTarget!);
 
-        ImGui.Spacing();
-        ImGui.Separator();
-
-        if (_session.FoldersReady)
-        {
-            if (ImGui.Button("Take Screenshot", new Vector2(-1, 0)))
-            {
-                // Save current edits first so the item is up to date
-                _editTarget!.Name     = _editName.Trim();
-                _editTarget.Slot      = SelectedSlot(_editSlotIdx);
-                _editTarget.Replaces  = EditedReplaces();
-                _editTarget.Layer     = EditedLayer();
-                _editTarget.Notes     = EditedNotes();
-                _editTarget.ForceRedraw = EditedForceRedraw();
-                _editTarget.Tags      = new List<string>(_editTags);
-                _config.Save();
-                _session.StartSingle(_editTarget);
-                Close();
-                return; // Close() nulls _editTarget — nothing below may run this frame
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Wears this item and waits for a screenshot.\nThe result is cropped to 1:1 and saved as its image.");
-        }
-
         // Any handler above may have called Close(), which nulls _editTarget. Bail rather than
         // dereference it — the panel is already closing and nothing below would be drawn anyway.
         if (_editTarget == null) return;
@@ -666,6 +758,9 @@ public class ItemImportPanel : IDisposable
                         ImGui.TextDisabled($"  ({opts.ResolvedPath})");
                     }
                     else
+                    {
+                        DrawLeaveModAlone(mod, opts);
+
                         foreach (var g in opts.Analysis.OptionGroups)
                         {
                             // Naming the ones that belong to another slot is most of the help: this
@@ -677,6 +772,7 @@ public class ItemImportPanel : IDisposable
 
                             ModOptionPicker.Draw(g, opts.SingleSel, opts.MultiSel, opts.MultiOff);
                         }
+                    }
                     ImGui.Spacing();
                 }
             }
@@ -1782,6 +1878,21 @@ public class ItemImportPanel : IDisposable
                              "Two items with the same value swap each other out when worn,\n" +
                              "exactly as two body mods do. Detected from the mod's files on\n" +
                              "import; type the same value into two items to pair them up by hand.");
+        // The field holds what the mod's files say — dance_male_loop — which is exact, unreadable,
+        // and the reason nobody could tell what an animation item was without wearing it. The game
+        // knows the answer, so it is asked and shown under the field the moment it is typed.
+        if (slot == EquipSlot.Animation && !string.IsNullOrWhiteSpace(_editReplaces))
+        {
+            if (Plugin.Emotes.Describe(_editReplaces) is { } emote)
+                ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f), emote);
+            else
+                // Deliberately not a guess. The /cpose families — pose01..04, s_pose, j_pose — are
+                // referenced by no emote row at all, and the prefixes that look like they mean
+                // "sitting" are body-type variants elsewhere in the sheet.
+                ImGui.TextDisabled("No emote uses this animation. Idle and /cpose\n" +
+                                   "animations are not in the game's emote list.");
+        }
+
         ImGui.TextDisabled($"Leave blank to wear this independently of other " +
                            $"{slot.DisplayName()} items.");
     }
@@ -1996,11 +2107,25 @@ public class ItemImportPanel : IDisposable
 
             if (cfg.Replaces != null)
             {
-                var replaces = $"· replaces {cfg.Replaces}";
+                // The emote name leads when the game data has one: at import this row is the only
+                // description of what is about to be added, and "Step Dance" identifies a mod that
+                // "dance_male_loop" does not. The file name stays, in brackets, because it is what
+                // two items have to match on and what the editor below expects to see.
+                var emote = cfg.Slot == EquipSlot.Animation
+                    ? Plugin.Emotes.Find(cfg.Replaces)?.Display
+                    : null;
+
+                var replaces = emote != null
+                    ? $"· {emote}  ({cfg.Replaces})"
+                    : $"· replaces {cfg.Replaces}";
+
                 UiLayout.SameLineIfRoomForText(replaces);
                 ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f), replaces);
                 if (ImGui.IsItemHovered())
-                    ImGui.SetTooltip($"Another {cfg.Slot.DisplayName()} item replacing '{cfg.Replaces}'\n" +
+                    ImGui.SetTooltip((emote != null
+                                         ? $"This mod replaces the '{emote}' animation.\n\n"
+                                         : string.Empty) +
+                                     $"Another {cfg.Slot.DisplayName()} item replacing '{cfg.Replaces}'\n" +
                                      "will swap this one out when worn. Editable after import.");
             }
         }

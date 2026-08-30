@@ -323,6 +323,19 @@ public class WardrobeService : IDisposable
     /// </remarks>
     private bool OwnsMod(ModReference mod) => ClaimedCollection(mod) is not null;
 
+    /// <summary>Whether the wardrobe holds a claim on every mod behind an item.</summary>
+    /// <remarks>
+    /// "The wardrobe put this on" as against "this happens to be on", which is what separates an
+    /// item the wardrobe applied from one whose mods were enabled in Penumbra by hand. Used to
+    /// settle a contest for an exclusive worn key, where both items are genuinely on and only one
+    /// can be recorded. An item with no mods to claim is evidence of nothing and answers false.
+    /// </remarks>
+    private bool ClaimsAll(WardrobeItem item)
+    {
+        var claimable = item.Mods.Where(m => !string.IsNullOrEmpty(m.ModDirectory)).ToList();
+        return claimable.Count > 0 && claimable.All(OwnsMod);
+    }
+
     private void ReleaseMod(ModReference mod) =>
         _config.ModsEnabledByWardrobe.Remove(ModKey(ClaimedCollection(mod) ?? mod.Collection,
                                                     mod.ModDirectory));
@@ -990,8 +1003,22 @@ public class WardrobeService : IDisposable
         }
 
         foreach (var key in _config.ModsEnabledByWardrobe)
-            if (!accountedFor.Contains(key))
-                _log.Warning($"[Wardrobe]   orphan claim: {key} — held, but nothing worn references it.");
+        {
+            if (accountedFor.Contains(key)) continue;
+
+            // Naming the item is the difference between a line that can be acted on and one that
+            // cannot. A claim with an item still behind it is not really an orphan — it is an item
+            // the wardrobe switched on and then lost the worn tick for, most often to something else
+            // holding the same slot key, and that has a different fix from a claim whose item was
+            // deleted out from under it.
+            var directory = key.Split('|', 2) is { Length: 2 } parts ? parts[1] : key;
+            var owner = _config.WardrobeItems.Find(i => i.Mods.Any(m =>
+                string.Equals(m.ModDirectory, directory, StringComparison.OrdinalIgnoreCase)));
+
+            _log.Warning(owner == null
+                ? $"[Wardrobe]   orphan claim: {key} — held, and no item in the wardrobe uses that mod."
+                : $"[Wardrobe]   orphan claim: {key} — held for '{owner.Name}', which is not recorded as worn.");
+        }
     }
 
     public bool IsItemWorn(WardrobeItem item) =>
@@ -1676,6 +1703,22 @@ public class WardrobeService : IDisposable
     /// <summary>Those mods, grouped by the collection they are still enabled in.</summary>
     public sealed record LeftoverGroup(string Collection, IReadOnlyList<LeftoverMod> Mods);
 
+    /// <summary>What a run of <see cref="DisableLeftovers"/> actually did.</summary>
+    /// <remarks>
+    /// Returned rather than left to the caller to assume, because the two are not the same number
+    /// and the difference is the whole complaint: the notice counted the mods it had listed and
+    /// reported that as the number switched off, so one kept back or refused was announced as
+    /// disabled while it was still on. Whatever the button says now has to come from here.
+    /// </remarks>
+    /// <param name="Disabled">Mods switched off, whose claims have been given up.</param>
+    /// <param name="Kept">Mods left on because something worn turned out to need them after all.</param>
+    /// <param name="Refused">Mods Penumbra would not switch off. Still on, and still claimed.</param>
+    public sealed record LeftoverResult(int Disabled, IReadOnlyList<string> Kept, IReadOnlyList<string> Refused)
+    {
+        public static readonly LeftoverResult Nothing =
+            new(0, Array.Empty<string>(), Array.Empty<string>());
+    }
+
     /// <summary>
     /// Mods the wardrobe switched on in a collection the character is not on, waiting on an answer
     /// about what to do with them. Null when there is nothing to report.
@@ -1833,12 +1876,14 @@ public class WardrobeService : IDisposable
     /// from the notice's button. Every mod it touches is one this wardrobe switched on and still
     /// holds a claim to, so nothing here can turn off something the user enabled themselves.
     /// </remarks>
-    public void DisableLeftovers()
+    public LeftoverResult DisableLeftovers()
     {
-        if (Leftovers is not { } groups) return;
+        if (Leftovers is not { } groups) return LeftoverResult.Nothing;
 
         var active   = _penumbra.GetActiveCollection();
         var disabled = 0;
+        var kept     = new List<string>();
+        var refused  = new List<string>();
 
         foreach (var group in groups)
         foreach (var mod in group.Mods)
@@ -1850,16 +1895,29 @@ public class WardrobeService : IDisposable
                 WornAccountsFor(mod.ModDirectory))
             {
                 _log.Debug($"[Wardrobe] Keeping '{mod.ModName}' — something worn uses it now");
+                kept.Add(mod.ModName);
                 continue;
             }
 
-            if (!_penumbra.SetModEnabledIn(group.Collection, mod.ModDirectory, mod.ModName, false)) continue;
+            if (!_penumbra.SetModEnabledIn(group.Collection, mod.ModDirectory, mod.ModName, false))
+            {
+                // Passed over in silence before, which is how the notice could report every mod
+                // disabled while one of them was still on. Penumbra refusing is the one outcome
+                // nobody can see without opening Penumbra, so it is said out loud and counted apart
+                // from the successes rather than folded into them.
+                _log.Warning($"[Wardrobe] Penumbra would not disable '{mod.ModName}' in collection " +
+                             $"'{group.Collection}' — it is still on, and the wardrobe still claims it.");
+                refused.Add(mod.ModName);
+                continue;
+            }
 
             _config.ModsEnabledByWardrobe.Remove($"{group.Collection}|{mod.ModDirectory}".ToLowerInvariant());
             disabled++;
         }
 
-        _log.Information($"[Wardrobe] Disabled {disabled} leftover mod(s) in {groups.Count} collection(s)");
+        _log.Information($"[Wardrobe] Disabled {disabled} leftover mod(s) in {groups.Count} collection(s)" +
+                         (kept.Count    > 0 ? $", kept {kept.Count} still in use"      : string.Empty) +
+                         (refused.Count > 0 ? $", {refused.Count} refused by Penumbra" : string.Empty));
 
         // Normally none of this is on the character in front of us, so there is nothing to redraw —
         // except when they have since swapped back to a collection the notice names, or when the
@@ -1870,6 +1928,7 @@ public class WardrobeService : IDisposable
         Leftovers = null;
         _config.Save();
         WardrobeChanged?.Invoke();
+        return new LeftoverResult(disabled, kept, refused);
     }
 
     /// <summary>Puts the notice away, changing nothing. It returns on the next collection change.</summary>
@@ -1935,8 +1994,36 @@ public class WardrobeService : IDisposable
                 // held by anything else is stale, and the item in front of us takes it.
                 if (_config.WornItems.TryGetValue(slotKey, out var held))
                 {
-                    if (held == item.Id || onIds.Contains(held)) continue;
-                    _log.Debug($"[Wardrobe] Scan: '{item.Name}' takes {slotKey} from an entry that is not on");
+                    if (held == item.Id) continue;
+
+                    if (onIds.Contains(held))
+                    {
+                        // Both are on and only one key fits. First match used to win outright, and
+                        // that let a mod enabled by hand in Penumbra keep a slot against the very
+                        // item the wardrobe had switched its mods on for — permanently, and without
+                        // a word: the incoming item was on, so nothing unticked it, and the held one
+                        // was on, so nothing displaced it. A claim says the wardrobe put this here on
+                        // purpose, which is better evidence than a mod that merely happens to be
+                        // enabled, so it takes the key.
+                        var heldItem = _config.WardrobeItems.Find(x => x.Id == held);
+
+                        if (heldItem == null || !ClaimsAll(item) || ClaimsAll(heldItem))
+                        {
+                            // Silent before, and losing a contest is exactly the state that needs
+                            // saying: the item is on the character and will still draw as not worn.
+                            _log.Debug($"[Wardrobe] Scan: '{item.Name}' is on, but " +
+                                       $"'{heldItem?.Name ?? held.ToString()}' holds {slotKey}");
+                            continue;
+                        }
+
+                        _log.Information($"[Wardrobe] Scan: '{item.Name}' takes {slotKey} from " +
+                                         $"'{heldItem.Name}' — the wardrobe switched its mods on, " +
+                                         "and did not switch on the other's");
+                    }
+                    else
+                    {
+                        _log.Debug($"[Wardrobe] Scan: '{item.Name}' takes {slotKey} from an entry that is not on");
+                    }
                 }
 
                 _config.WornItems[slotKey] = item.Id;
@@ -2704,6 +2791,296 @@ public class WardrobeService : IDisposable
     /// </remarks>
     public static readonly string DesignStyle = TagTree.StylePath("Glamourer Design");
 
+    /// <summary>
+    /// Adds the tags a design's place in Glamourer implies to one card, leaving everything already
+    /// on it alone.
+    /// </summary>
+    /// <remarks>
+    /// Two sources, both optional and both additive. The folder path becomes one nested tag, because
+    /// Glamourer's tree and <see cref="TagTree"/> both nest on <c>/</c> and a path is therefore
+    /// already a tag — <c>Emma/Casual</c> filed under Emma, exactly as the tree shows it. The
+    /// design's own tags come across flat, since they are labels rather than filing.
+    /// <para>
+    /// <b>Never removes.</b> Tags on a card are the user's, whoever put them there, and a folder
+    /// renamed or a design moved in Glamourer is not grounds for taking one off a card here. The
+    /// consequence is deliberate: reorganising Glamourer and re-importing leaves the old tags behind
+    /// alongside the new ones, which is a tidy-up somebody can do in the Tags panel and is the
+    /// recoverable direction of the two.
+    /// </para>
+    /// </remarks>
+    /// <returns>How many tags were added, so a caller reporting on a batch can count them.</returns>
+    /// <remarks>
+    /// The folder costs nothing per card — the caller has already read the whole map — but a design's
+    /// own tags are one IPC call each, since they live only in the design's JSON. In the steady state
+    /// that is nothing: cards appear one at a time, when a design is saved. The exception is the frame
+    /// somebody first turns design cards on with a Glamourer full of designs, which pays that call for
+    /// every one of them at once. A brief pause on a button press somebody just chose, rather than
+    /// anything the draw loop carries afterwards.
+    /// </remarks>
+    private int AddDesignTags(Outfit card, IReadOnlyDictionary<Guid, string> folders)
+    {
+        if (card.DesignId is not { } designId) return 0;
+
+        var added = 0;
+
+        if (folders.TryGetValue(designId, out var folder) && !string.IsNullOrWhiteSpace(folder))
+            if (AddTag(card, folder)) added++;
+
+        if (_config.DesignTagsFromGlamourer)
+            foreach (var tag in _glamourer.GetDesignTags(designId))
+                if (AddTag(card, SanitiseTag(tag))) added++;
+
+        return added;
+    }
+
+    /// <summary>Adds one tag if the card has not got it already, matched the way tags are elsewhere.</summary>
+    private static bool AddTag(Outfit card, string tag)
+    {
+        if (string.IsNullOrWhiteSpace(tag)) return false;
+        if (card.Tags.Contains(tag, StringComparer.OrdinalIgnoreCase)) return false;
+
+        card.Tags.Add(tag);
+        return true;
+    }
+
+    /// <summary>
+    /// Makes a Glamourer design tag safe to use as a flat wardrobe tag.
+    /// </summary>
+    /// <remarks>
+    /// A design tag is free text in Glamourer and may contain a slash, which is the wardrobe's
+    /// nesting separator — importing <c>day/night</c> unchanged would silently file the card under a
+    /// "day" branch nobody asked for and cannot easily find. Folder paths are deliberately not put
+    /// through this: there the slashes are the point.
+    /// </remarks>
+    private static string SanitiseTag(string tag) => tag.Replace('/', '-').Trim();
+
+    /// <summary>
+    /// Writes folder and design tags onto every design card that has not got them, in one pass.
+    /// </summary>
+    /// <remarks>
+    /// The one-time import offered to a wardrobe that already had cards when this arrived, and the
+    /// same thing the settings button re-runs afterwards. Additive throughout — see
+    /// <see cref="AddDesignTags"/> — so running it twice does nothing the second time, and running it
+    /// after rearranging Glamourer adds the new places without disturbing the old.
+    /// <para>
+    /// Reads every design's tags when <see cref="Configuration.DesignTagsFromGlamourer"/> is on, which
+    /// is one IPC call per card. Acceptable for something a person presses; deliberately not on the
+    /// draw path.
+    /// </para>
+    /// </remarks>
+    /// <returns>How many cards gained at least one tag, and how many tags were added in total.</returns>
+    public (int Cards, int Tags) ImportDesignTags()
+    {
+        var folders = _glamourer.GetDesignFolders();
+        var cards   = 0;
+        var tags    = 0;
+
+        foreach (var card in _config.Outfits.Where(o => o.IsDesign))
+        {
+            var added = AddDesignTags(card, folders);
+            if (added == 0) continue;
+
+            cards++;
+            tags += added;
+        }
+
+        if (tags > 0)
+        {
+            _config.Save();
+            WardrobeChanged?.Invoke();
+        }
+
+        _log.Information($"[Wardrobe] Design tag import added {tags} tag(s) across {cards} card(s).");
+        return (cards, tags);
+    }
+
+    /// <summary>
+    /// Whether a design is inside <see cref="Configuration.DesignFolderFilter"/>.
+    /// </summary>
+    /// <remarks>
+    /// A prefix match that stops on a folder boundary, so <c>Emma</c> takes <c>Emma</c> and
+    /// <c>Emma/Casual</c> and leaves <c>Emmaline</c> alone — the distinction a plain
+    /// <c>StartsWith</c> would lose, and the one that decides whether somebody's filter quietly
+    /// pulls in a second character's wardrobe.
+    /// <para>
+    /// A design with no folder is at Glamourer's top level and is inside nothing, so it never
+    /// matches a filter. That is deliberate: a filter names a place, and the top level is where
+    /// designs sit when nobody has filed them anywhere.
+    /// </para>
+    /// </remarks>
+    private bool InDesignFolderFilter(IReadOnlyDictionary<Guid, string> folders, Guid designId)
+    {
+        var filter = _config.DesignFolderFilter.Trim().Trim('/');
+        if (filter.Length == 0) return true;
+
+        if (!folders.TryGetValue(designId, out var folder) || folder.Length == 0) return false;
+
+        return folder.Equals(filter, StringComparison.OrdinalIgnoreCase)
+            || folder.StartsWith(filter + "/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Removes design cards for designs outside the folder filter, sparing any that hold something.
+    /// </summary>
+    /// <remarks>
+    /// The deliberate half of the filter. Setting the filter stops new cards being made but leaves
+    /// the ones already there, because a text box that deletes several hundred cards as you finish
+    /// typing a folder name is not a text box anybody can use with confidence. This is the button
+    /// that says yes.
+    /// <para>
+    /// Spares any card with items, vanilla pieces, dyes or notes on it, on exactly the rule that
+    /// decides whether a card outlives its design — see <see cref="HoldsUserContent"/>. A card
+    /// somebody has attached a look to is theirs whatever folder its design happens to sit in, and
+    /// the filter is about clearing away the ones that were only ever a mirror of Glamourer.
+    /// </para>
+    /// <para>
+    /// Nothing is removed if Glamourer cannot say where its designs live, since every card would
+    /// then look like it sits outside the filter. That check is the difference between this
+    /// clearing the grid and it emptying the grid.
+    /// </para>
+    /// </remarks>
+    /// <returns>How many cards were removed, and how many were spared for holding something.</returns>
+    public (int Removed, int Kept) PruneDesignCardsOutsideFilter()
+    {
+        if (_config.DesignFolderFilter.Trim().Trim('/').Length == 0) return (0, 0);
+
+        var folders = _glamourer.GetDesignFolders();
+        if (folders.Count == 0)
+        {
+            _log.Warning("[Wardrobe] Design folder prune skipped — Glamourer reported no folders, " +
+                         "so every card would have looked like it was outside the filter.");
+            return (0, 0);
+        }
+
+        var doomed = new List<Outfit>();
+        var kept   = 0;
+
+        foreach (var card in _config.Outfits.Where(o => o.IsDesign))
+        {
+            if (InDesignFolderFilter(folders, card.DesignId!.Value)) continue;
+
+            if (HoldsUserContent(card)) { kept++; continue; }
+
+            doomed.Add(card);
+        }
+
+        if (doomed.Count == 0)
+        {
+            _log.Information($"[Wardrobe] Design folder prune removed nothing ({kept} card(s) spared).");
+            return (0, kept);
+        }
+
+        foreach (var card in doomed) _config.Outfits.Remove(card);
+
+        _config.Save();
+        WardrobeChanged?.Invoke();
+
+        _log.Information($"[Wardrobe] Design folder prune removed {doomed.Count} card(s) outside " +
+                         $"'{_config.DesignFolderFilter}', sparing {kept} with content attached.");
+        return (doomed.Count, kept);
+    }
+
+    /// <summary>
+    /// Removes design cards and stops the link ever making them again.
+    /// </summary>
+    /// <remarks>
+    /// What "exclude from syncing" means, as against hiding: hiding answers the grid while the card
+    /// still exists and still reconciles, and this removes it outright. The design is untouched in
+    /// Glamourer — nothing here reaches into it, and wearing it there works exactly as before.
+    /// <para>
+    /// <b>A card holding anything of the user's is kept, not deleted.</b> Attached items, vanilla
+    /// pieces, dyes and notes are work somebody did in the wardrobe, and a bulk action reached from
+    /// a tick box must not be able to destroy it — even deliberately, because selecting three
+    /// hundred cards is not a considered judgement about each one. Those cards are excluded from
+    /// syncing all the same and left where they are, and the count comes back so the caller can say
+    /// so rather than leaving somebody to notice. It is the same rule that decides whether a card
+    /// outlives its design, see <see cref="HoldsUserContent"/>.
+    /// </para>
+    /// <para>
+    /// Cards that are not design cards are ignored rather than refused. A selection is made in a
+    /// grid holding outfits, plates and designs together, and Select All is the expected way to
+    /// reach three hundred of them.
+    /// </para>
+    /// </remarks>
+    /// <returns>Cards removed, and cards excluded but kept for holding something.</returns>
+    public (int Removed, int Kept) ExcludeDesigns(IEnumerable<Outfit> cards)
+    {
+        var removed = 0;
+        var kept    = 0;
+
+        // Materialised before anything is removed: the caller's sequence is usually a query over
+        // _config.Outfits, which is the list being mutated below
+        foreach (var card in cards.Where(o => o.IsDesign).ToList())
+        {
+            _config.ExcludedDesigns.Add(card.DesignId!.Value);
+
+            if (HoldsUserContent(card)) { kept++; continue; }
+
+            _config.Outfits.Remove(card);
+            removed++;
+        }
+
+        if (removed == 0 && kept == 0) return (0, 0);
+
+        _config.Save();
+        WardrobeChanged?.Invoke();
+
+        _log.Information($"[Wardrobe] Excluded {removed + kept} design(s) from syncing — " +
+                         $"{removed} card(s) removed, {kept} kept for holding content.");
+        return (removed, kept);
+    }
+
+    /// <summary>Designs currently excluded, paired with their live names where Glamourer still has them.</summary>
+    /// <remarks>
+    /// Named from the live list rather than from anything stored, because the card that carried the
+    /// name is gone — removing it is the whole point. A design deleted in Glamourer since being
+    /// excluded has no name to show and is reported as unknown rather than dropped, so the count
+    /// here always matches what is stored.
+    /// </remarks>
+    public IReadOnlyList<(Guid Id, string Name)> ExcludedDesigns()
+    {
+        if (_config.ExcludedDesigns.Count == 0) return Array.Empty<(Guid, string)>();
+
+        var live = _glamourer.GetDesignsCached()
+            .GroupBy(d => d.Id)
+            .ToDictionary(g => g.Key, g => g.First().Name);
+
+        return _config.ExcludedDesigns
+            .Select(id => (Id: id, Name: live.TryGetValue(id, out var n) ? n : "(no longer in Glamourer)"))
+            .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Lets one design, or all of them, be synced again.
+    /// </summary>
+    /// <remarks>
+    /// The card comes back on the next reconcile rather than being rebuilt here, so it is made by
+    /// the one piece of code that knows how to make one — tags, folder filter and all.
+    /// </remarks>
+    /// <returns>True if anything changed, so the caller can report it.</returns>
+    public bool ResumeDesignSync(Guid? designId = null)
+    {
+        var changed = designId is { } id
+            ? _config.ExcludedDesigns.Remove(id)
+            : _config.ExcludedDesigns.Count > 0;
+
+        if (designId == null) _config.ExcludedDesigns.Clear();
+        if (!changed) return false;
+
+        _config.Save();
+
+        // The list is cached for a moment, and a card that is expected back immediately should not
+        // wait on that: this is reached from a button, and nothing else is going to ask again
+        _glamourer.InvalidateDesigns();
+        ReconcileDesignCards();
+
+        _log.Information(designId is { } one
+            ? $"[Wardrobe] Design {one} is synced again."
+            : "[Wardrobe] Every excluded design is synced again.");
+        return true;
+    }
+
     /// <summary>Design cards, whether or not Glamourer is currently answering.</summary>
     public List<Outfit> DesignOutfits() =>
         _config.Outfits.Where(o => o.IsDesign)
@@ -2746,6 +3123,9 @@ public class WardrobeService : IDisposable
         var changed = false;
         var known   = new Dictionary<Guid, Outfit>();
 
+        // Read at most once per call, and only if a new card actually turns up
+        IReadOnlyDictionary<Guid, string>? folders = null;
+
         foreach (var card in _config.Outfits.Where(o => o.IsDesign))
             known.TryAdd(card.DesignId!.Value, card);
 
@@ -2765,13 +3145,30 @@ public class WardrobeService : IDisposable
                 continue;
             }
 
-            _config.Outfits.Add(new Outfit
+            // Removed on purpose and told not to come back. Checked before anything else, because it
+            // is the one answer that costs nothing and settles the question outright.
+            if (_config.ExcludedDesigns.Contains(id)) continue;
+
+            // Folders are read here, on a card being made, rather than for the whole list: a design
+            // appearing is a rare event, and paying one IPC call for it beats reading every design's
+            // folder on a frame where nothing new turned up. The filter needs the same map, so
+            // whichever of the two asks first pays for it.
+            if (_config.DesignFolderFilter.Length > 0 &&
+                !InDesignFolderFilter(folders ??= _glamourer.GetDesignFolders(), id))
+                continue;
+
+            var created = new Outfit
             {
                 Name       = name,
                 DesignId   = id,
                 DesignName = name,
                 Tags       = new List<string> { DesignStyle },
-            });
+            };
+
+            if (_config.DesignFolderTags)
+                AddDesignTags(created, folders ??= _glamourer.GetDesignFolders());
+
+            _config.Outfits.Add(created);
             changed = true;
         }
 

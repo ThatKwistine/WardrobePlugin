@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using WardrobePlugin.Services;
 
 namespace WardrobePlugin.Ui;
@@ -180,21 +181,22 @@ public static class ModOptionPicker
 
             var state = on.Contains(opt) ? 1 : off.Contains(opt) ? -1 : 0;
 
-            if (StateButton("✓", state == 1, OnColour, "Turn this option on."))
+            if (StateButton(FontAwesomeIcon.Check, "on", state == 1, OnColour, "Turn this option on."))
             {
                 on.Add(opt);
                 off.Remove(opt);
             }
 
             ImGui.SameLine();
-            if (StateButton("•", state == 0, IgnoreColour, "Leave this option however it already is."))
+            if (StateButton(FontAwesomeIcon.Minus, "keep", state == 0, IgnoreColour,
+                            "Leave this option however it already is."))
             {
                 on.Remove(opt);
                 off.Remove(opt);
             }
 
             ImGui.SameLine();
-            if (StateButton("✕", state == -1, OffColour, "Turn this option off."))
+            if (StateButton(FontAwesomeIcon.Times, "off", state == -1, OffColour, "Turn this option off."))
             {
                 off.Add(opt);
                 on.Remove(opt);
@@ -213,14 +215,28 @@ public static class ModOptionPicker
     private static readonly Vector4 OffColour    = new(0.45f, 0.12f, 0.12f, 1f);
 
     /// <summary>One of the three state buttons, filled while it is the option's current state.</summary>
-    private static bool StateButton(string glyph, bool active, Vector4 colour, string tooltip)
+    /// <remarks>
+    /// Font Awesome rather than literal characters. These were typed as <c>✓ • ✕</c>, and the cross
+    /// in particular is outside the range Dalamud's default font covers — it came out as a stray
+    /// glyph in game, on the one button whose whole job is to say "off". The plugin has been caught
+    /// by this before, and the icon font is the standing rule for anything drawn as a picture.
+    /// <para>
+    /// The id is explicit rather than left to the glyph, so the three buttons stay distinct to ImGui
+    /// whatever they are drawn with, and the tooltip is set outside the font scope — pushed inside
+    /// it, the tooltip's own words would be rendered in the icon font as nonsense.
+    /// </para>
+    /// </remarks>
+    private static bool StateButton(FontAwesomeIcon icon, string id, bool active, Vector4 colour,
+        string tooltip)
     {
         ImGui.PushStyleColor(ImGuiCol.Button, active ? colour : new Vector4(0.16f, 0.16f, 0.19f, 1f));
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, colour);
         ImGui.PushStyleColor(ImGuiCol.Text,
             active ? new Vector4(1f, 1f, 1f, 1f) : new Vector4(0.5f, 0.5f, 0.56f, 1f));
 
-        var clicked = ImGui.SmallButton(glyph);
+        bool clicked;
+        using (Plugin.PluginInterface.UiBuilder.IconFontHandle?.Push())
+            clicked = ImGui.SmallButton($"{icon.ToIconString()}##{id}");
 
         ImGui.PopStyleColor(3);
 

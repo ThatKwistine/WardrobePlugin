@@ -44,6 +44,12 @@ public class GlamourerIpc : IDisposable
     // ApplyDesign(designId, objectIndex, key, applyFlags) → GlamourerApiEc
     private readonly ICallGateSubscriber<Guid, int, uint, ulong, int> _applyDesign;
 
+    // GetDesignListExtended() -> Dictionary<Guid, (DisplayName, FullPath, DisplayColor, ShownInQdb)>
+    // FullPath is the design's place in Glamourer's folder tree. Verified against Glamourer.Api.dll
+    // 1.6.1.7 rather than guessed: the tuple's element names come off the assembly's
+    // TupleElementNamesAttribute. Absent in older Glamourer, which is why every read of it is guarded.
+    private readonly ICallGateSubscriber<Dictionary<Guid, (string, string, uint, bool)>> _getDesignListExtended;
+
     // GetDesignJObject(designId) → JObject? — the design's own data, in the same shape GetState returns
     // and the same shape a .json design file is written in. Null when the design does not exist.
     private readonly ICallGateSubscriber<Guid, JObject?> _getDesignJObject;
@@ -89,6 +95,8 @@ public class GlamourerIpc : IDisposable
         _getDesignList  = pi.GetIpcSubscriber<Dictionary<Guid, string>>("Glamourer.GetDesignList.V2");
         _applyDesign    = pi.GetIpcSubscriber<Guid, int, uint, ulong, int>("Glamourer.ApplyDesign");
         _getDesignJObject = pi.GetIpcSubscriber<Guid, JObject?>("Glamourer.GetDesignJObject");
+        _getDesignListExtended =
+            pi.GetIpcSubscriber<Dictionary<Guid, (string, string, uint, bool)>>("Glamourer.GetDesignListExtended");
         _apiVersion     = pi.GetIpcSubscriber<(int, int)>("Glamourer.ApiVersion.V2");
         _openActorIndex = pi.GetIpcSubscriber<int, object?>("Glamourer.OpenActorIndex");
     }
@@ -285,6 +293,90 @@ public class GlamourerIpc : IDisposable
     {
         _designCachedAt = DateTime.MinValue;
         _designContents.Clear();
+    }
+
+    // ── Design folders ────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Where each design sits in Glamourer's folder tree, as a path with the design's own name
+    /// removed. Designs at the root, and every design if Glamourer is too old to answer, are absent.
+    /// </summary>
+    /// <remarks>
+    /// <c>GetDesignListExtended</c> hands back the design's <c>FullPath</c> in the same
+    /// slash-separated form Glamourer's own tree shows — the same convention Penumbra's mod tree
+    /// uses, since both are the same filesystem underneath. That is also the separator
+    /// <see cref="Ui.TagTree"/> nests on, so a path drops into the wardrobe's tags without being
+    /// translated at all.
+    /// <para>
+    /// The leaf is stripped by comparing it against the design's display name rather than by simply
+    /// dropping the last segment. Both would be right if <c>FullPath</c> always ends in the design's
+    /// name, which is what the underlying filesystem does — but a wrong guess there would turn every
+    /// design's own name into a tag, which is exactly the mess this is meant to avoid. Comparing is
+    /// correct under either convention, and costs a string equality.
+    /// </para>
+    /// <para>
+    /// Not cached. It is read when tags are imported and at no other time, so a stale answer would be
+    /// worse than a call.
+    /// </para>
+    /// </remarks>
+    public IReadOnlyDictionary<Guid, string> GetDesignFolders()
+    {
+        var folders = new Dictionary<Guid, string>();
+
+        try
+        {
+            foreach (var (id, data) in _getDesignListExtended.InvokeFunc())
+            {
+                var (displayName, fullPath, _, _) = data;
+                if (string.IsNullOrWhiteSpace(fullPath)) continue;
+
+                var segments = fullPath.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (segments.Length == 0) continue;
+
+                // See the note above — the leaf goes only when it is the design itself
+                var end = segments.Length;
+                if (end > 0 && string.Equals(segments[end - 1], displayName, StringComparison.Ordinal))
+                    end--;
+
+                if (end <= 0) continue;
+
+                folders[id] = string.Join('/', segments[..end]);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Older Glamourer has GetDesignList but not the extended form. Nothing is wrong; there
+            // are simply no folders to read, and every caller treats an empty map as "none".
+            _log.Debug(ex, "[Wardrobe] Glamourer GetDesignListExtended unavailable — no design folders read");
+        }
+
+        return folders;
+    }
+
+    /// <summary>The tags set on a design in Glamourer, or empty when it has none.</summary>
+    /// <remarks>
+    /// Read straight from <c>GetDesignJObject</c> rather than through
+    /// <see cref="GetDesignContents"/>, which is budgeted to a few reads a frame for the panel that
+    /// draws design contents. Tag importing is a deliberate one-off over every design at once, and
+    /// has no business competing with that budget or filling its cache.
+    /// </remarks>
+    public IReadOnlyList<string> GetDesignTags(Guid designId)
+    {
+        try
+        {
+            if (_getDesignJObject.InvokeFunc(designId) is not { } json) return Array.Empty<string>();
+            if (json["Tags"] is not JArray tags) return Array.Empty<string>();
+
+            return tags.Select(t => t.Value<string>())
+                .Where(t => !string.IsNullOrWhiteSpace(t))
+                .Select(t => t!.Trim())
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            _log.Debug(ex, $"[Wardrobe] Glamourer design tags unavailable for {designId}");
+            return Array.Empty<string>();
+        }
     }
 
     // ── Design contents ───────────────────────────────────────────────────────

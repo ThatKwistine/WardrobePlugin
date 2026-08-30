@@ -186,6 +186,35 @@ The panel says how many of the selected already have an image before you start.
 The selection survives the session, so a run that goes wrong can be repeated without ticking
 everything again.
 
+## The crop guide
+
+A captured picture is centre-cropped to a square, so on a widescreen window most of what is on
+screen is thrown away — and framing a character against the window centres them in an image that no
+longer exists. The **crop guide** draws the part that survives and dims the rest, so the shape you
+are composing for is the shape you can see. Thirds are marked inside it to compose against.
+
+**Square captures only.** An outfit shot with [portrait previews](#portrait-outfit-previews) on is
+cropped 9:16 and gets no guide, because GPose's own portrait mode already frames that shot and shows
+you where to put the camera. A second frame over the top of it would be the worse of the two.
+
+**Settings → Screenshots → Crop guide** has three answers:
+
+| | |
+| --- | --- |
+| **Off** | Frame by eye, as it worked before |
+| **During screenshot sessions** | On from the moment a session starts until it ends. The default |
+| **Always** | On whenever the game is showing |
+
+A **Crop Guide** button on the toolbar turns it on and off without a trip to settings, and the
+compact session view has the same button under its action row — framing is done from whichever of
+those you are watching a session from. Switching it off and back on keeps the mode you chose, so
+setting it to **Always** and then using the toggle does not quietly move you onto **During
+sessions**.
+
+The guide is never in the resulting picture. The shot comes from the game's own screenshot function,
+which does not capture plugin windows — the same property that keeps the wardrobe's own window out
+of your screenshots. **Confirmed by testing**, not assumed.
+
 ## Portrait outfit previews
 
 An outfit preview is a full-body shot, and a square crop of one spends most of the frame on the floor

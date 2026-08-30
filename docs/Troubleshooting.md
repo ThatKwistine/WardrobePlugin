@@ -59,6 +59,20 @@ no longer recognises what is enabled as that item. **Disable Them** turns those 
 leaves them and hides the notice until next time. Pressing **Scan** will not change the list, since
 that is the read that has already happened.
 
+### It overlaps with the desync notice
+
+The two notices above the grid often describe the same mods. An item is desynced when its mods are on
+while Glamourer is not showing it, and an item in that state is deliberately *not* recorded as worn —
+so nothing accounts for its mods, and they are leftovers as well.
+
+Answering either notice now re-reads the other. **Wear Them** records those items as worn, so their
+mods stop being leftovers; **Disable Their Mods** turns them off, so the claims behind them are spent.
+Either way the leftovers notice goes when there is nothing left for it to say, instead of staying up
+offering to disable the mods holding up a look you have just put back on.
+
+**Keep Them** is the exception and re-reads nothing. It means you know what those mods are, and
+checking again would only put the notice straight back.
+
 ## A hair mod puts on the wrong hairstyle, or none
 
 The wardrobe switches you to the hairstyle a hair mod replaces, working that out from the mod's files.
@@ -132,6 +146,28 @@ the one you want in the item's edit panel.
 
 Presets saved before pan was supported did not record one, and they deliberately leave the camera's
 pan alone rather than guessing at a centred value. Press **Update** on the preset to capture it.
+
+## A session takes no pictures, or Shoot Now does nothing
+
+Open **Settings → Experimental → Screenshot diagnostics**. It reads the game's own screenshot
+function and says which of several different faults this is:
+
+- **Screenshots allowed: False** that never turns true — the game is refusing screenshots outright.
+  A cutscene or a loading screen does this for a moment; anything longer is the client, not the
+  wardrobe.
+- **Shot in flight: True** that never goes back to False — the game accepted the request and never
+  finished it. Its screenshot function is stuck, and your own screenshot key will not work either
+  until the game is restarted. An automatic run notices this after 45 seconds and pauses rather than
+  waiting on it forever.
+- **Saving as: Dds** — the game is writing a format nothing here can open. Set the screenshot format
+  to PNG or JPG in the game's own settings. PNG, JPG and BMP are all picked up.
+- **Last result: NoDiskSpace** — the game's own words for a screenshot it could not write.
+
+If none of those apply, the folder is the next thing to check: **Settings → Screenshots** has to
+point at the folder the game actually saves to.
+
+Whatever it says, the reasons are all the game's rather than the wardrobe's, so the readout is worth
+copying into a bug report.
 
 ## Mod names show as boxes or missing glyphs
 

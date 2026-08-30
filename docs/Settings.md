@@ -115,8 +115,29 @@ animation an item replaces is detected on import and can be changed when editing
 ## Glamourer Designs
 
 **Show Glamourer designs as outfits** gives each of your Glamourer designs a card in the outfits grid.
-It is the only setting the feature has, because the cards are a live link rather than a copy: a design
-saved in Glamourer appears by itself, a rename follows through, and deleting it there removes the card.
+There is nothing to sync: the cards are a live link rather than a copy, so a design saved in Glamourer
+appears by itself, a rename follows through, and deleting it there removes the card.
+
+**Only show designs filed under this folder** limits which designs get a card. Leave it empty for
+all of them. It is matched on folder boundaries, so `Emma` covers `Emma/Casual` and leaves
+`Emmaline` alone; designs at Glamourer's top level are in no folder and so never match a filter.
+
+The box decides which designs get a card *from now on* — a text box that deleted hundreds of cards
+as you reached the middle of a word would be one nobody could type in. **Remove cards outside it**
+is where that removal is asked for out loud, and it spares any card with items, vanilla pieces, dyes
+or notes on it. Cards it removes do not come back, because the filter stops them being remade.
+
+**Not synced** appears once you have removed designs from the grid, and lists every one of them by
+its live Glamourer name. **Sync** beside a row gives that design a card again; **Sync all n again**
+does the lot. Restored cards are made the normal way, so the folder filter above still applies to
+them.
+
+That list is filled by **Remove and stop syncing** in the selection panel, which is the practical way
+to deal with a large Glamourer library: turn on **Select**, filter the outfits grid down to what you
+do not want, **Select All**, remove. See
+[Removing designs instead of hiding them](Outfits.md#removing-designs-instead-of-hiding-them). To
+keep a single card out of the way without removing it, hide it instead — see
+[Hiding a card](Outfits.md#hiding-a-card).
 
 Wearing one applies the design, then any wardrobe items attached to it — which is how the mods that
 belong with a look get enabled, since a design knows nothing about Penumbra. Each card also takes
@@ -130,6 +151,26 @@ attached to them, with a count shown while any are hidden.
 The panel also reports cards whose design has been deleted in Glamourer while something of yours was
 attached to them — those are kept rather than dropped. See
 [Glamourer designs](Outfits.md#glamourer-designs).
+
+---
+
+## Tags From Glamourer
+
+**Tag new design cards from their folder** takes each design card's tags from where that design is
+filed in Glamourer. Folders and sub-tags both nest on `/`, so a design in `Emma/Casual` is tagged
+`Emma/Casual` and filters under `Emma` with everything else there. Designs at the top level have no
+folder and get no tag.
+
+**Also take the design's own tags** brings across the tags a design carries in Glamourer, flat rather
+than nested. This applies to the import button below it whether or not automatic tagging is on.
+
+**Import tags for all cards** runs over every design card you have rather than only new ones. Safe to
+press again at any time — it adds only what is missing.
+
+Nothing here ever removes a tag. Rearranging Glamourer and re-importing leaves the old tags beside the
+new ones, which is a tidy-up for the Tags panel rather than work lost. A wardrobe that already had
+design cards is asked once before any of this happens; one that had none simply starts with it on.
+Full details in [Tags](Tags.md#tags-from-glamourer-folders).
 
 ---
 
@@ -331,6 +372,12 @@ GPose's own portrait mode, and captures them that way. Outfit cards grow taller 
 previews stay square. Pictures already assigned are centre-cropped to whichever shape is in use, so
 turning it on or off never spoils a wardrobe built under the other one — see
 [Portrait outfit previews](Images-and-Screenshots.md#portrait-outfit-previews).
+
+**Crop guide** draws the part of the screen a square screenshot will keep and dims the rest, so you
+frame for the crop rather than for the window. **Off**, **During screenshot sessions** (the default)
+or **Always**. It is never in the resulting picture, and it stands down for 9:16 outfit captures
+because GPose's portrait mode already guides those — see
+[The crop guide](Images-and-Screenshots.md#the-crop-guide).
 
 **Edit Angles For Every Slot** opens every slot's camera presets in one panel, for framing a whole
 wardrobe's angles in one visit to GPose instead of inventing each one while a session waits. See

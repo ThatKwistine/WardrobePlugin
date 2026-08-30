@@ -407,11 +407,17 @@ public class ScreenshotSessionService : IDisposable
                    $"{_weaponVisibleBefore?.ToString() ?? "unknown"}, hat visible was " +
                    $"{_hatVisibleBefore?.ToString() ?? "unknown"}");
 
-        _watcher = new FileSystemWatcher(_config.ScreenshotsFolder, "*.png")
+        // Every format the game can be set to write and GDI+ can read back. Watching only PNG meant a
+        // player whose game was set to JPG ran a whole session against a folder that was filling up in
+        // front of it, and never filed one picture. DDS is deliberately absent: the game will write it,
+        // but nothing downstream of here can open it, so it is caught and named at the give-up instead
+        // of being picked up and failing halfway through a crop.
+        _watcher = new FileSystemWatcher(_config.ScreenshotsFolder)
         {
             NotifyFilter        = NotifyFilters.FileName,
             EnableRaisingEvents = true
         };
+        foreach (var pattern in WatchedShotTypes) _watcher.Filters.Add(pattern);
         _watcher.Created += OnFileCreated;
 
         AutoPaused = false;
@@ -877,6 +883,21 @@ public class ScreenshotSessionService : IDisposable
     /// </remarks>
     private const double ShotTimeoutSeconds = 12;
 
+    /// <summary>
+    /// How long a shot the game says is still in flight may stay in flight before it is called stuck.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="ShotTimeoutSeconds"/> is extended for as long as the game reports a shot still being
+    /// written, which is right for a slow disk and wrong for a client whose screenshot thread has
+    /// stopped answering: the flag never clears, so the extension never stops, and an unattended run
+    /// waits on it forever without a word in the log. This is the point past which waiting longer is no
+    /// longer telling anyone anything they do not already know.
+    /// </remarks>
+    private const double StuckShotGiveUpSeconds = 45;
+
+    /// <summary>The screenshot formats a session will pick up out of the watched folder.</summary>
+    private static readonly string[] WatchedShotTypes = { "*.png", "*.jpg", "*.jpeg", "*.bmp" };
+
     /// <summary>Times to ask again before giving up on a shot and moving on.</summary>
     private const int MaxShotRetries = 2;
 
@@ -906,6 +927,7 @@ public class ScreenshotSessionService : IDisposable
     private bool      _autoFired;
     private DateTime  _autoAt;
     private DateTime  _autoTimeoutAt;
+    private DateTime  _shotFiredAt;
     private DateTime  _redrawReadyAt;
     private DateTime? _blockedSince;
     private int       _autoRetries;
@@ -964,9 +986,35 @@ public class ScreenshotSessionService : IDisposable
     /// <returns>False when the game would not take one, which is worth saying rather than swallowing.</returns>
     public bool TakeShotNow()
     {
-        if (State != SessionState.WaitingForShot) return false;
+        if (State != SessionState.WaitingForShot)
+        {
+            SetShutterProblem("The session is not waiting for a picture right now.");
+            return false;
+        }
+
         return FireShot();
     }
+
+    /// <summary>The last reason the game gave for not taking a picture, and when it gave it.</summary>
+    /// <remarks>
+    /// Kept so the button can answer for itself. Pressing <b>Shoot Now</b> against a game that was
+    /// refusing screenshots used to do nothing at all, visibly or in the log, which reads as a broken
+    /// button rather than a client that said no — and left a bug report with nothing in it to go on.
+    /// </remarks>
+    public string?  ShutterProblem   { get; private set; }
+
+    /// <inheritdoc cref="ShutterProblem"/>
+    public DateTime ShutterProblemAt { get; private set; }
+
+    private void SetShutterProblem(string? problem)
+    {
+        ShutterProblem   = problem;
+        ShutterProblemAt = DateTime.UtcNow;
+        if (problem != null) StateChanged?.Invoke();
+    }
+
+    /// <summary>Whatever the game will currently say about its screenshot task.</summary>
+    public ShutterState ReadShutter() => _shutter.Read();
 
     /// <summary>Pictures filed since this session began, for the line it ends on.</summary>
     private int _filedThisSession;
@@ -1042,11 +1090,18 @@ public class ScreenshotSessionService : IDisposable
     /// <summary>Asks the game for a picture, and starts the clock on it arriving.</summary>
     private bool FireShot()
     {
-        if (!_shutter.Take()) return false;
+        if (!_shutter.Take(out var refusal))
+        {
+            SetShutterProblem(refusal);
+            return false;
+        }
 
+        var now = DateTime.UtcNow;
         _autoFired     = true;
-        _autoTimeoutAt = DateTime.UtcNow.AddSeconds(ShotTimeoutSeconds);
+        _shotFiredAt   = now;
+        _autoTimeoutAt = now.AddSeconds(ShotTimeoutSeconds);
         _blockedSince  = null;
+        SetShutterProblem(null);
 
         _log.Information($"[Wardrobe] Session: took a screenshot of '{CurrentName}' ({ShotLabel})");
         StateChanged?.Invoke();
@@ -1090,10 +1145,31 @@ public class ScreenshotSessionService : IDisposable
             if (now < _autoTimeoutAt) return;
 
             // Still being written. A slow disk is exactly what the timeout must not mistake for a
-            // failure, so it is extended rather than the shot being taken twice.
+            // failure, so it is extended rather than the shot being taken twice — but only up to the
+            // point where a shot that is still in flight has plainly stopped being in flight.
             if (_shutter.Pending)
             {
-                _autoTimeoutAt = now.AddSeconds(ShotTimeoutSeconds);
+                if ((now - _shotFiredAt).TotalSeconds < StuckShotGiveUpSeconds)
+                {
+                    _autoTimeoutAt = now.AddSeconds(ShotTimeoutSeconds);
+                    return;
+                }
+
+                var stuck = _shutter.Read();
+                _log.Error("[Wardrobe] Session: the game accepted the screenshot request " +
+                           $"{StuckShotGiveUpSeconds:0} seconds ago and has never finished it. Its " +
+                           "screenshot task is stuck, which also stops your own screenshot key working " +
+                           "until the game is restarted. Pausing the run.");
+                _log.Error($"[Wardrobe] Session: shutter state — allowed: {stuck.CanTake}, " +
+                           $"in flight: {stuck.Requested}, last result: {stuck.Result}, " +
+                           $"format: {stuck.Format}");
+
+                SetShutterProblem(
+                    "The game accepted the screenshot but never finished it. Its screenshot task is " +
+                    "stuck — your own screenshot key will not work either until the game is restarted.");
+
+                _autoFired = false;
+                SetAutoPaused(true);
                 return;
             }
 
@@ -1107,9 +1183,20 @@ public class ScreenshotSessionService : IDisposable
                 return;
             }
 
+            var missed = _shutter.Read();
             _log.Warning($"[Wardrobe] Session: giving up on '{CurrentName}' ({ShotLabel}) — no " +
                          "screenshot appeared in the watched folder. Check that Settings → " +
                          "Screenshots points at the folder the game actually saves to.");
+            _log.Warning($"[Wardrobe] Session: shutter state — allowed: {missed.CanTake}, " +
+                         $"in flight: {missed.Requested}, last result: {missed.Result}, " +
+                         $"format: {missed.Format}");
+
+            // The one refusal that is not about the folder at all. Nothing here can open a DDS, so a
+            // game set to write them will fill the folder and file none of it, however right the path is
+            if (string.Equals(missed.Format, "Dds", StringComparison.OrdinalIgnoreCase))
+                _log.Warning("[Wardrobe] Session: the game is saving screenshots as DDS, which the " +
+                             "wardrobe cannot read. Set Character Configuration → screenshot format " +
+                             "to PNG or JPG.");
             _autoFired = false;
 
             // Three of these in a row is not three unlucky shots, it is a session photographing a
@@ -1142,6 +1229,9 @@ public class ScreenshotSessionService : IDisposable
         {
             _log.Warning("[Wardrobe] Session: the game has been refusing screenshots for " +
                          $"{BlockedGiveUpSeconds:0} seconds — pausing the automatic run.");
+
+            SetShutterProblem("The game has been refusing screenshots for " +
+                              $"{BlockedGiveUpSeconds:0} seconds, so the run has stopped here.");
             SetAutoPaused(true);
             return;
         }
