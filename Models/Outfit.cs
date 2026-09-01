@@ -199,5 +199,22 @@ public class Outfit : IImageOwner
     /// <inheritdoc cref="WardrobeItem.SharedFromId"/>
     public Guid? SharedFromId { get; set; }
 
+    /// <summary>
+    /// Kept out of the grid until you ask to see it.
+    /// </summary>
+    /// <remarks>
+    /// Issue #26, for the design cards it is mostly about: turning designs on gives every design in
+    /// Glamourer a card, and a Glamourer library of several hundred buries the outfits somebody
+    /// actually built under a mirror of a list they were not trying to manage here.
+    /// <para>
+    /// Hiding rather than deleting, and on any outfit rather than only a design card. A design card
+    /// deleted while its design still exists comes straight back on the next reconcile, so delete is
+    /// not even available as an answer — and for an outfit somebody built by hand, "I do not want to
+    /// look at this right now" and "destroy it" should not be the same button. Everything attached
+    /// to a hidden outfit is still there, and showing hidden ones brings it back exactly as it was.
+    /// </para>
+    /// </remarks>
+    public bool Hidden { get; set; }
+
     public bool IsDesign => DesignId is not null;
 }

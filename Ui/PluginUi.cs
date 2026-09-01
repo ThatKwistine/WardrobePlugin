@@ -30,6 +30,7 @@ public class PluginUi : Window, IDisposable
     private readonly BackupService            _backup;
     private readonly MassImportPanel          _massImport;
     private readonly SharePanel               _share;
+    private readonly HtmlExportService        _htmlExport;
 
     // Holds ISharedImmediateTexture references so Dalamud won't free the GPU resource while
     // we still have the handle. GetWrapOrDefault() is called each frame to get a live handle.
@@ -66,6 +67,37 @@ public class PluginUi : Window, IDisposable
     // Make-a-style box in the Tags panel, and what the last attempt did
     private string _newStyle       = string.Empty;
     private string _newStyleStatus = string.Empty;
+
+    /// <summary>
+    /// Outfit cards ticked in select mode, kept apart from the item selection.
+    /// </summary>
+    /// <remarks>
+    /// A separate set rather than sharing <see cref="_selected"/>, because the two grids are
+    /// switched between freely and a shared set would hand an outfit action a list of item ids the
+    /// moment somebody changed view mid-selection. Both are dropped together by
+    /// <see cref="ClearSelection"/>, so leaving select mode leaves nothing behind either way.
+    /// </remarks>
+    private readonly HashSet<Guid> _selectedOutfits = new();
+
+    /// <summary>Outfit ids the grid drew last frame, for Select All. Mirrors <see cref="_lastVisibleIds"/>.</summary>
+    private readonly List<Guid> _lastVisibleOutfitIds = new();
+
+    /// <summary>Whether hidden outfits and design cards are in the grid this session.</summary>
+    /// <remarks>
+    /// Deliberately not saved. Hiding is for keeping a grid usable day to day, so the useful default
+    /// on every launch is the tidied grid — someone who wants a hidden card back ticks the box,
+    /// deals with it, and does not then have to remember to untick it again.
+    /// </remarks>
+    private bool _showHiddenOutfits;
+
+    /// <summary>The card whose name is being typed over, and the box it is being typed into.</summary>
+    /// <remarks>
+    /// Keyed by id rather than by a flag on the item, so a filter change or a re-sort that moves the
+    /// card mid-rename cannot leave the box open over a different one. One at a time by construction.
+    /// </remarks>
+    private Guid?  _renameItemId;
+    private string _renameItemBuf   = string.Empty;
+    private bool   _renameItemFocus;
 
     // Name box for saving a camera preset, and the preset currently being renamed. The slot is part
     // of the rename state so that switching to an item in another slot mid-rename does not leave the
@@ -404,7 +436,7 @@ public class PluginUi : Window, IDisposable
     public PluginUi(Configuration config, WardrobeService wardrobe,
         ITextureProvider textures, IPluginLog log, ItemImportPanel panel,
         ScreenshotSessionService session, BackupService backup, MassImportPanel massImport,
-        SharePanel share)
+        SharePanel share, HtmlExportService htmlExport)
         : base("Wardrobe###WardrobeMain",
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -417,6 +449,7 @@ public class PluginUi : Window, IDisposable
         _backup   = backup;
         _massImport = massImport;
         _share      = share;
+        _htmlExport = htmlExport;
 
         // The edit panel has the item and the picture, but the popup that shows it full size lives
         // here, over the whole window rather than inside a panel that is 360px wide
@@ -560,6 +593,7 @@ public class PluginUi : Window, IDisposable
         DrawToolbar();
         DrawBulkBar();
         DrawModOwnershipNotice();
+        DrawDesignTagOffer();
         DrawDesyncNotice();
         DrawLeftoverCollectionNotice();
         DrawUncompressedTextureNotice();
@@ -1099,8 +1133,13 @@ public class PluginUi : Window, IDisposable
         if (wasSelecting && !_selectMode) ExitSelectMode();
         if (!wasSelecting && _selectMode) EnterSelectMode();
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Pick several items and edit them together.\n" +
-                             "Cards show a tick box instead of their buttons while this is on.");
+            ImGui.SetTooltip("Pick several cards and act on them together.\n" +
+                             "Cards show a tick box instead of their buttons while this is on.\n\n" +
+                             "Works on whichever grid you are looking at — items, or outfits\n" +
+                             "and design cards.");
+
+        UiLayout.SameLineIfRoomForButton(" Crop Guide ");
+        DrawCropGuideToggle();
 
         UiLayout.SameLineIfRoomForButton("  Images  ");
         ToggleButton("  Images  ", ref _showImageBrowser, onActivate: () =>
@@ -1409,8 +1448,17 @@ public class PluginUi : Window, IDisposable
                   "Only mods this wardrobe switched on are touched.");
         if (disable)
         {
-            _wardrobe.DisableLeftovers();
-            _scanStatus = $"Disabled {total} leftover mod(s).";
+            // Reported from what the run returned, never from the count drawn above. Those two
+            // numbers part company whenever a mod is kept back or Penumbra refuses one, and the
+            // list on screen is the older of the two answers.
+            var result  = _wardrobe.DisableLeftovers();
+            _scanStatus = DescribeLeftoverRun(result);
+
+            // The other direction of the same overlap: an item listed above as desynced was listed
+            // there because its mods were on, and some of those have just been turned off. Re-read
+            // rather than cleared — an item this did not touch is still desynced and still worth
+            // saying so. See RecheckLeftovers.
+            _desynced = new List<WardrobeItem>(_wardrobe.ScanAndSyncWorn().Desynced);
             return;
         }
 
@@ -1433,6 +1481,48 @@ public class PluginUi : Window, IDisposable
 
         ImGui.Spacing();
         ImGui.Separator();
+    }
+
+    /// <summary>
+    /// Re-reads the leftover mods, after the notice above has acted on the same ones.
+    /// </summary>
+    /// <remarks>
+    /// The two notices describe one situation from opposite sides, and for the commonest case they
+    /// describe the very same mods. A desynced item is one whose mods are on while Glamourer is not
+    /// showing it, and the scan deliberately does not adopt those as worn — so nothing accounts for
+    /// their mods, no claim is spent, and every one of them is a leftover as well.
+    /// <para>
+    /// Wearing the item or turning its mods off settles both. But the leftover list is a snapshot
+    /// taken when the scan ran, so it knew nothing about it and the second notice stayed up
+    /// describing a state that had stopped being true — offering to disable the mods holding up a
+    /// look just re-applied, or to turn off mods that were already off.
+    /// </para>
+    /// <para>
+    /// Deliberately not called from <c>Keep Them</c>. That button is somebody saying they know what
+    /// those mods are, and re-reading would put the notice they just dismissed straight back up.
+    /// </para>
+    /// </remarks>
+    private void RecheckLeftovers() => _wardrobe.CheckForLeftovers();
+
+    /// <summary>
+    /// What to put on the status line after Disable Them, in the run's own numbers.
+    /// </summary>
+    /// <remarks>
+    /// Names the mods it did not turn off rather than only counting them. "Disabled 2, kept 1" sends
+    /// somebody to Penumbra to work out which one; naming it answers that on the spot, and these
+    /// lists are the length of one notice, not of a wardrobe.
+    /// </remarks>
+    private static string DescribeLeftoverRun(WardrobeService.LeftoverResult result)
+    {
+        var parts = new List<string> { $"Disabled {result.Disabled} leftover mod(s)." };
+
+        if (result.Kept.Count > 0)
+            parts.Add($"Kept {result.Kept.Count} that something worn still needs: {string.Join(", ", result.Kept)}.");
+
+        if (result.Refused.Count > 0)
+            parts.Add($"Penumbra would not turn off: {string.Join(", ", result.Refused)}.");
+
+        return string.Join(" ", parts);
     }
 
     private void DrawDesyncNotice()
@@ -1460,6 +1550,9 @@ public class PluginUi : Window, IDisposable
             }
             _scanStatus = $"Re-applied {_desynced.Count} item(s).";
             _desynced.Clear();
+
+            // Those items are recorded as worn now, so their mods are nobody's leftovers
+            RecheckLeftovers();
             return; // the list the loop below draws is gone
         }
         if (ImGui.IsItemHovered())
@@ -1483,6 +1576,9 @@ public class PluginUi : Window, IDisposable
                 _wardrobe.DisableItemMods(item);
             _scanStatus = $"Disabled mods for {_desynced.Count} item(s).";
             _desynced.Clear();
+
+            // Those mods are off now, so the claims behind them are spent
+            RecheckLeftovers();
             return;
         }
 
@@ -1528,7 +1624,147 @@ public class PluginUi : Window, IDisposable
         }
 
         // Removed after the loop rather than inside it, so the list is not mutated while enumerated
-        if (handled != null) _desynced.Remove(handled);
+        if (handled != null)
+        {
+            _desynced.Remove(handled);
+
+            // Once for the click rather than once per row, which is a full scan either way
+            RecheckLeftovers();
+        }
+    }
+
+    /// <summary>
+    /// What can be done to a batch of outfit cards at once.
+    /// </summary>
+    /// <remarks>
+    /// Hiding is the reason this exists. Turning Glamourer designs on gives every design a card, and
+    /// somebody with a few hundred of them needed a way to say "not these" that was not a folder
+    /// path typed into a box from memory or a right-click per card (#26). Filter or search the grid
+    /// down to what you do not want, Select All, one press.
+    /// <para>
+    /// Deliberately a short list. The item panel can retag, relink and rewrite collections because
+    /// items are what the wardrobe is made of; an outfit card is a reference to a look, and most of
+    /// what could be done to a batch of them is either meaningless or destructive.
+    /// </para>
+    /// </remarks>
+    private void DrawOutfitBulkActions()
+    {
+        if (_selectedOutfits.Count == 0)
+        {
+            ImGui.TextDisabled("Nothing selected. Tick some cards in the grid.");
+            return;
+        }
+
+        var chosen = _config.Outfits.Where(o => _selectedOutfits.Contains(o.Id)).ToList();
+        var hidden = chosen.Count(o => o.Hidden);
+        var full   = ImGui.GetContentRegionAvail().X;
+
+        ImGui.TextUnformatted("Visibility");
+        ImGui.TextDisabled("Keeps cards out of the grid without deleting anything. Items, pictures, " +
+                           "tags and notes stay on them, and the Hidden tick box above the grid " +
+                           "brings them back.");
+        ImGui.Spacing();
+
+        var half = (full - ImGui.GetStyle().ItemSpacing.X) / 2;
+
+        if (ImGui.Button($"Hide {chosen.Count}", new Vector2(half, 0)))
+            ApplyOutfitHidden(chosen, true);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Takes every selected card out of the grid.\n\n" +
+                             "For a design card this is the only answer there is: deleting one\n" +
+                             "does nothing lasting, because the design still exists in Glamourer\n" +
+                             "and the card is made again on the next reconcile.");
+
+        ImGui.SameLine();
+        if (hidden == 0) ImGui.BeginDisabled();
+        if (ImGui.Button($"Show {hidden}", new Vector2(half, 0)))
+            ApplyOutfitHidden(chosen, false);
+        if (hidden == 0) ImGui.EndDisabled();
+        if (hidden == 0 && ImGui.IsItemHovered())
+            ImGui.SetTooltip("None of the selected cards are hidden.");
+
+        var designs = chosen.Where(o => o.IsDesign).ToList();
+        if (designs.Count == 0)
+        {
+            DrawBulkStatus();
+            return;
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ImGui.TextUnformatted("Glamourer designs");
+        ImGui.TextDisabled($"{designs.Count} of the selected cards are design cards. Hiding one " +
+                           "leaves it in the wardrobe, still linked and still reconciled. Removing " +
+                           "it takes the card away and tells the link not to make it again.");
+        ImGui.Spacing();
+
+        ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.45f, 0.08f, 0.08f, 1f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.65f, 0.12f, 0.12f, 1f));
+        var stop = ImGui.Button($"Remove {designs.Count} and stop syncing", new Vector2(full, 0));
+        ImGui.PopStyleColor(2);
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Removes these design cards and stops them coming back.\n\n" +
+                             "Your designs in Glamourer are not touched — this only says\n" +
+                             "whether the wardrobe mirrors them.\n\n" +
+                             "A card with items, vanilla pieces, dyes or notes on it is kept\n" +
+                             "rather than deleted, and excluded all the same. Work you did in\n" +
+                             "the wardrobe is not something a tick box gets to throw away.\n\n" +
+                             "Settings has the list, and puts any of them back.");
+
+        if (stop)
+        {
+            var (removed, kept) = _wardrobe.ExcludeDesigns(designs);
+
+            // The removed cards are gone from the grid, so their ticks name nothing
+            _selectedOutfits.Clear();
+
+            // Where the way back is, said at the moment somebody might want it. The tooltip says so
+            // too, but a tooltip is read before pressing a button and this is read after.
+            _bulkStatus = (kept > 0
+                    ? $"Removed {removed} card(s). Kept {kept} that have items or notes on them — " +
+                      "those are excluded too, but not deleted."
+                    : $"Removed {removed} card(s) and stopped syncing them.") +
+                "\n\nSettings → Glamourer designs → Not synced lists them and puts any back.";
+        }
+
+        DrawBulkStatus();
+    }
+
+    /// <summary>The outcome of the last bulk action, at the foot of the panel that ran it.</summary>
+    /// <remarks>
+    /// Drawn last rather than beside whichever button set it. The panel has two sections that both
+    /// report, and a line sitting under the first while the second is what produced it reads as a
+    /// message about the wrong thing.
+    /// </remarks>
+    private void DrawBulkStatus()
+    {
+        if (string.IsNullOrEmpty(_bulkStatus)) return;
+
+        ImGui.Spacing();
+        ImGui.TextWrapped(_bulkStatus);
+    }
+
+    /// <summary>Hides or shows a batch of outfit cards, reporting what actually changed.</summary>
+    private void ApplyOutfitHidden(List<Outfit> chosen, bool hidden)
+    {
+        var changed = 0;
+        foreach (var outfit in chosen)
+        {
+            if (outfit.Hidden == hidden) continue;
+            outfit.Hidden = hidden;
+            changed++;
+        }
+
+        if (changed > 0) _config.Save();
+
+        _bulkStatus = changed == 0
+            ? hidden ? "Every selected card was already hidden." : "None of them were hidden."
+            : $"{(hidden ? "Hid" : "Restored")} {changed} card(s).";
+
+        _log.Debug($"[Wardrobe] Bulk visibility: {changed} outfit card(s) set hidden={hidden}");
     }
 
     /// <summary>
@@ -1538,6 +1774,7 @@ public class PluginUi : Window, IDisposable
     private void ClearSelection()
     {
         _selected.Clear();
+        _selectedOutfits.Clear();
         _bulkTag    = string.Empty;
         _bulkStatus = string.Empty;
     }
@@ -1581,31 +1818,38 @@ public class PluginUi : Window, IDisposable
     {
         if (!_selectMode) return;
 
+        // The bar acts on whichever grid is in front. Before outfits could be selected at all, the
+        // Select button was still on the toolbar while the outfits grid was showing and simply did
+        // nothing to the cards under it.
+        var outfits = _outfitsView;
+        var chosen  = outfits ? _selectedOutfits : _selected;
+        var noun    = outfits ? "outfit" : "item";
+
         ImGui.Spacing();
         ImGui.AlignTextToFramePadding();
-        ImGui.TextUnformatted($"{_selected.Count} selected");
+        ImGui.TextUnformatted($"{chosen.Count} selected");
 
         UiLayout.SameLineIfRoomForButton(" Select All ");
         if (ImGui.Button(" Select All "))
         {
-            foreach (var id in _lastVisibleIds) _selected.Add(id);
+            foreach (var id in outfits ? _lastVisibleOutfitIds : _lastVisibleIds) chosen.Add(id);
             _bulkStatus = string.Empty;
         }
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Selects every item the current filters are showing,\n" +
+            ImGui.SetTooltip($"Selects every {noun} the current filters are showing,\n" +
                              "not the whole wardrobe.");
 
         UiLayout.SameLineIfRoomForButton(" Clear ");
         if (ImGui.Button(" Clear ")) ClearSelection();
 
-        var none = _selected.Count == 0;
+        var none = chosen.Count == 0;
 
         UiLayout.SameLineIfRoomForButton(" Edit Selected ");
         if (none) ImGui.BeginDisabled();
         if (ImGui.Button(" Edit Selected ")) _bulkPanelOpen = true;
         if (none) ImGui.EndDisabled();
         if (none && ImGui.IsItemHovered())
-            ImGui.SetTooltip("Tick some items first.");
+            ImGui.SetTooltip($"Tick some {noun}s first.");
 
         UiLayout.SameLineIfRoomForButton(" Share Selected ");
         if (none) ImGui.BeginDisabled();
@@ -1802,6 +2046,17 @@ public class PluginUi : Window, IDisposable
 
         ImGui.SameLine();
         ImGui.AlignTextToFramePadding();
+
+        if (_outfitsView)
+        {
+            ImGui.TextUnformatted($"{_selectedOutfits.Count} selected");
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            DrawOutfitBulkActions();
+            return;
+        }
+
         ImGui.TextUnformatted($"{_selected.Count} selected");
 
         ImGui.Separator();
@@ -2210,6 +2465,65 @@ public class PluginUi : Window, IDisposable
             ImGui.SetTooltip("Filtered by the current search, slot, style, tag, worn or favourites " +
                              "selection.");
     }
+
+    /// <summary>
+    /// Turns the crop guide on and off without a trip to settings.
+    /// </summary>
+    /// <remarks>
+    /// Framing is the one thing you do with the guide, and it is done from the compact session view
+    /// or from the toolbar with the game filling the screen — neither of which is a good place to be
+    /// told to open settings and find a dropdown. Offered in both, so wherever you are watching a
+    /// session from there is a way to get the dimming out of the way and put it back.
+    /// <para>
+    /// Off and back on again keeps whichever mode was chosen rather than collapsing to a single
+    /// meaning: somebody who set it to Always is not silently moved onto Sessions by having used the
+    /// toggle. The dropdown in settings stays the place the three modes are chosen between.
+    /// </para>
+    /// </remarks>
+    private void DrawCropGuideToggle()
+    {
+        var on  = _config.CropGuide != Configuration.CropGuideMode.Off;
+        var was = on;
+
+        ToggleButton(" Crop Guide ", ref on);
+
+        if (on != was)
+        {
+            if (on)
+            {
+                _config.CropGuide = _cropGuideResume;
+            }
+            else
+            {
+                _cropGuideResume  = _config.CropGuide;
+                _config.CropGuide = Configuration.CropGuideMode.Off;
+            }
+
+            _config.Save();
+        }
+
+        if (!ImGui.IsItemHovered()) return;
+
+        ImGui.SetTooltip(_config.CropGuide switch
+        {
+            Configuration.CropGuideMode.Always =>
+                "On. Shows what a square screenshot will keep and dims the rest,\n" +
+                "whenever the game is showing.\n\nIt is never in the picture itself.",
+            Configuration.CropGuideMode.Sessions =>
+                "On during screenshot sessions. Shows what a square screenshot\n" +
+                "will keep and dims the rest.\n\nIt is never in the picture itself.\n\n" +
+                "Nothing is drawn right now unless a session is running — Settings\n" +
+                "has the Always option.",
+            _ =>
+                "Off. Frame by eye.\n\nTurning it back on restores the mode you had:\n" +
+                (_cropGuideResume == Configuration.CropGuideMode.Always
+                    ? "always on."
+                    : "on during screenshot sessions."),
+        });
+    }
+
+    /// <summary>The mode the toggle puts back, so switching off and on again keeps your choice.</summary>
+    private Configuration.CropGuideMode _cropGuideResume = Configuration.CropGuideMode.Sessions;
 
     private void ToggleButton(string label, ref bool state, Action? onActivate = null)
     {
@@ -3886,6 +4200,64 @@ public class PluginUi : Window, IDisposable
         return colour;
     }
 
+    /// <summary>
+    /// The name box that replaces a card's name while it is being renamed.
+    /// </summary>
+    /// <remarks>
+    /// The whole of issue #24. Mass import names items after the mod, and a mod is named by whoever
+    /// packaged it — fifty hairstyles arrive carrying fifty creator watermarks, and fixing that used
+    /// to mean opening the edit panel fifty times for a field that is the first thing in it.
+    /// <para>
+    /// Committed by Enter or by clicking away, rather than by a button. There is no room on a card
+    /// for Save and Cancel beside the box, and clicking away from a rename you have typed almost
+    /// always means you are done with it — losing the typing there would be the worse guess.
+    /// Escape still abandons it, since ImGui reverts the buffer before deactivating and the edit
+    /// therefore never registers.
+    /// </para>
+    /// </remarks>
+    private void DrawCardRename(WardrobeItem item)
+    {
+        // One frame of focus on the way in, so typing starts without a second click. AutoSelectAll
+        // then makes the first keystroke replace the old name, which is what a rename usually is.
+        if (_renameItemFocus)
+        {
+            ImGui.SetKeyboardFocusHere();
+            _renameItemFocus = false;
+        }
+
+        ImGui.SetNextItemWidth(-1);
+        var entered = ImGui.InputText($"##rename_{item.Id}", ref _renameItemBuf, 128,
+            ImGuiInputTextFlags.EnterReturnsTrue | ImGuiInputTextFlags.AutoSelectAll);
+
+        if (entered || ImGui.IsItemDeactivatedAfterEdit()) CommitCardRename(item);
+        else if (ImGui.IsItemDeactivated())                _renameItemId = null;
+    }
+
+    private void BeginCardRename(WardrobeItem item)
+    {
+        _renameItemId    = item.Id;
+        _renameItemBuf   = item.Name;
+        _renameItemFocus = true;
+    }
+
+    /// <summary>Writes the typed name back, unless it is blank or unchanged.</summary>
+    /// <remarks>
+    /// A blank name is refused rather than saved, because a card with no name cannot be searched
+    /// for, sorted sensibly or told apart from its neighbours — and the way out of one is the edit
+    /// panel, which is exactly the trip this is meant to save. Refusing keeps the old name instead.
+    /// </remarks>
+    private void CommitCardRename(WardrobeItem item)
+    {
+        var name = _renameItemBuf.Trim();
+        _renameItemId = null;
+
+        if (name.Length == 0 || name.Equals(item.Name, StringComparison.Ordinal)) return;
+
+        _log.Debug($"[Wardrobe] Renamed '{item.Name}' to '{name}' from its card.");
+        item.Name = name;
+        _config.Save();
+    }
+
     private void DrawCard(WardrobeItem item, ref Guid? pendingDelete)
     {
         var worn = _wardrobe.IsItemWorn(item);
@@ -3914,25 +4286,40 @@ public class PluginUi : Window, IDisposable
         DrawItemImage(item);
 
         // Name + worn star / detected indicator
-        var dispName = CardName(item.Name);
-        ImGui.TextUnformatted(dispName);
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip($"{item.Name}\n{DateAddedLabel(item)}");
-        if (worn)
+        if (_renameItemId == item.Id)
         {
-            ImGui.SameLine();
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.85f, 0.3f, 1f));
-            ImGui.TextUnformatted("★");
-            ImGui.PopStyleColor();
+            DrawCardRename(item);
         }
-        else if (_detectedWorn.Contains(item.Id))
+        else
         {
-            ImGui.SameLine();
-            ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.3f, 0.9f, 0.85f, 1f));
-            ImGui.TextUnformatted("◉");
-            ImGui.PopStyleColor();
+            var dispName = CardName(item.Name);
+            ImGui.TextUnformatted(dispName);
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Detected as worn (mods are enabled in Penumbra)");
+            {
+                ImGui.SetTooltip($"{item.Name}\n{DateAddedLabel(item)}\n\nDouble-click to rename.");
+
+                // Not offered in select mode, where a click on the card is a tick and a rename box
+                // would be sitting over the thing being ticked
+                if (!_selectMode && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
+                    BeginCardRename(item);
+            }
+
+            if (worn)
+            {
+                ImGui.SameLine();
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.85f, 0.3f, 1f));
+                ImGui.TextUnformatted("★");
+                ImGui.PopStyleColor();
+            }
+            else if (_detectedWorn.Contains(item.Id))
+            {
+                ImGui.SameLine();
+                ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(0.3f, 0.9f, 0.85f, 1f));
+                ImGui.TextUnformatted("◉");
+                ImGui.PopStyleColor();
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Detected as worn (mods are enabled in Penumbra)");
+            }
         }
 
         DrawTextureFlagBadge(item, worn);
@@ -4395,6 +4782,31 @@ public class PluginUi : Window, IDisposable
         _bulkStatus = string.Empty;
     }
 
+    /// <summary>The tick box an outfit card shows in place of its buttons while selecting.</summary>
+    /// <inheritdoc cref="DrawCardSelector" path="/remarks"/>
+    private void DrawOutfitSelector(Outfit outfit)
+    {
+        var selected = _selectedOutfits.Contains(outfit.Id);
+
+        if (ImGui.Checkbox("##pickoutfit", ref selected))
+            SelectOutfit(outfit.Id, selected);
+
+        ImGui.SameLine();
+        ImGui.AlignTextToFramePadding();
+        ImGui.TextDisabled(selected ? "Selected" : "Select");
+
+        if (ImGui.IsWindowHovered() && !ImGui.IsAnyItemHovered() &&
+            ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+            SelectOutfit(outfit.Id, !selected);
+    }
+
+    private void SelectOutfit(Guid id, bool on)
+    {
+        if (on) _selectedOutfits.Add(id);
+        else    _selectedOutfits.Remove(id);
+        _bulkStatus = string.Empty;
+    }
+
     private unsafe void DrawItemImage(WardrobeItem item)
     {
         var size = new Vector2(ThumbSize, ThumbSize);
@@ -4428,11 +4840,47 @@ public class PluginUi : Window, IDisposable
             return;
         }
 
-        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.07f, 0.07f, 0.09f, 1f));
-        ImGui.Button(item.Slot.DisplayName(), size);
-        ImGui.PopStyleColor();
+        DrawEmptyPreview(item.Slot.DisplayName(), size);
         AcceptImageDrop(item);
         DrawQuickViewOverlay(item, top, hasImage: false);
+    }
+
+    /// <summary>
+    /// The block a card shows where its picture would be, when it has not got one.
+    /// </summary>
+    /// <remarks>
+    /// A button normally — it is the drop target for the image browser, and wants the affordance
+    /// that says so.
+    /// <para>
+    /// While selecting it is a plain block instead. A button is an interactive item, and the
+    /// click-anywhere fallback in <see cref="DrawCardSelector"/> deliberately ignores clicks that
+    /// landed on one, so the placeholder swallowed them: a card with a picture ticked when you
+    /// clicked its middle, and a card without one did not. Same card, two behaviours, decided by
+    /// whether anybody had got round to photographing it — which is exactly the card you are most
+    /// likely to be selecting in bulk. A picture draws through <c>ImGui.Image</c>, which adds no
+    /// interactive item, which is why that half worked all along.
+    /// </para>
+    /// </remarks>
+    private void DrawEmptyPreview(string label, Vector2 size)
+    {
+        if (!_selectMode)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.07f, 0.07f, 0.09f, 1f));
+            ImGui.Button(label, size);
+            ImGui.PopStyleColor();
+            return;
+        }
+
+        // Drawn rather than laid out, so it occupies the space without claiming the click
+        var at   = ImGui.GetCursorScreenPos();
+        var draw = ImGui.GetWindowDrawList();
+
+        draw.AddRectFilled(at, at + size, ImGui.GetColorU32(new Vector4(0.07f, 0.07f, 0.09f, 1f)));
+
+        var text = ImGui.CalcTextSize(label);
+        draw.AddText(at + (size - text) / 2f, ImGui.GetColorU32(ImGuiCol.TextDisabled), label);
+
+        ImGui.Dummy(size);
     }
 
     /// <summary>
@@ -4529,7 +4977,12 @@ public class PluginUi : Window, IDisposable
         var centre = new Vector2(vp.Pos.X + vp.Size.X * 0.5f, vp.Pos.Y + vp.Size.Y * 0.5f);
         ImGui.SetNextWindowPos(centre, ImGuiCond.Appearing, new Vector2(0.5f, 0.5f));
 
-        if (!ImGui.BeginPopupModal(QuickViewPopup, ImGuiWindowFlags.AlwaysAutoResize))
+        // A close button in the title bar, from ImGui rather than drawn on top of it. Clicking it
+        // ends the popup and nothing else: the branch below clears the viewer and every window
+        // behind it — the wardrobe, an open editor — is left exactly as it was.
+        var open = true;
+
+        if (!ImGui.BeginPopupModal(QuickViewPopup, ref open, ImGuiWindowFlags.AlwaysAutoResize))
         {
             _quickViewOutfit = null;
             return;
@@ -4630,7 +5083,12 @@ public class PluginUi : Window, IDisposable
         var centre = new Vector2(vp.Pos.X + vp.Size.X * 0.5f, vp.Pos.Y + vp.Size.Y * 0.5f);
         ImGui.SetNextWindowPos(centre, ImGuiCond.Appearing, new Vector2(0.5f, 0.5f));
 
-        if (!ImGui.BeginPopupModal(QuickViewPopup, ImGuiWindowFlags.AlwaysAutoResize))
+        // A close button in the title bar, from ImGui rather than drawn on top of it. Clicking it
+        // ends the popup and nothing else: the branch below clears the viewer and every window
+        // behind it — the wardrobe, an open editor — is left exactly as it was.
+        var open = true;
+
+        if (!ImGui.BeginPopupModal(QuickViewPopup, ref open, ImGuiWindowFlags.AlwaysAutoResize))
         {
             _quickViewItem = null;
             return;
@@ -5017,6 +5475,11 @@ public class PluginUi : Window, IDisposable
         ImGui.Spacing();
         DrawShutterRow();
         DrawSessionActionRow(_session.CurrentItem != null ? "Item" : "Outfit");
+
+        // Last, under the actions rather than among them: it changes what you see while framing and
+        // never what the session does, so it must not sit where Skip and Stop are being aimed at
+        DrawCropGuideToggle();
+
         UiLayout.PopWrap();
     }
 
@@ -5387,6 +5850,8 @@ public class PluginUi : Window, IDisposable
                              "The game takes it, so it is the same picture your screenshot key\n" +
                              "would have taken, cropped and filed the same way.");
 
+        DrawShutterProblem();
+
         if (!auto) return;
 
         ImGui.SameLine();
@@ -5439,6 +5904,9 @@ public class PluginUi : Window, IDisposable
         {
             ImGui.TextDisabled("Off, every session waits for you to press your screenshot key — though " +
                                "Shoot Now on the session HUD takes one without it.");
+
+            ImGui.Spacing();
+            DrawShutterDiagnostics();
             return;
         }
 
@@ -5447,6 +5915,9 @@ public class PluginUi : Window, IDisposable
         ImGui.Spacing();
 
         DrawAutoDelaySlider(compact: false);
+
+        ImGui.Spacing();
+        DrawShutterDiagnostics();
     }
 
     /// <summary>
@@ -5497,6 +5968,92 @@ public class PluginUi : Window, IDisposable
                              "angle; a slower drive wants more.\n\n" +
                              "The first shot of each item is given longer again on top of this, since\n" +
                              "that is the one that follows a redraw.");
+    }
+
+    /// <summary>How long a refusal from the game stays on the session HUD.</summary>
+    private const double ShutterProblemSeconds = 10;
+
+    /// <summary>
+    /// Says why the last shot did not happen, under the button that asked for it.
+    /// </summary>
+    /// <remarks>
+    /// Shoot Now pressed against a game that is refusing screenshots used to do nothing at all —
+    /// nothing on screen and nothing in the log — which reads as a broken button rather than as a
+    /// client that said no. The reasons are all different from each other and none of them are the
+    /// plugin's to fix, so the only useful thing to do with one is show it.
+    /// </remarks>
+    private void DrawShutterProblem()
+    {
+        if (_session.ShutterProblem is not { } problem) return;
+        if ((DateTime.UtcNow - _session.ShutterProblemAt).TotalSeconds > ShutterProblemSeconds) return;
+
+        ImGui.Spacing();
+        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+        ImGui.TextColored(new Vector4(1f, 0.6f, 0.35f, 1f), problem);
+        ImGui.PopTextWrapPos();
+    }
+
+    /// <summary>
+    /// What the game's screenshot task currently says about itself.
+    /// </summary>
+    /// <remarks>
+    /// Every line is the game's own state and none of it is the plugin's to change. It is here for the
+    /// one thing that cannot be diagnosed from this side: a session that takes no pictures on a machine
+    /// nobody here can reproduce on. A shot in flight that never clears is a stuck screenshot task; an
+    /// allowed that never turns true is a client refusing outright; a format that is not one a session
+    /// can read is a folder filling up with files it will never pick up. Three different faults that
+    /// all arrive as the same report, that nothing happens.
+    /// </remarks>
+    private void DrawShutterDiagnostics()
+    {
+        if (!ImGui.CollapsingHeader("Screenshot diagnostics")) return;
+
+        var state = _session.ReadShutter();
+
+        ImGui.TextDisabled("What the game reports about its own screenshot function. Worth copying " +
+                           "into a bug report about a session that takes no pictures.");
+        ImGui.Spacing();
+
+        if (!state.Available)
+        {
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0.35f, 1f),
+                              "The game's screenshot function was not found.");
+            return;
+        }
+
+        ImGui.Text($"Screenshots allowed : {state.CanTake}");
+        ImGui.Text($"Shot in flight      : {state.Requested}");
+        ImGui.Text($"Last result         : {state.Result}");
+        ImGui.Text($"Saving as           : {state.Format}");
+        ImGui.Text($"Last shot at        : {(state.Timestamp == 0 ? "never" : state.Timestamp.ToString())}");
+
+        if (state.Requested)
+        {
+            ImGui.Spacing();
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
+                              "A shot is in flight. If this never goes back to False, the game's " +
+                              "screenshot function is stuck, and your own screenshot key will not " +
+                              "work either until the game is restarted.");
+            ImGui.PopTextWrapPos();
+        }
+
+        if (string.Equals(state.Result, "NoDiskSpace", StringComparison.OrdinalIgnoreCase))
+        {
+            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(1f, 0.45f, 0.4f, 1f),
+                              "The game reported it had no room on disk for the last screenshot.");
+        }
+
+        if (string.Equals(state.Format, "Dds", StringComparison.OrdinalIgnoreCase))
+        {
+            ImGui.Spacing();
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+            ImGui.TextColored(new Vector4(1f, 0.45f, 0.4f, 1f),
+                              "The game is saving screenshots as DDS, which a session cannot read. " +
+                              "Set the screenshot format to PNG or JPG in the game's own settings.");
+            ImGui.PopTextWrapPos();
+        }
     }
 
     /// <summary>
@@ -6126,6 +6683,9 @@ public class PluginUi : Window, IDisposable
             // The two tick boxes above the grid. Unticking both leaves the outfits you built yourself.
             .Where(o => ShowPlates  || !o.IsGlamourPlate)
             .Where(o => ShowDesigns || !o.IsDesign)
+            // Hidden ones are out until asked for. Last of the source filters, so the count beside
+            // the toggle can say how many are being held back without the tag filters skewing it.
+            .Where(o => _showHiddenOutfits || !o.Hidden)
             .Where(OutfitMatchesTagFilters);
 
         // Search is part of that same row, and for a long time it narrowed only the item grid — so
@@ -6143,6 +6703,18 @@ public class PluginUi : Window, IDisposable
         var outfits = query
             .OrderBy(o => o.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        // What Select All acts on, recorded whether or not the mode is on, so turning it on and
+        // pressing Select All at once does not act on a list from whenever it was last used
+        _lastVisibleOutfitIds.Clear();
+        _lastVisibleOutfitIds.AddRange(outfits.Select(o => o.Id));
+
+        // An outfit deleted while ticked must not linger and reappear in a later bulk action
+        if (_selectMode && _selectedOutfits.Count > 0)
+        {
+            var live = _config.Outfits.Select(o => o.Id).ToHashSet();
+            _selectedOutfits.RemoveWhere(id => !live.Contains(id));
+        }
 
         if (outfits.Count == 0)
         {
@@ -6265,6 +6837,21 @@ public class PluginUi : Window, IDisposable
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Show your Glamourer designs in the grid.\n\n" +
                                  "Untick to leave only the outfits you built yourself.");
+        }
+
+        // Only once something is actually hidden. A tick box for a state nobody is in is a question
+        // about a feature they have not met, and this row is already three controls long.
+        var hidden = _config.Outfits.Count(o => o.Hidden);
+        if (hidden > 0)
+        {
+            var label = $"Hidden ({hidden})";
+            UiLayout.SameLineIfRoomForText(label);
+            var show = _showHiddenOutfits;
+            if (ImGui.Checkbox(label, ref show)) _showHiddenOutfits = show;
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Show the outfits and design cards you have hidden.\n\n" +
+                                 "Nothing about them is lost while they are hidden — items,\n" +
+                                 "pictures and tags are all still on them.");
         }
     }
 
@@ -6674,6 +7261,17 @@ public class PluginUi : Window, IDisposable
                                      .Select(i => $"{i.Slot.DisplayName()} — {i.Name}")));
         }
 
+        // Same card height either way, so entering the mode does not reflow the grid, and the
+        // delete button is not on screen to be hit while clicking through dozens of cards.
+        if (_selectMode)
+        {
+            DrawOutfitSelector(outfit);
+            ImGui.EndChild();
+            ImGui.PopStyleColor(2);
+            ImGui.PopID();
+            return;
+        }
+
         var btnW = (cardW - CardPad * 2 - UiScale.S(6f)) / 2;
 
         if (worn)
@@ -6776,6 +7374,26 @@ public class PluginUi : Window, IDisposable
             {
                 OpenOutfitEdit(_wardrobe.DuplicateOutfit(outfit));
             }
+
+            ImGui.Separator();
+
+            // Beside Duplicate rather than beside Delete, because it is the opposite of destructive
+            // and sitting it next to the red button would invite the wrong read of it (#26)
+            if (ImGui.MenuItem(outfit.Hidden ? "Show in the grid" : "Hide from the grid"))
+            {
+                outfit.Hidden = !outfit.Hidden;
+                _config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip(outfit.Hidden
+                    ? "Put this card back in the grid."
+                    : "Keep this card out of the grid without deleting it. Items,\n" +
+                      "pictures and tags stay on it, and the tick box above the grid\n" +
+                      "brings it back." +
+                      (outfit.IsDesign
+                          ? "\n\nFor a design card this is the only way: deleting one\n" +
+                            "brings it straight back, because the design still exists."
+                          : string.Empty));
 
             ImGui.EndPopup();
         }
@@ -8566,11 +9184,9 @@ public class PluginUi : Window, IDisposable
             return;
         }
 
-        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.07f, 0.07f, 0.09f, 1f));
-        ImGui.Button("Outfit", _config.PortraitOutfitPreviews
+        DrawEmptyPreview("Outfit", _config.PortraitOutfitPreviews
             ? new Vector2(thumbSize, ImageDraw.PortraitHeight(thumbSize))
             : size);
-        ImGui.PopStyleColor();
         AcceptOutfitImageDrop(outfit);
     }
 
@@ -8806,6 +9422,8 @@ public class PluginUi : Window, IDisposable
         SettingsBreak();
         DrawGlamourerDesignSettings();
         SettingsBreak();
+        DrawDesignTagSettings();
+        SettingsBreak();
         DrawWearingSettings();
         SettingsBreak();
         DrawBaseCharacterSettings();
@@ -8860,6 +9478,242 @@ public class PluginUi : Window, IDisposable
         SettingsBreak();
 
         DrawTextureFlagSettings();
+
+        SettingsBreak();
+
+        DrawHtmlExportSettings();
+    }
+
+    /// <summary>
+    /// Writing the wardrobe out as a web page: what the page is, where it goes, and what may go in it.
+    /// </summary>
+    /// <remarks>
+    /// The prose says plainly that nothing is uploaded, because "share your wardrobe" is a phrase
+    /// that in almost every other plugin means an account somewhere. Here it means a file on your
+    /// own disk that you send to somebody yourself, and that is worth saying before the folder
+    /// picker rather than after it.
+    /// </remarks>
+    private void DrawHtmlExportSettings()
+    {
+        ImGui.TextUnformatted("Export as a web page");
+        ImGui.TextDisabled("Writes your wardrobe out as a page anyone can open in a browser — the " +
+                           "pictures, the names, the tags, and what each piece is made of. " +
+                           "Searchable and filterable, with no plugin, no game and no account " +
+                           "needed at the other end.");
+        ImGui.Spacing();
+        ImGui.TextDisabled("Nothing is uploaded and nothing is fetched. The page is written to a " +
+                           "folder you pick and loads nothing from the internet. Sending it to " +
+                           "somebody is a separate thing you do yourself.");
+        ImGui.Spacing();
+
+        var enabled = _config.HtmlExportEnabled;
+        if (ImGui.Checkbox("Offer exporting to a web page", ref enabled))
+        {
+            _config.HtmlExportEnabled = enabled;
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Experimental: what belongs on a card and what belongs behind it is\n" +
+                             "still being worked out, and nobody has yet opened a page built from\n" +
+                             "a wardrobe of several hundred pieces.\n\n" +
+                             "It only ever reads. Your wardrobe, your pictures and your mods are\n" +
+                             "not touched — the export is a copy written somewhere else.");
+
+        if (!enabled)
+        {
+            ImGui.TextDisabled("Off, nothing is written and no button is drawn.");
+            return;
+        }
+
+        ImGui.Spacing();
+
+        var title = _config.HtmlExportTitle;
+        ImGui.SetNextItemWidth(UiScale.S(260));
+        if (ImGui.InputText("Page title##htmltitle", ref title, 80))
+        {
+            _config.HtmlExportTitle = title;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The heading at the top of the page, and what the browser tab says.\n" +
+                             "Left blank it reads 'My Wardrobe'.");
+
+        ImGui.Spacing();
+        if (string.IsNullOrEmpty(_config.HtmlExportFolder))
+            ImGui.TextDisabled("No export folder selected.");
+        else
+        {
+            ImGui.TextUnformatted(_config.HtmlExportFolder);
+            if (!Directory.Exists(_config.HtmlExportFolder))
+            {
+                ImGui.Spacing();
+                ImGui.TextDisabled("Folder will be created on the next export.");
+            }
+        }
+
+        ImGui.Spacing();
+        if (ImGui.Button(" Browse…##htmlFolder "))
+        {
+            var startDir = Directory.Exists(_config.HtmlExportFolder)
+                ? _config.HtmlExportFolder
+                : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
+            _fileDialog.OpenFolderDialog("Select Export Folder", (confirmed, path) =>
+            {
+                if (!confirmed) return;
+                _config.HtmlExportFolder = path;
+                _config.Save();
+            }, startDir);
+        }
+
+        if (!string.IsNullOrEmpty(_config.HtmlExportFolder))
+        {
+            UiLayout.SameLineIfRoomForButton(" Clear ");
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
+            if (ImGui.Button(" Clear##htmlFolder "))
+            {
+                _config.HtmlExportFolder = string.Empty;
+                _config.Save();
+            }
+            ImGui.PopStyleColor(2);
+        }
+
+        ImGui.Spacing();
+
+        var layouts = new[] { "A folder of files", "One self-contained file" };
+        var layout  = (int)_config.HtmlExportLayout;
+        ImGui.SetNextItemWidth(UiScale.S(260));
+        if (ImGui.Combo("Written as##htmllayout", ref layout, layouts, layouts.Length))
+        {
+            _config.HtmlExportLayout = (HtmlExportLayout)Math.Clamp(layout, 0, layouts.Length - 1);
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("A folder holds index.html with an images folder beside it. Much the\n" +
+                             "smaller of the two, and pictures load only as they are scrolled to —\n" +
+                             "but it has to be zipped before it can be sent anywhere.\n\n" +
+                             "One file carries every picture inside itself, so it is a single\n" +
+                             "attachment that needs no explaining. It costs about a third again in\n" +
+                             "size, and all of it is decoded before anything appears — a large\n" +
+                             "wardrobe can take a while to open, or fail to.");
+
+        ImGui.Spacing();
+
+        var sizes    = HtmlExportService.ImageSizes;
+        var sizeIdx  = Array.IndexOf(sizes, _config.HtmlExportImageSize);
+        var sizeText = sizes.Select(s => $"{s} px").ToArray();
+        if (sizeIdx < 0) sizeIdx = 1;
+
+        ImGui.SetNextItemWidth(UiScale.S(260));
+        if (ImGui.Combo("Picture size##htmlsize", ref sizeIdx, sizeText, sizeText.Length))
+        {
+            _config.HtmlExportImageSize = sizes[Math.Clamp(sizeIdx, 0, sizes.Length - 1)];
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The longest edge of the picture you get when a card is opened, and\n" +
+                             "the setting that decides how big the export is.\n\n" +
+                             "A ceiling rather than a promise: a wardrobe photographed at 512 is\n" +
+                             "written at 512 whatever this says. Nothing is ever upscaled.\n\n" +
+                             "The thumbnails in the grid are a fixed small size either way, so\n" +
+                             "this never affects how quickly the page itself opens.");
+
+        ImGui.Spacing();
+
+        var notes = _config.HtmlExportIncludeNotes;
+        if (ImGui.Checkbox("Include notes", ref notes))
+        {
+            _config.HtmlExportIncludeNotes = notes;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Notes are usually where the creator, the price and the link live,\n" +
+                             "which is most of what somebody looking at your wardrobe wants.\n\n" +
+                             "Turn it off if yours are reminders to yourself. Web links in the\n" +
+                             "notes are shown as the address itself, never as a label over it.");
+
+        var mods = _config.HtmlExportIncludeMods;
+        if (ImGui.Checkbox("Include the mods behind each item", ref mods))
+        {
+            _config.HtmlExportIncludeMods = mods;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The mod names and the options chosen in them — 'what is that made\n" +
+                             "of', which is the question a shared wardrobe is usually asked.\n\n" +
+                             "Turn it off for a lookbook rather than a parts list. Collection\n" +
+                             "names and file paths are never written out either way.");
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Hidden outfits are left out. Nothing already in the folder is touched — " +
+                           "each export is stamped with the time it was made.");
+        ImGui.Spacing();
+
+        var canExport = !string.IsNullOrEmpty(_config.HtmlExportFolder) && !_htmlExport.Running;
+
+        if (!canExport) ImGui.BeginDisabled();
+        if (ImGui.Button(_htmlExport.Running ? " Exporting… " : " Export Now "))
+            _htmlExport.Run();
+        if (!canExport) ImGui.EndDisabled();
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(string.IsNullOrEmpty(_config.HtmlExportFolder)
+                ? "Pick a folder first."
+                : "Writes the page now. Large wardrobes take a minute — every\n" +
+                  "picture is re-encoded, and it happens off the game's thread\n" +
+                  "so play carries on while it runs.");
+
+        if (!string.IsNullOrEmpty(_htmlExport.LastPath) && !_htmlExport.Running)
+        {
+            UiLayout.SameLineIfRoomForButton(" Open Folder ");
+            if (ImGui.Button(" Open Folder "))
+                OpenLastExport();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Opens the last export in Explorer.");
+        }
+
+        if (!string.IsNullOrEmpty(_htmlExport.Progress))
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled(_htmlExport.Progress);
+        }
+
+        if (!string.IsNullOrEmpty(_htmlExport.LastResult))
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled(_htmlExport.LastResult);
+        }
+    }
+
+    /// <summary>
+    /// Shows the last export in Explorer, selecting the file where the export was one.
+    /// </summary>
+    /// <remarks>
+    /// Explorer rather than a browser, and deliberately: opening the page would be the wardrobe
+    /// launching whatever is registered for .html, and the point of the export is that you decide
+    /// what happens to the file. Showing you where it is stops short of that.
+    /// </remarks>
+    private void OpenLastExport()
+    {
+        var path = _htmlExport.LastPath;
+        if (string.IsNullOrEmpty(path)) return;
+
+        try
+        {
+            var args = File.Exists(path) ? $"/select,\"{path}\"" : $"\"{path}\"";
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "explorer.exe",
+                Arguments       = args,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"[Wardrobe] Could not open the export folder — {ex.Message}");
+        }
     }
 
     /// <summary>
@@ -9990,6 +10844,9 @@ public class PluginUi : Window, IDisposable
             : "Outfit and item previews are both square.");
 
         ImGui.Spacing();
+        DrawCropGuideSetting();
+
+        ImGui.Spacing();
         ImGui.TextUnformatted("During a session");
         ImGui.Spacing();
 
@@ -10200,6 +11057,63 @@ public class PluginUi : Window, IDisposable
         }
     }
 
+    /// <summary>
+    /// When the crop guide is drawn over the game.
+    /// </summary>
+    /// <remarks>
+    /// Three answers rather than a checkbox, because "while I am taking pictures" and "all the time"
+    /// are genuinely different wants and neither is wrong. Someone running sessions wants it exactly
+    /// when the shutter matters; someone who shoots by hand outside a session gets nothing from that
+    /// and needs the third option.
+    /// </remarks>
+    private void DrawCropGuideSetting()
+    {
+        var options = new (Configuration.CropGuideMode Mode, string Label, string Hint)[]
+        {
+            (Configuration.CropGuideMode.Off, "Off",
+                "Frame by eye, the way it worked before."),
+            (Configuration.CropGuideMode.Sessions, "During screenshot sessions",
+                "On from the moment a session starts until it ends."),
+            (Configuration.CropGuideMode.Always, "Always",
+                "On whenever the game is showing, session or not."),
+        };
+
+        var current = Array.FindIndex(options, o => o.Mode == _config.CropGuide);
+        if (current < 0) current = 1;
+
+        ImGui.TextUnformatted("Crop guide");
+        ImGui.TextDisabled("Shows what a square screenshot will keep. A captured picture is " +
+                           "centre-cropped, so on a wide window the sides are thrown away — this " +
+                           "draws the part that survives and dims the rest.");
+        ImGui.Spacing();
+
+        ImGui.SetNextItemWidth(UiScale.S(240));
+        if (ImGui.BeginCombo("##cropguide", options[current].Label))
+        {
+            for (var i = 0; i < options.Length; i++)
+            {
+                if (ImGui.Selectable(options[i].Label, i == current))
+                {
+                    _config.CropGuide = options[i].Mode;
+                    _config.Save();
+                }
+                if (i == current) ImGui.SetItemDefaultFocus();
+            }
+
+            ImGui.EndCombo();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The guide is drawn by the plugin, so it is not in the picture —\n" +
+                             "the game takes the screenshot itself and does not capture\n" +
+                             "plugin windows.\n\n" +
+                             "Square captures only. An outfit shot with portrait previews on\n" +
+                             "is cropped 9:16 and gets no guide — GPose's own portrait mode\n" +
+                             "already frames that one for you.");
+
+        ImGui.TextDisabled(options[current].Hint);
+    }
+
     private void DrawSetupSettings()
     {
         ImGui.TextUnformatted("Setup");
@@ -10324,6 +11238,9 @@ public class PluginUi : Window, IDisposable
             ? "Glamourer has no designs to show, or is not answering."
             : $"{live} design(s) linked. Renames and deletions in Glamourer follow through by themselves.");
 
+        DrawDesignFolderFilter(cards);
+        DrawExcludedDesigns();
+
         // The one thing that can go wrong, offered here as well as in the grid: someone who turned the
         // cards off is exactly the person who will not see the notice there
         var stranded = _wardrobe.StrandedDesignCards();
@@ -10335,6 +11252,269 @@ public class PluginUi : Window, IDisposable
             string.Join(", ", stranded.Select(o => o.Name)));
         ImGui.TextDisabled("Their pictures, tags and attached items are kept. Cards holding nothing are " +
                            "dropped by themselves — these are the ones with something in them.");
+    }
+
+    /// <summary>
+    /// Limiting design cards to one folder of Glamourer's tree.
+    /// </summary>
+    /// <remarks>
+    /// Issue #26: showing designs is otherwise all or nothing, and someone with several hundred of
+    /// them gets an outfits grid that is a mirror of a list they were not trying to manage here.
+    /// <para>
+    /// The box and the prune button are deliberately two actions. Typing a folder name changes only
+    /// what gets a card from now on, because a text box that deletes hundreds of cards as you reach
+    /// the halfway point of a word is one nobody can type in. The button is where the removal is
+    /// asked for, out loud, with a count.
+    /// </para>
+    /// </remarks>
+    private void DrawDesignFolderFilter(int cards)
+    {
+        ImGui.Spacing();
+        ImGui.TextDisabled("Only show designs filed under this folder in Glamourer. " +
+                           "Leave it empty for all of them.");
+
+        var filter = _config.DesignFolderFilter;
+        ImGui.SetNextItemWidth(UiScale.S(240));
+        if (ImGui.InputTextWithHint("##designfolder", "Night/Formal", ref filter, 256))
+        {
+            _config.DesignFolderFilter = filter;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Matched on folder boundaries, so 'Night' covers 'Night/Formal'\n" +
+                             "and leaves 'Nightshade' alone. Designs sitting at Glamourer's\n" +
+                             "top level are in no folder, so a filter never matches them.\n\n" +
+                             "This decides which designs get a card from now on. Cards you\n" +
+                             "already have are left where they are.");
+
+        if (_config.DesignFolderFilter.Trim().Trim('/').Length == 0)
+        {
+            _designFilterStatus = string.Empty;
+            return;
+        }
+
+        if (cards > 0)
+        {
+            UiLayout.SameLineIfRoomForButton(" Remove cards outside it ");
+            if (ImGui.Button(" Remove cards outside it ##designfolder "))
+            {
+                var (removed, kept) = _wardrobe.PruneDesignCardsOutsideFilter();
+
+                _designFilterStatus = removed == 0 && kept == 0
+                    ? "Nothing to remove — no card sits outside that folder, or Glamourer could not say."
+                    : kept > 0
+                        ? $"Removed {removed} card(s). Kept {kept} that have items, pictures or notes on them."
+                        : $"Removed {removed} card(s).";
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Removes the design cards outside the folder above.\n\n" +
+                                 "A card with items, vanilla pieces, dyes or notes attached is\n" +
+                                 "kept whatever folder its design is in — this clears away the\n" +
+                                 "ones that were only ever a mirror of Glamourer.\n\n" +
+                                 "They do not come back: the filter stops them being remade.");
+        }
+
+        if (!string.IsNullOrEmpty(_designFilterStatus))
+            ImGui.TextDisabled(_designFilterStatus);
+    }
+
+    /// <summary>Outcome of the last prune, shown under the button that ran it.</summary>
+    private string _designFilterStatus = string.Empty;
+
+    /// <summary>
+    /// The designs removed from the grid and told not to come back, and the way to undo that.
+    /// </summary>
+    /// <remarks>
+    /// The other half of the bulk action, and the reason that action can be destructive-looking
+    /// without being frightening: nothing it does is one-way. Every excluded design is listed by its
+    /// live Glamourer name and can be put back one at a time or all at once.
+    /// <para>
+    /// In a scrolling child because the realistic size of this list is the whole reason the feature
+    /// exists — somebody with four hundred designs who kept a dozen has three hundred and eighty
+    /// eight rows here, and they must not push the rest of settings off the screen.
+    /// </para>
+    /// </remarks>
+    private void DrawExcludedDesigns()
+    {
+        var excluded = _wardrobe.ExcludedDesigns();
+        if (excluded.Count == 0) return;
+
+        ImGui.Spacing();
+        ImGui.TextUnformatted($"Not synced ({excluded.Count})");
+        ImGui.TextDisabled("Designs you removed from the grid. They get no card, however many times " +
+                           "the link reconciles. Nothing about them in Glamourer is changed.");
+        ImGui.Spacing();
+
+        if (ImGui.Button($" Sync all {excluded.Count} again ##excluded "))
+        {
+            _wardrobe.ResumeDesignSync();
+            _designFilterStatus = $"{excluded.Count} design(s) will be carded again.";
+            return; // the list this frame is gone
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Their cards come back on the next reconcile, made the normal way —\n" +
+                             "so the folder filter above still applies to them.");
+
+        ImGui.Spacing();
+
+        // Tall enough to be a list and short enough to stay a section of a settings panel
+        var rows   = Math.Min(excluded.Count, 8);
+        var height = ImGui.GetTextLineHeightWithSpacing() * rows + ImGui.GetStyle().FramePadding.Y * 2;
+
+        if (!ImGui.BeginChild("##excludedlist", new Vector2(0, height), true)) { ImGui.EndChild(); return; }
+
+        Guid? resume = null;
+        foreach (var (id, name) in excluded)
+        {
+            ImGui.PushID(id.ToString());
+
+            if (ImGui.SmallButton("Sync")) resume = id;
+            if (ImGui.IsItemHovered()) ImGui.SetTooltip($"Give '{name}' a card again.");
+
+            ImGui.SameLine();
+            ImGui.TextUnformatted(name);
+
+            ImGui.PopID();
+        }
+
+        ImGui.EndChild();
+
+        // After the loop, so the list is not mutated while it is being drawn
+        if (resume is { } one) _wardrobe.ResumeDesignSync(one);
+    }
+
+    /// <summary>
+    /// Tagging design cards from where their designs sit in Glamourer.
+    /// </summary>
+    /// <remarks>
+    /// Its own section rather than part of <see cref="DrawGlamourerDesignSettings"/>, which is
+    /// deliberately the one switch that decides whether cards exist at all. This decides what goes on
+    /// them, which is a different question and one somebody may want to answer differently.
+    /// </remarks>
+    private void DrawDesignTagSettings()
+    {
+        ImGui.TextUnformatted("Tags From Glamourer");
+        ImGui.TextDisabled("Take a design card's tags from where the design is filed in Glamourer. " +
+                           "Folders nest the same way tags do, so a design in Night/Formal is tagged " +
+                           "Night/Formal and filters under Night with everything else there.");
+        ImGui.Spacing();
+
+        var folders = _config.DesignFolderTags;
+        if (ImGui.Checkbox("Tag new design cards from their folder", ref folders))
+        {
+            _config.DesignFolderTags = folders;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Applies as each new design card appears.\n\n" +
+                             "Only ever adds. Tags on a card are yours, and nothing here\n" +
+                             "takes one off — including a folder you have since renamed\n" +
+                             "or a design you have moved.\n\n" +
+                             "Use the button below to apply it to cards you already have.");
+
+        // Not nested under the checkbox above, though it reads as if it should be: the Import button
+        // below honours it whether or not automatic tagging is on, and a setting that changes what a
+        // button does while being hidden is the wrong kind of tidy.
+        {
+            var designTags = _config.DesignTagsFromGlamourer;
+            if (ImGui.Checkbox("Also take the design's own tags", ref designTags))
+            {
+                _config.DesignTagsFromGlamourer = designTags;
+                _config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Glamourer designs can carry tags of their own. These come across\n" +
+                                 "flat rather than nested, since they say what a design is\n" +
+                                 "rather than where it is filed.\n\n" +
+                                 "Costs one call to Glamourer per design, so it is read when\n" +
+                                 "tags are imported and never while the grid is drawing.");
+        }
+
+        ImGui.Spacing();
+
+        var cards = _wardrobe.DesignOutfits().Count;
+        if (cards == 0)
+        {
+            ImGui.TextDisabled("No design cards to tag yet.");
+            return;
+        }
+
+        if (ImGui.Button($" Import tags for all {cards} card(s) ##designTags "))
+        {
+            var (touched, added) = _wardrobe.ImportDesignTags();
+
+            // Pressing it settles the offer, whether or not anything came of it: somebody who has
+            // run it by hand does not then need telling that it is available
+            _config.DesignTagImport = OwnershipNoticeState.Done;
+            _config.Save();
+
+            _designTagStatus = added == 0
+                ? "Nothing to add — every card already has the tags Glamourer implies."
+                : $"Added {added} tag(s) across {touched} card(s).";
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Runs over every design card you have, not just new ones.\n\n" +
+                             "Safe to run again: it only adds what is missing, so a second\n" +
+                             "run changes nothing and a run after rearranging Glamourer\n" +
+                             "adds the new folders without disturbing the old tags.");
+
+        if (!string.IsNullOrEmpty(_designTagStatus))
+            ImGui.TextDisabled(_designTagStatus);
+    }
+
+    /// <summary>Outcome of the last tag import, shown under the button that ran it.</summary>
+    private string _designTagStatus = string.Empty;
+
+    /// <summary>
+    /// Offers the tag import once, to a wardrobe that already had design cards when it arrived.
+    /// </summary>
+    /// <remarks>
+    /// Existing cards carry tags somebody put there and sit in a grid they have arranged, so the
+    /// feature does not simply switch itself on for them — see
+    /// <see cref="Configuration.MigrateDesignTags"/>. A wardrobe that had no cards never sees this:
+    /// there it is on from the start and there is nothing to offer.
+    /// </remarks>
+    private void DrawDesignTagOffer()
+    {
+        if (_config.DesignTagImport != OwnershipNoticeState.Pending) return;
+        if (!_config.ShowGlamourerDesigns) return;
+
+        var cards = _wardrobe.DesignOutfits().Count;
+        if (cards == 0) return;
+
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(0.78f, 0.6f, 0.95f, 1f), "Tag design cards from Glamourer?");
+        ImGui.TextWrapped("Wardrobe can read where each design sits in Glamourer's folders and tag " +
+                          "its card to match. Folders nest the way tags do, so a design filed under " +
+                          "Night/Formal gets exactly that tag.");
+        ImGui.TextWrapped("This only ever adds. Nothing already on your cards is changed or removed.");
+        ImGui.Spacing();
+
+        if (ImGui.Button($" Tag my {cards} card(s) ##designTagOffer "))
+        {
+            var (touched, added) = _wardrobe.ImportDesignTags();
+
+            // Taking the offer turns it on for what comes next as well, so the two halves agree
+            _config.DesignFolderTags = true;
+            _config.DesignTagImport  = OwnershipNoticeState.Done;
+            _config.Save();
+
+            _designTagStatus = added == 0
+                ? "Nothing to add — no folders or tags in Glamourer that these cards have not got."
+                : $"Added {added} tag(s) across {touched} card(s).";
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button(" No Thanks ##designTagOffer "))
+        {
+            _config.DesignTagImport = OwnershipNoticeState.Done;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Settings has this too, if you change your mind.");
+
+        ImGui.Spacing();
+        ImGui.Separator();
     }
 
     private static readonly (VariantNameStyle Style, string Label)[] VariantNameStyles =

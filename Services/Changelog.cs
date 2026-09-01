@@ -41,6 +41,104 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 5, 5, 0), "30 August 2026", new List<ChangelogSection>
+        {
+            new("What's new", new List<ChangelogNote>
+            {
+                new("Design cards can be hidden, selected in bulk, or removed for good.",
+                    "Right-click Edit → Hide from the grid keeps a card without showing it, and a " +
+                    "Hidden tick box above the grid brings them back. Select now works on the " +
+                    "outfits grid the way it already worked on items, so a filter and Select All " +
+                    "deal with a hundred cards at once.\n\n" +
+                    "For designs there is a stronger answer: Remove and stop syncing takes the " +
+                    "cards away and tells the link not to make them again, which hiding cannot do " +
+                    "on its own. Your designs in Glamourer are not touched, and a card carrying " +
+                    "items, dyes or notes is kept rather than deleted. Settings → Glamourer " +
+                    "designs → Not synced lists everything removed and puts any of it back."),
+
+                new("Only show designs filed under one Glamourer folder.",
+                    "Settings → Glamourer designs. Matched on folder boundaries, so Night covers " +
+                    "Night/Formal and leaves Nightshade alone. It decides which designs get a card " +
+                    "from now on; removing the cards already outside it is a separate button, so " +
+                    "typing in the box cannot delete hundreds of cards as you reach the middle of " +
+                    "a word."),
+
+                new("Design cards take their tags from where they are filed in Glamourer.",
+                    "Glamourer folders and wardrobe sub-tags both nest on /, so a design filed " +
+                    "under Night/Formal gets exactly the tag Night/Formal and filters under Night " +
+                    "with everything else. The tags a design carries in Glamourer come across " +
+                    "too, flat rather than nested.\n\n" +
+                    "It only ever adds. Reorganise your designs and import again and the old tags " +
+                    "sit beside the new ones rather than being taken off — a tidy-up in the Tags " +
+                    "panel, which is the recoverable direction."),
+
+                new("A crop guide shows the part of the screen a screenshot keeps.",
+                    "A capture is centre-cropped to a square, so on a wide window most of what " +
+                    "you framed is thrown away. The guide draws what survives, dims the rest and " +
+                    "marks the thirds. Settings → Screenshots → Crop guide: off, during sessions, " +
+                    "or always, with a toolbar button and one in the compact session view.\n\n" +
+                    "It is never in the resulting picture, and it stands down for 9:16 outfit " +
+                    "captures, where GPose's portrait mode already frames the shot."),
+
+                new("Screenshot diagnostics, for a session that takes no pictures.",
+                    "Settings → Experimental → Screenshot diagnostics reads the game's own " +
+                    "screenshot function and says which fault it is: screenshots refused " +
+                    "outright, a shot the game accepted and never finished, a format nothing here " +
+                    "can open, or no disk space. Every one of those is the game's rather than the " +
+                    "wardrobe's, so the readout is worth copying into a bug report."),
+
+                new("Rename an item without opening the edit panel.",
+                    "Double-click its name on the card. Enter or clicking away commits, Escape " +
+                    "abandons it, and a blank name is refused. Mostly for what mass import leaves " +
+                    "behind: fifty hairstyles arrive carrying fifty creator watermarks, and " +
+                    "trimming those meant opening the panel fifty times."),
+
+                new("Animation items say which emote they are.",
+                    "An animation item records the file its mod replaces — dance_male_loop — " +
+                    "which is exact and unreadable. The emote name is now shown beside it, read " +
+                    "from the game's own emote and timeline data, so that item reads Step Dance.\n\n" +
+                    "Idle and /cpose animations are not in the game's emote list at all, so those " +
+                    "say so rather than being given a name that was guessed."),
+            }),
+
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("Option groups you never set are left alone, and now look it.",
+                    "A group an item had no setting for was drawn with every checkbox clear, or a " +
+                    "dropdown on its first option — so opening the panel once and saving handed " +
+                    "the item opinions it never held. On a mod built from many independent " +
+                    "one-checkbox groups, which is what Loose Texture Compiler produces, that " +
+                    "turned off every texture but the top one."),
+
+                new("The leftover mods notice says what it actually turned off.",
+                    "It counted the mods it had listed and reported that as the number disabled, " +
+                    "so a mod it kept back — or one Penumbra refused — was announced as switched " +
+                    "off while it was still on. It now reports what the run did and names " +
+                    "anything it left alone. A refusal from Penumbra is written to the log " +
+                    "instead of passing in silence."),
+
+                new("An item you wore no longer loses its slot to a mod enabled by hand.",
+                    "Two mods for one slot can both be enabled at once, and only one item could " +
+                    "hold the slot. Whichever was recorded first kept it for good, so a mod " +
+                    "switched on in Penumbra could hold the slot against the item the wardrobe " +
+                    "had put on for you — silently, and permanently. The item the wardrobe " +
+                    "switched on now takes it."),
+
+                new("The off button in the mod options panel draws properly.",
+                    "It was written with a character the game's font does not carry and came out " +
+                    "as a stray glyph."),
+            }),
+
+            new("Worth doing once", new List<ChangelogNote>
+            {
+                new("Check the mod options on items you saved before this.",
+                    "Settings a previous version wrote into an item are real and are still " +
+                    "honoured — nothing can tell them apart from ones you chose deliberately. If " +
+                    "an item turns its mod's textures off when you wear it, open its Mod Options " +
+                    "and press Leave this mod's options alone at the top of that mod, then save."),
+            }),
+        }),
+
         new(new Version(1, 5, 4, 0), "24 August 2026", new List<ChangelogSection>
         {
             new("What's new", new List<ChangelogNote>

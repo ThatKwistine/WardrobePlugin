@@ -28,6 +28,7 @@ public sealed class Plugin : IDalamudPlugin
     public static SlotIconService     SlotIcons    { get; private set; } = null!;
     public static IconPackService     IconPacks    { get; private set; } = null!;
     public static ItemLookupService   ItemLookup   { get; private set; } = null!;
+    public static EmoteLookupService  Emotes       { get; private set; } = null!;
     public static GlamourPlateService GlamourPlates { get; private set; } = null!;
     public static GameScreenshotService Shutter     { get; private set; } = null!;
     public static TextureCompressionFlagService TextureFlags { get; private set; } = null!;
@@ -39,8 +40,10 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ScreenshotSessionService _screenshotSession;
     private readonly BackupService            _backupService;
     private readonly WardrobeShareService     _shareService;
+    private readonly HtmlExportService        _htmlExport;
     private readonly ItalicFontService        _italicFont;
     private readonly WindowSystem             _windowSystem;
+    private readonly CropGuideOverlay          _cropGuide;
     private readonly PluginUi                _ui;
     private readonly MassImportPanel         _massImport;
     private readonly ChangelogWindow         _changelog;
@@ -65,6 +68,9 @@ public sealed class Plugin : IDalamudPlugin
 
         if (_config.MigrateCameraPresets()) _config.Save();
 
+        // After the outfits are loaded, which it judges a fresh install by
+        if (_config.MigrateDesignTags()) _config.Save();
+
         // A repair rather than a migration, so it runs every load — see NormaliseBaseCharacters
         if (_config.NormaliseBaseCharacters()) _config.Save();
 
@@ -83,6 +89,10 @@ public sealed class Plugin : IDalamudPlugin
         _itemLookup        = new ItemLookupService(DataManager);
         ItemLookup         = _itemLookup;
 
+        // Builds its map on first use rather than here: only a wardrobe with animation items ever
+        // asks it anything, and it is the panel that draws one that pays for it
+        Emotes             = new EmoteLookupService(DataManager, Log);
+
         // After ItemLookup, which it resolves item names through when it logs its slot mapping
         GlamourPlates      = new GlamourPlateService(Log);
 
@@ -94,6 +104,10 @@ public sealed class Plugin : IDalamudPlugin
         _backupService     = new BackupService(_config, Framework, Log);
         _shareService      = new WardrobeShareService(Penumbra, Log);
 
+        // After ItemLookup and Emotes, which it reads dye and emote names through when it flattens
+        // the wardrobe for the page
+        _htmlExport        = new HtmlExportService(_config, _itemLookup, Emotes, Log);
+
         _windowSystem = new WindowSystem("WardrobePlugin");
         _italicFont = new ItalicFontService(Log);
         IconPacks   = new IconPackService(_config, Log);
@@ -102,7 +116,7 @@ public sealed class Plugin : IDalamudPlugin
         var panel = new ItemImportPanel(_config, _wardrobeService, Penumbra, Glamourer, _analysisService, _itemLookup, _screenshotSession, Log, _italicFont);
         _massImport = new MassImportPanel(_config, Penumbra, _analysisService, _itemLookup, Log, _italicFont);
         _share = new SharePanel(_config, _wardrobeService, _shareService, Penumbra, Textures, Log);
-        _ui = new PluginUi(_config, _wardrobeService, Textures, Log, panel, _screenshotSession, _backupService, _massImport, _share);
+        _ui = new PluginUi(_config, _wardrobeService, Textures, Log, panel, _screenshotSession, _backupService, _massImport, _share, _htmlExport);
         _changelog = new ChangelogWindow(_config);
         _ui.Changelog = _changelog;
 
@@ -113,9 +127,14 @@ public sealed class Plugin : IDalamudPlugin
 
         ShowChangelogIfUpdated();
 
+        // Drawn outside the window system: the guide has to be on screen while you frame a shot,
+        // which is exactly when the wardrobe's own window is closed or pushed aside (#25).
+        _cropGuide = new CropGuideOverlay(_config, _screenshotSession);
+
         pi.UiBuilder.DisableGposeUiHide = true;
 
         pi.UiBuilder.Draw        += _windowSystem.Draw;
+        pi.UiBuilder.Draw        += _cropGuide.Draw;
         pi.UiBuilder.OpenMainUi   += OpenUi;
         pi.UiBuilder.OpenConfigUi += OpenUi;
 
@@ -220,6 +239,7 @@ public sealed class Plugin : IDalamudPlugin
         Commands.RemoveHandler(CommandName);
         Commands.RemoveHandler(CommandAlias);
         PluginInterface.UiBuilder.Draw        -= _windowSystem.Draw;
+        PluginInterface.UiBuilder.Draw        -= _cropGuide.Draw;
         PluginInterface.UiBuilder.OpenMainUi   -= OpenUi;
         PluginInterface.UiBuilder.OpenConfigUi -= OpenUi;
 

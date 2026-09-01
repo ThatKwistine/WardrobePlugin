@@ -11,6 +11,18 @@
 - **Date added** — set on import, used for date sorting; hover an item's name to see it
 - **Favourite flag** — toggled from the card, filterable from the ♥ button on the slot filter row
 
+## Renaming from the card
+
+**Double-click an item's name** on its card to rename it there, without opening the edit panel.
+Enter commits, clicking away commits, Escape abandons it. A blank name is refused, and the old one
+is kept.
+
+This is mostly for what mass import leaves behind. Items are named after the mod, and a mod is named
+by whoever packaged it — fifty hairstyles arrive carrying fifty creator watermarks, and trimming
+those used to mean opening the edit panel fifty times for the field that sits at the top of it.
+
+It is not offered in select mode, where a click on a card is a tick.
+
 ## Quick view
 
 **Right-click a card's picture** to see it full size, over the whole window — sized to your screen
@@ -279,6 +291,23 @@ it actually changes, so importing a mod that covers body and legs gives the body
 groups and the legs item the legs'. A group that names no slot — meta edits, materials, shared
 textures — is kept by both, since there is no honest way to attribute it. Groups belonging elsewhere
 are labelled in the edit panel, so it is clear why they are being left alone.
+
+### Groups you never set are left alone
+
+An option group an item has never expressed a view on is not touched when that item is worn — not
+turned off, and not set to its first option. That is what the item does, so it is now also what the
+**Mod Options** panel shows.
+
+It used to show something else. A checkbox group the item had no setting for was drawn with every
+option unticked, and a dropdown it had no setting for was drawn on its first option, so opening the
+panel once and saving handed the item opinions it never held. On gear that mostly passes unnoticed —
+the groups an item does not tick are rival colours it would not want anyway. On a mod built by
+**Loose Texture Compiler**, which is dozens of independent one-checkbox groups that do not compete,
+it unticked every texture in the mod and left only the top one on.
+
+If an item was saved that way before, those settings are real and are still honoured — nothing can
+tell them apart from ones you chose. **Leave this mod's options alone**, at the top of that mod's
+options, clears the lot in one press and takes effect when you save.
 
 ### What saving one item writes on another
 

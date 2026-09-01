@@ -91,6 +91,44 @@ covers every kind of boot without naming them.
 
 Spacing around the slashes does not matter — `Shoes / Boots` and `Shoes/Boots` are the same tag.
 
+## Tags from Glamourer folders
+
+If you show your Glamourer designs in the outfits grid, Wardrobe can tag each design card from where
+that design is filed in Glamourer.
+
+Glamourer's folder tree and sub-tags nest the same way, on `/`, so a path is already a tag. A design
+filed under `Night/Formal` gets exactly the tag `Night/Formal` — it appears under `Night` in the panel
+beside everything else there, and filtering on `Night` covers the lot. Designs sitting at the top
+level in Glamourer have no folder, so they get no tag.
+
+Designs can also carry tags of their own in Glamourer. Those come across too, flat rather than
+nested, since they say what a design *is* rather than where it is filed. A slash inside one becomes
+a `-`, so a Glamourer tag never quietly creates a branch. Turn this half off under
+**Settings → Tags From Glamourer** if you only want the folders.
+
+### It only ever adds
+
+Nothing here removes a tag, ever. Tags on a card are yours — whether you typed them or an earlier
+import put them there — and a folder you have since renamed is not grounds for taking one off.
+
+The trade-off is deliberate: reorganise your designs in Glamourer, run the import again, and you get
+the new tags *alongside* the old ones rather than instead of them. Tidying those up is a job for the
+Tags panel, and that is the recoverable direction. The alternative loses work.
+
+### Turning it on
+
+- **A wardrobe with design cards already in it** is asked once, with a notice above the grid. Taking
+  the offer tags what you have and turns it on for cards that appear later; **No Thanks** settles it.
+- **A wardrobe with no design cards yet** — including one that has never switched designs on — just
+  has it on. There is nothing to disturb, so nothing is asked.
+
+Either way, **Settings → Tags From Glamourer** has the switch and an **Import tags** button that runs
+over every card you have. That button is safe to press repeatedly: it adds only what is missing, so a
+second run changes nothing.
+
+> One curiosity: a Glamourer folder named `Style` produces wardrobe *styles*, since that is how
+> styles are stored. Harmless, and occasionally what you wanted.
+
 ## Making tags ahead of use
 
 Tags normally come into existence by being typed onto an item, which means the list can only be

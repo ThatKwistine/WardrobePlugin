@@ -345,6 +345,80 @@ public class Configuration : IPluginConfiguration
     /// </remarks>
     public int UncompressedTextureFlagThresholdMiB { get; set; } = 4;
 
+    // ── Web page export ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Whether the wardrobe can be written out as a web page. The Experimental opt-in.
+    /// </summary>
+    /// <remarks>
+    /// Off until turned on, for the ordinary Experimental reason rather than a worrying one: a
+    /// lookbook is a design problem, and what belongs on a card, what belongs behind it, and how much
+    /// of a wardrobe of several hundred a browser will hold at once are all things this currently
+    /// answers by guessing.
+    /// <para>
+    /// Nothing here uploads anything. The page is written to a folder you choose, it fetches nothing
+    /// from the internet, and sending it to somebody is a separate act you perform yourself. See
+    /// <see cref="Services.HtmlExportService"/>.
+    /// </para>
+    /// </remarks>
+    public bool HtmlExportEnabled { get; set; }
+
+    /// <summary>Folder each export is written into. Empty means one has not been chosen yet.</summary>
+    /// <remarks>
+    /// A path plus a Clear button and no separate on switch, matching <see cref="ImagesFolder"/>,
+    /// <see cref="BackupFolder"/> and every other folder setting here. Exports go into a
+    /// timestamped folder or file inside it, so nothing already there is ever overwritten.
+    /// </remarks>
+    public string HtmlExportFolder { get; set; } = string.Empty;
+
+    /// <summary>Heading at the top of the exported page, and the browser tab's title.</summary>
+    /// <remarks>
+    /// The one piece of the page that is worth typing, since it is what somebody opening the file
+    /// reads first. Blank falls back to "My Wardrobe" rather than to an empty heading.
+    /// </remarks>
+    public string HtmlExportTitle { get; set; } = "My Wardrobe";
+
+    /// <summary>Whether the export is a folder of files or a single self-contained page.</summary>
+    /// <remarks>
+    /// Both have a real claim, which is why it is a choice rather than a decision made for everyone.
+    /// A folder is much the smaller of the two and its pictures load only as they are scrolled to, but
+    /// it has to be zipped before it can be sent. One file is a single attachment and needs no
+    /// explaining to whoever receives it, at the cost of carrying every picture inside itself — base64
+    /// costs a third again on top, and the whole thing is decoded before anything appears.
+    /// <para>
+    /// Defaults to the folder, because the wardrobes most in need of an export are the large ones and
+    /// those are exactly where a single file stops opening.
+    /// </para>
+    /// </remarks>
+    public Services.HtmlExportLayout HtmlExportLayout { get; set; } = Services.HtmlExportLayout.Folder;
+
+    /// <summary>
+    /// Longest edge, in pixels, of the full-size picture behind a card in the export.
+    /// </summary>
+    /// <remarks>
+    /// A ceiling and never an upscale, so a wardrobe photographed at 512 exports at 512 whatever this
+    /// says. The thumbnails in the grid are a fixed size regardless — see
+    /// <see cref="Services.HtmlExportService"/> — so this only decides what the picture behind a card
+    /// looks like when it is opened, and it is the setting that decides how big the export is.
+    /// </remarks>
+    public int HtmlExportImageSize { get; set; } = 800;
+
+    /// <summary>Whether an item's notes are written into the page.</summary>
+    /// <remarks>
+    /// On, because notes are usually where the creator, the price and the link live and that is most
+    /// of what somebody looking at a wardrobe wants to know. Off for the case notes are also used
+    /// for: a reminder to yourself that was never meant to be read by anyone else.
+    /// </remarks>
+    public bool HtmlExportIncludeNotes { get; set; } = true;
+
+    /// <summary>Whether the mods behind an item, and the options chosen in them, are written out.</summary>
+    /// <remarks>
+    /// On, since "what is that made of" is the question a shared wardrobe is usually being asked. Off
+    /// for a page meant as a lookbook rather than a parts list, or where the list would say more
+    /// about what you own than you want to publish.
+    /// </remarks>
+    public bool HtmlExportIncludeMods { get; set; } = true;
+
     /// <summary>
     /// A session takes its own screenshots, so a whole wardrobe can be photographed unattended.
     /// </summary>
@@ -583,6 +657,42 @@ public class Configuration : IPluginConfiguration
     /// </remarks>
     public bool PortraitOutfitPreviews { get; set; }
 
+    /// <summary>When to draw the guide showing what a screenshot will be cropped to.</summary>
+    public enum CropGuideMode
+    {
+        /// <summary>Never.</summary>
+        Off,
+
+        /// <summary>Only while a screenshot session is running. The default.</summary>
+        Sessions,
+
+        /// <summary>Whenever the game is showing, session or not.</summary>
+        Always,
+    }
+
+    /// <summary>
+    /// Whether an outline of the crop is drawn over the game before the shutter.
+    /// </summary>
+    /// <remarks>
+    /// A captured screenshot is centre-cropped to a square, so on a widescreen window most of what is
+    /// on screen is thrown away, and framing to the window rather than to the crop puts the character
+    /// off-centre or cuts their feet off. The only way to find out used to be to look at the result
+    /// (#25).
+    /// <para>
+    /// Square captures only. An outfit shot under <see cref="PortraitOutfitPreviews"/> is cropped
+    /// 9:16 and gets no guide, because GPose's own portrait mode already frames that shot — the game
+    /// has a better guide for it than this one would be.
+    /// </para>
+    /// <para>
+    /// Defaults to during sessions rather than off. Nothing is lost by it — the guide is drawn by
+    /// ImGui and so is absent from the game's own screenshot, the same property the automatic
+    /// session already depends on — and a session is precisely the moment the wardrobe knows a crop
+    /// is coming and the user has said they are taking pictures. Anyone who would rather frame by
+    /// eye can turn it off.
+    /// </para>
+    /// </remarks>
+    public CropGuideMode CropGuide { get; set; } = CropGuideMode.Sessions;
+
     /// <summary>Ordering applied to the item grid.</summary>
     public ItemSortMode SortMode { get; set; } = ItemSortMode.NameAsc;
 
@@ -694,6 +804,116 @@ public class Configuration : IPluginConfiguration
 
     /// <summary>Whether the one-off explanation of mod ownership still needs showing.</summary>
     public OwnershipNoticeState ModOwnershipNotice { get; set; }
+
+    // ── Design tags from Glamourer ────────────────────────────────────────────
+
+    /// <summary>
+    /// Whether a new design card is tagged from where its design sits in Glamourer's folder tree,
+    /// and from the design's own tags.
+    /// </summary>
+    /// <remarks>
+    /// On for anyone meeting the feature for the first time and off for anyone who already had design
+    /// cards when it arrived — see <see cref="MigrateDesignTags"/> for why those two are not the same
+    /// answer. Accepting the one-time import turns it on, so the two halves agree from then on.
+    /// <para>
+    /// Only ever adds. A card's tags are the user's, and a folder somebody rearranged in Glamourer is
+    /// not a reason to take one away — see <see cref="Services.WardrobeService.ImportDesignTags"/>.
+    /// </para>
+    /// </remarks>
+    public bool DesignFolderTags { get; set; }
+
+    /// <summary>
+    /// Whether a design's own Glamourer tags are imported along with its folder.
+    /// </summary>
+    /// <remarks>
+    /// True, and read only where <see cref="DesignFolderTags"/> already applies, so it narrows what
+    /// importing does rather than being a second switch that can turn it on. Separate from the folder
+    /// because the two are different claims about a design: a folder is where somebody filed it, a tag
+    /// is what they said it was, and a wardrobe organised around one may want nothing to do with the
+    /// other.
+    /// <para>
+    /// Costs an IPC call per design, since tags are only in the design's own JSON and not in the
+    /// list call that carries the folders. That is why it is read on import and on a card appearing,
+    /// and never while drawing.
+    /// </para>
+    /// </remarks>
+    public bool DesignTagsFromGlamourer { get; set; } = true;
+
+    /// <summary>Whether the one-time offer to import tags for existing cards still needs showing.</summary>
+    public OwnershipNoticeState DesignTagImport { get; set; }
+
+    /// <summary>
+    /// Designs that get no card, however many times the link is reconciled.
+    /// </summary>
+    /// <remarks>
+    /// Issue #26. Showing designs was all or nothing, and a Glamourer library of several hundred
+    /// turned the outfits grid into a mirror of a list nobody was trying to manage in the wardrobe.
+    /// Hiding a card answers the grid but not the weight: the card still exists, still reconciles,
+    /// still counts. This is the stronger answer — the card goes, and the link is told not to make
+    /// it again.
+    /// <para>
+    /// Keyed on the design's id rather than its name, so renaming a design in Glamourer does not
+    /// quietly resurrect a card somebody removed. The design itself is never touched: this says
+    /// nothing about Glamourer, only about whether the wardrobe mirrors it.
+    /// </para>
+    /// <para>
+    /// An id here for a design that no longer exists costs a few bytes and is deliberately not tidied
+    /// away. Deleting and recreating a design in Glamourer gives it a new id, so a stale entry can
+    /// never match the wrong design, and pruning them would mean asking Glamourer for its whole list
+    /// on load to answer a question nobody is asking.
+    /// </para>
+    /// </remarks>
+    public HashSet<Guid> ExcludedDesigns { get; set; } = new();
+
+    /// <summary>
+    /// Only give a card to designs filed under this folder in Glamourer. Empty means all of them.
+    /// </summary>
+    /// <remarks>
+    /// Issue #26. Showing designs is otherwise all or nothing, and a Glamourer library of several
+    /// hundred turns the outfits grid into a mirror of a list nobody was trying to manage here.
+    /// Naming a folder makes it a window onto the part of Glamourer that belongs in the wardrobe.
+    /// <para>
+    /// Matched as a path prefix on a folder boundary, in the same slash-separated form
+    /// <see cref="Ipc.GlamourerIpc.GetDesignFolders"/> reports — so <c>Night</c> covers
+    /// <c>Night/Formal</c> without also catching <c>Nightshade</c>. Nothing is compared against the
+    /// design's own name: this filters on where a design is filed, not on what it is called.
+    /// </para>
+    /// <para>
+    /// It governs which cards are <em>made</em>. Cards that already exist are left alone, because
+    /// silently deleting several hundred of them on a settings change is not something a text box
+    /// should do — the prune button beside it is the deliberate version, and it spares any card with
+    /// anything attached. See <see cref="Services.WardrobeService.PruneDesignCardsOutsideFilter"/>.
+    /// </para>
+    /// </remarks>
+    public string DesignFolderFilter { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Decides whether folder tagging starts on, or starts as an offer.
+    /// </summary>
+    /// <remarks>
+    /// The distinction is between a wardrobe that already has design cards and one that does not. A
+    /// wardrobe with cards has tags somebody put on them and a grid they have arranged; turning on a
+    /// feature that writes tags into it unasked is exactly the kind of surprise an update should not
+    /// spring, so it is offered instead. A wardrobe with no cards has nothing to disturb — anyone
+    /// turning designs on later is meeting the feature for the first time, and folder tags being
+    /// simply how it works is the better introduction than a notice about a thing they never had.
+    /// <para>
+    /// Judged on design cards rather than on <see cref="ShowGlamourerDesigns"/>: what matters is
+    /// whether anything already exists to be written into, and someone who has never switched designs
+    /// on has nothing either way.
+    /// </para>
+    /// Returns true if anything changed, so the caller can save.
+    /// </remarks>
+    public bool MigrateDesignTags()
+    {
+        if (DesignTagImport != OwnershipNoticeState.Unevaluated) return false;
+
+        var hasCards = Outfits.Exists(o => o.IsDesign);
+
+        DesignTagImport  = hasCards ? OwnershipNoticeState.Pending : OwnershipNoticeState.Done;
+        DesignFolderTags = !hasCards;
+        return true;
+    }
 
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 

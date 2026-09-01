@@ -22,6 +22,40 @@ the toolbar — worth turning up if your previews are full-body shots showing to
 **Right-click an outfit's picture** to see it full size, on a card or in its edit panel. See
 [Quick view](Items-and-Mods.md#quick-view).
 
+## Hiding a card
+
+**Right-click Edit → Hide from the grid** keeps an outfit or design card out of the grid without
+deleting it. Everything on it stays — items, pictures, tags, notes — and a **Hidden (n)** tick box
+appears above the grid to bring them back. The tick box resets on every launch, so the tidied grid
+is what you open to.
+
+For more than one at a time, use **Select** on the toolbar. It works on the outfits grid the same way
+it works on items: filter or search down to the cards you do not want, **Select All**, then **Hide**
+in the panel. That is the practical answer to a Glamourer library of several hundred designs, where
+right-clicking each card is not an answer at all.
+
+### Removing designs instead of hiding them
+
+Hiding a design card leaves it in the wardrobe — still linked, still reconciled every time the grid
+draws, still counted. For designs you never want to see, the selection panel offers the stronger
+answer: **Remove n and stop syncing**.
+
+That takes the cards away and tells the link not to make them again, so they do not come back on the
+next reconcile the way a deleted design card otherwise would. **Your designs in Glamourer are not
+touched** — this only decides whether the wardrobe mirrors them.
+
+A card with items, vanilla pieces, dyes or notes on it is **kept rather than deleted**, and excluded
+all the same. Work you did in the wardrobe is not something a tick box gets to throw away, and
+selecting three hundred cards is not a considered judgement about each one. The panel says how many
+were kept for that reason.
+
+Nothing about it is one-way. **Settings → Glamourer designs → Not synced** lists everything you have
+removed, by its live Glamourer name, and puts any of them — or all of them — back. Restored cards are
+made the normal way, so the folder filter still applies to them.
+
+For a design card it is the only answer there is. Deleting one does nothing lasting: the design
+still exists in Glamourer, so the card is remade on the next reconcile.
+
 ## The edit panel
 
 Every item in the outfit is listed as a row with a small thumbnail, its name and slot, and:
