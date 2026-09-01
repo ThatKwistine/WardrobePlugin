@@ -32,6 +32,9 @@ and the slot goes empty.
   item if you want the side and the back as well as the front.
 - **Find things.** Nested tags, favourites, search across names and notes, sort by name or date.
 - **Bulk import.** Bring in a batch of mods at once instead of one at a time.
+- **Show someone.** Export the whole wardrobe as a web page — pictures, tags and all — that opens in
+  any browser with no plugin, no game and no account at the other end. Nothing is uploaded; it is a
+  file on your disk that you send yourself. Experimental.
 
 It also handles the awkward cases: mods spanning several slots, mods needing an upscale or a
 compatibility patch alongside them, hair and skin mods, colour variants of the same piece, and —

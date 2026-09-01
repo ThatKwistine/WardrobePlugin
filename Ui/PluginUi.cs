@@ -29,6 +29,7 @@ public class PluginUi : Window, IDisposable
     private readonly ScreenshotSessionService _session;
     private readonly BackupService            _backup;
     private readonly MassImportPanel          _massImport;
+    private readonly HtmlExportService        _htmlExport;
 
     // Holds ISharedImmediateTexture references so Dalamud won't free the GPU resource while
     // we still have the handle. GetWrapOrDefault() is called each frame to get a live handle.
@@ -433,7 +434,8 @@ public class PluginUi : Window, IDisposable
 
     public PluginUi(Configuration config, WardrobeService wardrobe,
         ITextureProvider textures, IPluginLog log, ItemImportPanel panel,
-        ScreenshotSessionService session, BackupService backup, MassImportPanel massImport)
+        ScreenshotSessionService session, BackupService backup, MassImportPanel massImport,
+        HtmlExportService htmlExport)
         : base("Wardrobe###WardrobeMain",
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
@@ -445,6 +447,7 @@ public class PluginUi : Window, IDisposable
         _session  = session;
         _backup   = backup;
         _massImport = massImport;
+        _htmlExport = htmlExport;
 
         // The edit panel has the item and the picture, but the popup that shows it full size lives
         // here, over the whole window rather than inside a panel that is 360px wide
@@ -9447,6 +9450,242 @@ public class PluginUi : Window, IDisposable
         SettingsBreak();
 
         DrawTextureFlagSettings();
+
+        SettingsBreak();
+
+        DrawHtmlExportSettings();
+    }
+
+    /// <summary>
+    /// Writing the wardrobe out as a web page: what the page is, where it goes, and what may go in it.
+    /// </summary>
+    /// <remarks>
+    /// The prose says plainly that nothing is uploaded, because "share your wardrobe" is a phrase
+    /// that in almost every other plugin means an account somewhere. Here it means a file on your
+    /// own disk that you send to somebody yourself, and that is worth saying before the folder
+    /// picker rather than after it.
+    /// </remarks>
+    private void DrawHtmlExportSettings()
+    {
+        ImGui.TextUnformatted("Export as a web page");
+        ImGui.TextDisabled("Writes your wardrobe out as a page anyone can open in a browser — the " +
+                           "pictures, the names, the tags, and what each piece is made of. " +
+                           "Searchable and filterable, with no plugin, no game and no account " +
+                           "needed at the other end.");
+        ImGui.Spacing();
+        ImGui.TextDisabled("Nothing is uploaded and nothing is fetched. The page is written to a " +
+                           "folder you pick and loads nothing from the internet. Sending it to " +
+                           "somebody is a separate thing you do yourself.");
+        ImGui.Spacing();
+
+        var enabled = _config.HtmlExportEnabled;
+        if (ImGui.Checkbox("Offer exporting to a web page", ref enabled))
+        {
+            _config.HtmlExportEnabled = enabled;
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Experimental: what belongs on a card and what belongs behind it is\n" +
+                             "still being worked out, and nobody has yet opened a page built from\n" +
+                             "a wardrobe of several hundred pieces.\n\n" +
+                             "It only ever reads. Your wardrobe, your pictures and your mods are\n" +
+                             "not touched — the export is a copy written somewhere else.");
+
+        if (!enabled)
+        {
+            ImGui.TextDisabled("Off, nothing is written and no button is drawn.");
+            return;
+        }
+
+        ImGui.Spacing();
+
+        var title = _config.HtmlExportTitle;
+        ImGui.SetNextItemWidth(UiScale.S(260));
+        if (ImGui.InputText("Page title##htmltitle", ref title, 80))
+        {
+            _config.HtmlExportTitle = title;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The heading at the top of the page, and what the browser tab says.\n" +
+                             "Left blank it reads 'My Wardrobe'.");
+
+        ImGui.Spacing();
+        if (string.IsNullOrEmpty(_config.HtmlExportFolder))
+            ImGui.TextDisabled("No export folder selected.");
+        else
+        {
+            ImGui.TextUnformatted(_config.HtmlExportFolder);
+            if (!Directory.Exists(_config.HtmlExportFolder))
+            {
+                ImGui.Spacing();
+                ImGui.TextDisabled("Folder will be created on the next export.");
+            }
+        }
+
+        ImGui.Spacing();
+        if (ImGui.Button(" Browse…##htmlFolder "))
+        {
+            var startDir = Directory.Exists(_config.HtmlExportFolder)
+                ? _config.HtmlExportFolder
+                : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
+            _fileDialog.OpenFolderDialog("Select Export Folder", (confirmed, path) =>
+            {
+                if (!confirmed) return;
+                _config.HtmlExportFolder = path;
+                _config.Save();
+            }, startDir);
+        }
+
+        if (!string.IsNullOrEmpty(_config.HtmlExportFolder))
+        {
+            UiLayout.SameLineIfRoomForButton(" Clear ");
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.3f, 0.08f, 0.08f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.5f, 0.1f, 0.1f, 1f));
+            if (ImGui.Button(" Clear##htmlFolder "))
+            {
+                _config.HtmlExportFolder = string.Empty;
+                _config.Save();
+            }
+            ImGui.PopStyleColor(2);
+        }
+
+        ImGui.Spacing();
+
+        var layouts = new[] { "A folder of files", "One self-contained file" };
+        var layout  = (int)_config.HtmlExportLayout;
+        ImGui.SetNextItemWidth(UiScale.S(260));
+        if (ImGui.Combo("Written as##htmllayout", ref layout, layouts, layouts.Length))
+        {
+            _config.HtmlExportLayout = (HtmlExportLayout)Math.Clamp(layout, 0, layouts.Length - 1);
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("A folder holds index.html with an images folder beside it. Much the\n" +
+                             "smaller of the two, and pictures load only as they are scrolled to —\n" +
+                             "but it has to be zipped before it can be sent anywhere.\n\n" +
+                             "One file carries every picture inside itself, so it is a single\n" +
+                             "attachment that needs no explaining. It costs about a third again in\n" +
+                             "size, and all of it is decoded before anything appears — a large\n" +
+                             "wardrobe can take a while to open, or fail to.");
+
+        ImGui.Spacing();
+
+        var sizes    = HtmlExportService.ImageSizes;
+        var sizeIdx  = Array.IndexOf(sizes, _config.HtmlExportImageSize);
+        var sizeText = sizes.Select(s => $"{s} px").ToArray();
+        if (sizeIdx < 0) sizeIdx = 1;
+
+        ImGui.SetNextItemWidth(UiScale.S(260));
+        if (ImGui.Combo("Picture size##htmlsize", ref sizeIdx, sizeText, sizeText.Length))
+        {
+            _config.HtmlExportImageSize = sizes[Math.Clamp(sizeIdx, 0, sizes.Length - 1)];
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The longest edge of the picture you get when a card is opened, and\n" +
+                             "the setting that decides how big the export is.\n\n" +
+                             "A ceiling rather than a promise: a wardrobe photographed at 512 is\n" +
+                             "written at 512 whatever this says. Nothing is ever upscaled.\n\n" +
+                             "The thumbnails in the grid are a fixed small size either way, so\n" +
+                             "this never affects how quickly the page itself opens.");
+
+        ImGui.Spacing();
+
+        var notes = _config.HtmlExportIncludeNotes;
+        if (ImGui.Checkbox("Include notes", ref notes))
+        {
+            _config.HtmlExportIncludeNotes = notes;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Notes are usually where the creator, the price and the link live,\n" +
+                             "which is most of what somebody looking at your wardrobe wants.\n\n" +
+                             "Turn it off if yours are reminders to yourself. Web links in the\n" +
+                             "notes are shown as the address itself, never as a label over it.");
+
+        var mods = _config.HtmlExportIncludeMods;
+        if (ImGui.Checkbox("Include the mods behind each item", ref mods))
+        {
+            _config.HtmlExportIncludeMods = mods;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The mod names and the options chosen in them — 'what is that made\n" +
+                             "of', which is the question a shared wardrobe is usually asked.\n\n" +
+                             "Turn it off for a lookbook rather than a parts list. Collection\n" +
+                             "names and file paths are never written out either way.");
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Hidden outfits are left out. Nothing already in the folder is touched — " +
+                           "each export is stamped with the time it was made.");
+        ImGui.Spacing();
+
+        var canExport = !string.IsNullOrEmpty(_config.HtmlExportFolder) && !_htmlExport.Running;
+
+        if (!canExport) ImGui.BeginDisabled();
+        if (ImGui.Button(_htmlExport.Running ? " Exporting… " : " Export Now "))
+            _htmlExport.Run();
+        if (!canExport) ImGui.EndDisabled();
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(string.IsNullOrEmpty(_config.HtmlExportFolder)
+                ? "Pick a folder first."
+                : "Writes the page now. Large wardrobes take a minute — every\n" +
+                  "picture is re-encoded, and it happens off the game's thread\n" +
+                  "so play carries on while it runs.");
+
+        if (!string.IsNullOrEmpty(_htmlExport.LastPath) && !_htmlExport.Running)
+        {
+            UiLayout.SameLineIfRoomForButton(" Open Folder ");
+            if (ImGui.Button(" Open Folder "))
+                OpenLastExport();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Opens the last export in Explorer.");
+        }
+
+        if (!string.IsNullOrEmpty(_htmlExport.Progress))
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled(_htmlExport.Progress);
+        }
+
+        if (!string.IsNullOrEmpty(_htmlExport.LastResult))
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled(_htmlExport.LastResult);
+        }
+    }
+
+    /// <summary>
+    /// Shows the last export in Explorer, selecting the file where the export was one.
+    /// </summary>
+    /// <remarks>
+    /// Explorer rather than a browser, and deliberately: opening the page would be the wardrobe
+    /// launching whatever is registered for .html, and the point of the export is that you decide
+    /// what happens to the file. Showing you where it is stops short of that.
+    /// </remarks>
+    private void OpenLastExport()
+    {
+        var path = _htmlExport.LastPath;
+        if (string.IsNullOrEmpty(path)) return;
+
+        try
+        {
+            var args = File.Exists(path) ? $"/select,\"{path}\"" : $"\"{path}\"";
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "explorer.exe",
+                Arguments       = args,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"[Wardrobe] Could not open the export folder — {ex.Message}");
+        }
     }
 
     /// <summary>

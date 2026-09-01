@@ -345,6 +345,80 @@ public class Configuration : IPluginConfiguration
     /// </remarks>
     public int UncompressedTextureFlagThresholdMiB { get; set; } = 4;
 
+    // ── Web page export ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Whether the wardrobe can be written out as a web page. The Experimental opt-in.
+    /// </summary>
+    /// <remarks>
+    /// Off until turned on, for the ordinary Experimental reason rather than a worrying one: a
+    /// lookbook is a design problem, and what belongs on a card, what belongs behind it, and how much
+    /// of a wardrobe of several hundred a browser will hold at once are all things this currently
+    /// answers by guessing.
+    /// <para>
+    /// Nothing here uploads anything. The page is written to a folder you choose, it fetches nothing
+    /// from the internet, and sending it to somebody is a separate act you perform yourself. See
+    /// <see cref="Services.HtmlExportService"/>.
+    /// </para>
+    /// </remarks>
+    public bool HtmlExportEnabled { get; set; }
+
+    /// <summary>Folder each export is written into. Empty means one has not been chosen yet.</summary>
+    /// <remarks>
+    /// A path plus a Clear button and no separate on switch, matching <see cref="ImagesFolder"/>,
+    /// <see cref="BackupFolder"/> and every other folder setting here. Exports go into a
+    /// timestamped folder or file inside it, so nothing already there is ever overwritten.
+    /// </remarks>
+    public string HtmlExportFolder { get; set; } = string.Empty;
+
+    /// <summary>Heading at the top of the exported page, and the browser tab's title.</summary>
+    /// <remarks>
+    /// The one piece of the page that is worth typing, since it is what somebody opening the file
+    /// reads first. Blank falls back to "My Wardrobe" rather than to an empty heading.
+    /// </remarks>
+    public string HtmlExportTitle { get; set; } = "My Wardrobe";
+
+    /// <summary>Whether the export is a folder of files or a single self-contained page.</summary>
+    /// <remarks>
+    /// Both have a real claim, which is why it is a choice rather than a decision made for everyone.
+    /// A folder is much the smaller of the two and its pictures load only as they are scrolled to, but
+    /// it has to be zipped before it can be sent. One file is a single attachment and needs no
+    /// explaining to whoever receives it, at the cost of carrying every picture inside itself — base64
+    /// costs a third again on top, and the whole thing is decoded before anything appears.
+    /// <para>
+    /// Defaults to the folder, because the wardrobes most in need of an export are the large ones and
+    /// those are exactly where a single file stops opening.
+    /// </para>
+    /// </remarks>
+    public Services.HtmlExportLayout HtmlExportLayout { get; set; } = Services.HtmlExportLayout.Folder;
+
+    /// <summary>
+    /// Longest edge, in pixels, of the full-size picture behind a card in the export.
+    /// </summary>
+    /// <remarks>
+    /// A ceiling and never an upscale, so a wardrobe photographed at 512 exports at 512 whatever this
+    /// says. The thumbnails in the grid are a fixed size regardless — see
+    /// <see cref="Services.HtmlExportService"/> — so this only decides what the picture behind a card
+    /// looks like when it is opened, and it is the setting that decides how big the export is.
+    /// </remarks>
+    public int HtmlExportImageSize { get; set; } = 800;
+
+    /// <summary>Whether an item's notes are written into the page.</summary>
+    /// <remarks>
+    /// On, because notes are usually where the creator, the price and the link live and that is most
+    /// of what somebody looking at a wardrobe wants to know. Off for the case notes are also used
+    /// for: a reminder to yourself that was never meant to be read by anyone else.
+    /// </remarks>
+    public bool HtmlExportIncludeNotes { get; set; } = true;
+
+    /// <summary>Whether the mods behind an item, and the options chosen in them, are written out.</summary>
+    /// <remarks>
+    /// On, since "what is that made of" is the question a shared wardrobe is usually being asked. Off
+    /// for a page meant as a lookbook rather than a parts list, or where the list would say more
+    /// about what you own than you want to publish.
+    /// </remarks>
+    public bool HtmlExportIncludeMods { get; set; } = true;
+
     /// <summary>
     /// A session takes its own screenshots, so a whole wardrobe can be photographed unattended.
     /// </summary>

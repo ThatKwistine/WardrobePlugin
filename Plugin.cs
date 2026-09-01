@@ -39,6 +39,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ItemLookupService        _itemLookup;
     private readonly ScreenshotSessionService _screenshotSession;
     private readonly BackupService            _backupService;
+    private readonly HtmlExportService        _htmlExport;
     private readonly ItalicFontService        _italicFont;
     private readonly WindowSystem             _windowSystem;
     private readonly CropGuideOverlay          _cropGuide;
@@ -100,6 +101,10 @@ public sealed class Plugin : IDalamudPlugin
         _screenshotSession = new ScreenshotSessionService(_wardrobeService, _config, Framework, Log, Camera, Shutter);
         _backupService     = new BackupService(_config, Framework, Log);
 
+        // After ItemLookup and Emotes, which it reads dye and emote names through when it flattens
+        // the wardrobe for the page
+        _htmlExport        = new HtmlExportService(_config, _itemLookup, Emotes, Log);
+
         _windowSystem = new WindowSystem("WardrobePlugin");
         _italicFont = new ItalicFontService(Log);
         IconPacks   = new IconPackService(_config, Log);
@@ -107,7 +112,7 @@ public sealed class Plugin : IDalamudPlugin
 
         var panel = new ItemImportPanel(_config, _wardrobeService, Penumbra, Glamourer, _analysisService, _itemLookup, _screenshotSession, Log, _italicFont);
         _massImport = new MassImportPanel(_config, Penumbra, _analysisService, _itemLookup, Log, _italicFont);
-        _ui = new PluginUi(_config, _wardrobeService, Textures, Log, panel, _screenshotSession, _backupService, _massImport);
+        _ui = new PluginUi(_config, _wardrobeService, Textures, Log, panel, _screenshotSession, _backupService, _massImport, _htmlExport);
         _changelog = new ChangelogWindow(_config);
         _ui.Changelog = _changelog;
 

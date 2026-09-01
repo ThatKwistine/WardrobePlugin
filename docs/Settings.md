@@ -522,6 +522,62 @@ It is experimental because the list of formats it recognises covers what mods no
 not exhaustive. A format it does not know is passed over rather than guessed at, so it will
 under-report before it cries wolf.
 
+### Export as a web page
+
+**Offer exporting to a web page** writes your wardrobe out as a page anyone can open in a browser —
+the pictures, the names, the slots, the tags and styles, what each item is made of, and what each
+outfit is made of. It has a search box, filters for slot, style, tag and favourites, and a click on
+any card opens it full size with everything known about it beside the picture. The person you send
+it to needs no plugin, no game and no account.
+
+**Nothing is uploaded and nothing is fetched.** The page is written to a folder you pick and it
+loads no script, font, stylesheet or image from the internet, so it works with no connection at all.
+Sending it to somebody is a separate thing you do yourself.
+
+**Page title** is the heading at the top and what the browser tab says. Blank reads "My Wardrobe".
+
+**Written as** is the one real choice here, and both answers are defensible:
+
+- **A folder of files** — `index.html` with an `images` folder beside it. Much the smaller of the
+  two, and pictures load only as they are scrolled to, so a large wardrobe stays quick. It has to be
+  zipped before it can be sent anywhere.
+- **One self-contained file** — a single `.html` carrying every picture inside itself. One
+  attachment, nothing to explain at the other end. It costs about a third again in size because of
+  how pictures are embedded, and all of it is decoded before anything appears, so a wardrobe of
+  several hundred can be slow to open or fail to open at all.
+
+It defaults to the folder, because the wardrobes most worth exporting are the large ones and those
+are exactly where one file stops working.
+
+**Picture size** is the longest edge of the picture you get when a card is opened, and it is the
+setting that decides how big the export is. It is a ceiling and never an upscale: a wardrobe
+photographed at 512 is written at 512 whatever this says. The thumbnails in the grid are a fixed
+small size either way, so this never affects how quickly the page opens.
+
+**Include notes** writes an item's notes into its panel. On, because notes are usually where the
+creator, the price and the link live, which is most of what somebody looking at your wardrobe wants
+to know. Turn it off if yours are reminders to yourself. Web links in notes are shown as the address
+itself and never as a label over a different destination, exactly as they are drawn in game.
+
+**Include the mods behind each item** writes out the mod names and the options chosen in them —
+"what is that made of", which is the question a shared wardrobe is usually asked. Turn it off for a
+lookbook rather than a parts list. Collection names and file paths are never written out either way.
+
+Hidden outfits are left out, and so is anything a setting is currently hiding from the grid:
+animation, VFX and mount items while [Other Mod Types](#other-mod-types) is off, and design cards
+while [Glamourer Designs](#glamourer-designs) is off. The export is a picture of the wardrobe as you
+see it, not of everything in the file.
+
+**Export Now** writes it. A large wardrobe takes a minute, because every picture is re-encoded, and
+it runs off the game's thread so play carries on while it works. Nothing already in the folder is
+touched: each export is stamped with the time it was made, so exporting twice gives you two exports
+rather than one overwritten one. **Open Folder** shows the last one in Explorer.
+
+It is experimental because a lookbook is a design problem rather than a mechanism: what belongs on a
+card, what belongs behind it, and how much of a wardrobe of several hundred a browser will hold at
+once are all things it currently answers by guessing. It only ever reads — your wardrobe, your
+pictures and your mods are not touched.
+
 ---
 
 ## Setup
