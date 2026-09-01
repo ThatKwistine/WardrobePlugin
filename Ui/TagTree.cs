@@ -18,7 +18,7 @@ public sealed class TagNode
     /// </summary>
     public bool InUse;
 
-    public SortedDictionary<string, TagNode> Children = new(StringComparer.OrdinalIgnoreCase);
+    public SortedDictionary<string, TagNode> Children = new(Services.NaturalOrder.Comparer);
 }
 
 /// <summary>
@@ -102,7 +102,7 @@ public static class TagTree
     /// </remarks>
     public static IReadOnlyList<TagNode> Styles(Configuration config)
     {
-        var styles = new SortedDictionary<string, TagNode>(StringComparer.OrdinalIgnoreCase);
+        var styles = new SortedDictionary<string, TagNode>(Services.NaturalOrder.Comparer);
 
         void Add(string tag, bool inUse)
         {

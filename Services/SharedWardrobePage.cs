@@ -61,7 +61,7 @@ public static class SharedWardrobePage
         var names = new Dictionary<Guid, SharedItem>();
         foreach (var item in share.Items) names[item.SourceId] = item;
 
-        foreach (var item in share.Items.OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase))
+        foreach (var item in share.Items.OrderBy(i => i.Name, NaturalOrder.Comparer))
         {
             var card = new PageCard
             {
@@ -109,7 +109,7 @@ public static class SharedWardrobePage
             model.Items.Add(card);
         }
 
-        foreach (var outfit in share.Outfits.OrderBy(o => o.Name, StringComparer.OrdinalIgnoreCase))
+        foreach (var outfit in share.Outfits.OrderBy(o => o.Name, NaturalOrder.Comparer))
         {
             var card = new PageCard
             {

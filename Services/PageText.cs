@@ -53,8 +53,8 @@ public static class PageText
                 card.Tags.Add(tag);
         }
 
-        card.Styles.Sort(StringComparer.OrdinalIgnoreCase);
-        card.Tags.Sort(StringComparer.OrdinalIgnoreCase);
+        card.Styles.Sort(NaturalOrder.Comparer);
+        card.Tags.Sort(NaturalOrder.Comparer);
     }
 
     /// <summary>One line of an outfit's contents: where it goes, what it is, how it is dyed.</summary>
@@ -95,7 +95,7 @@ public static class PageText
             options.Add($"{group.Key}: {string.Join(", ", group.Value)}");
         }
 
-        options.Sort(StringComparer.OrdinalIgnoreCase);
+        options.Sort(NaturalOrder.Comparer);
 
         var line = !string.IsNullOrWhiteSpace(label) && label != "Main Mod"
             ? $"{name} — {label}"

@@ -2817,7 +2817,7 @@ public class ItemImportPanel : IDisposable
                          || other.Name.Contains(search, StringComparison.OrdinalIgnoreCase)
                          || other.Slot.DisplayName().Contains(search, StringComparison.OrdinalIgnoreCase))
             .OrderBy(other => (int)other.Slot)
-            .ThenBy(other => other.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(other => other.Name, NaturalOrder.Comparer)
             .ToList();
 
         // Split rather than filtered, so searching for an item that cannot be linked finds it and

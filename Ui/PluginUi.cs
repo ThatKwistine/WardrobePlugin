@@ -4031,13 +4031,13 @@ public class PluginUi : Window, IDisposable
         // (a multi-slot import creates them within the same tick) or the same name.
         query = _config.SortMode switch
         {
-            ItemSortMode.NameDesc      => query.OrderByDescending(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            ItemSortMode.NameDesc      => query.OrderByDescending(x => x.Name, NaturalOrder.Comparer)
                                                .ThenByDescending(x => x.DateAdded),
             ItemSortMode.DateAddedDesc => query.OrderByDescending(x => x.DateAdded)
-                                               .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase),
+                                               .ThenBy(x => x.Name, NaturalOrder.Comparer),
             ItemSortMode.DateAddedAsc  => query.OrderBy(x => x.DateAdded)
-                                               .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase),
-            _                          => query.OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                                               .ThenBy(x => x.Name, NaturalOrder.Comparer),
+            _                          => query.OrderBy(x => x.Name, NaturalOrder.Comparer)
                                                .ThenBy(x => x.DateAdded),
         };
 
@@ -5387,10 +5387,10 @@ public class PluginUi : Window, IDisposable
         // file, which must not run every frame.
         var sorted = _config.ImageSortMode switch
         {
-            ImageSortMode.NameDesc    => files.OrderByDescending(Path.GetFileName, StringComparer.OrdinalIgnoreCase),
-            ImageSortMode.NewestFirst => files.OrderByDescending(SafeWriteTime).ThenBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase),
-            ImageSortMode.OldestFirst => files.OrderBy(SafeWriteTime).ThenBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase),
-            _                         => files.OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase),
+            ImageSortMode.NameDesc    => files.OrderByDescending(Path.GetFileName, NaturalOrder.Comparer),
+            ImageSortMode.NewestFirst => files.OrderByDescending(SafeWriteTime).ThenBy(Path.GetFileName, NaturalOrder.Comparer),
+            ImageSortMode.OldestFirst => files.OrderBy(SafeWriteTime).ThenBy(Path.GetFileName, NaturalOrder.Comparer),
+            _                         => files.OrderBy(Path.GetFileName, NaturalOrder.Comparer),
         };
 
         _browserImages = sorted.ToArray();
@@ -6701,7 +6701,7 @@ public class PluginUi : Window, IDisposable
         }
 
         var outfits = query
-            .OrderBy(o => o.Name, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(o => o.Name, NaturalOrder.Comparer)
             .ToList();
 
         // What Select All acts on, recorded whether or not the mode is on, so turning it on and
@@ -9052,7 +9052,7 @@ public class PluginUi : Window, IDisposable
             .Where(i => string.IsNullOrWhiteSpace(_addToOutfitSearch) ||
                         i.Name.Contains(_addToOutfitSearch.Trim(), StringComparison.OrdinalIgnoreCase))
             .OrderBy(i => (int)i.Slot)
-            .ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(i => i.Name, NaturalOrder.Comparer)
             .ToList();
 
         ImGui.SetNextItemWidth(-1);
@@ -10330,7 +10330,7 @@ public class PluginUi : Window, IDisposable
             .Where(i => string.IsNullOrWhiteSpace(_addToBaseSearch) ||
                         i.Name.Contains(_addToBaseSearch.Trim(), StringComparison.OrdinalIgnoreCase))
             .OrderBy(i => (int)i.Slot)
-            .ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(i => i.Name, NaturalOrder.Comparer)
             .ToList();
 
         ImGui.SetNextItemWidth(UiScale.S(260));
@@ -10916,7 +10916,7 @@ public class PluginUi : Window, IDisposable
             var slots = _config.SlotCameraPresetLists
                 .Where(kv => _config.ExtraShotPresetsFor(kv.Key).Count > 0)
                 .Select(kv => $"{kv.Key} ({_config.ExtraShotPresetsFor(kv.Key).Count + 1})")
-                .OrderBy(s => s, StringComparer.OrdinalIgnoreCase);
+                .OrderBy(s => s, NaturalOrder.Comparer);
 
             ImGui.TextColored(new Vector4(0.55f, 0.75f, 0.95f, 1f),
                 "Extra angles set for: " + string.Join(", ", slots) + ".");

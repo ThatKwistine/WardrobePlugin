@@ -1792,7 +1792,7 @@ public class WardrobeService : IDisposable
 
             if (mods.Count > 0)
                 groups.Add(new LeftoverGroup(DisplayNameOf(byCollection.Key),
-                    mods.OrderBy(m => m.ModName, StringComparer.OrdinalIgnoreCase).ToList()));
+                    mods.OrderBy(m => m.ModName, NaturalOrder.Comparer).ToList()));
         }
 
         if (spent.Count > 0)
@@ -3047,7 +3047,7 @@ public class WardrobeService : IDisposable
 
         return _config.ExcludedDesigns
             .Select(id => (Id: id, Name: live.TryGetValue(id, out var n) ? n : "(no longer in Glamourer)"))
-            .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x.Name, NaturalOrder.Comparer)
             .ToList();
     }
 
@@ -3084,7 +3084,7 @@ public class WardrobeService : IDisposable
     /// <summary>Design cards, whether or not Glamourer is currently answering.</summary>
     public List<Outfit> DesignOutfits() =>
         _config.Outfits.Where(o => o.IsDesign)
-                       .OrderBy(o => o.Name, StringComparer.OrdinalIgnoreCase)
+                       .OrderBy(o => o.Name, NaturalOrder.Comparer)
                        .ToList();
 
     /// <summary>
