@@ -158,7 +158,7 @@ public sealed class HtmlExportService
         var byId = new Dictionary<Guid, WardrobeItem>();
         foreach (var item in _config.WardrobeItems) byId[item.Id] = item;
 
-        foreach (var item in _config.WardrobeItems.OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase))
+        foreach (var item in _config.WardrobeItems.OrderBy(i => i.Name, NaturalOrder.Comparer))
         {
             // Mod categories are kept but hidden from the grid while the setting is off, and an
             // export is a picture of the wardrobe as its owner sees it rather than of the whole file
@@ -216,7 +216,7 @@ public sealed class HtmlExportService
         var stains = new Dictionary<byte, string>();
         foreach (var (id, name, _) in _items.GetStains()) stains[id] = name;
 
-        foreach (var outfit in _config.Outfits.OrderBy(o => o.Name, StringComparer.OrdinalIgnoreCase))
+        foreach (var outfit in _config.Outfits.OrderBy(o => o.Name, NaturalOrder.Comparer))
         {
             // Hidden means "keep it, but not in front of me". A page handed to somebody else is the
             // one place that reading is least in doubt.
@@ -290,8 +290,8 @@ public sealed class HtmlExportService
                 card.Tags.Add(tag);
         }
 
-        card.Styles.Sort(StringComparer.OrdinalIgnoreCase);
-        card.Tags.Sort(StringComparer.OrdinalIgnoreCase);
+        card.Styles.Sort(NaturalOrder.Comparer);
+        card.Tags.Sort(NaturalOrder.Comparer);
     }
 
     /// <summary>One mod and the options chosen in it, as a single line.</summary>
@@ -325,7 +325,7 @@ public sealed class HtmlExportService
             options.Add($"{group.Key}: {string.Join(", ", group.Value)}");
         }
 
-        options.Sort(StringComparer.OrdinalIgnoreCase);
+        options.Sort(NaturalOrder.Comparer);
 
         var line = !string.IsNullOrWhiteSpace(label) && label != "Main Mod"
             ? $"{name} — {label}"

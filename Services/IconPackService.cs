@@ -126,7 +126,7 @@ public class IconPackService
                 SlotIconService.CountMatchedSlots(folder)));
         }
 
-        _packs.Sort((a, b) => string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase));
+        _packs.Sort((a, b) => NaturalOrder.Compare(a.DisplayName, b.DisplayName));
         CacheActiveFolder();
     }
 

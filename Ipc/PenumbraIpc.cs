@@ -258,7 +258,7 @@ public class PenumbraIpc : IDisposable
         return mods
             .Select(m => (Mod: m, At: Installed(m)))
             .OrderByDescending(x => x.At)
-            .ThenBy(x => x.Mod.ModName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.Mod.ModName, Services.NaturalOrder.Comparer)
             .Select(x => x.Mod)
             .ToList();
     }

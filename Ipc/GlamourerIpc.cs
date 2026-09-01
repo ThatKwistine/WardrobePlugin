@@ -254,7 +254,7 @@ public class GlamourerIpc : IDisposable
         {
             return _getDesignList.InvokeFunc()
                 .Select(kvp => (kvp.Key, kvp.Value))
-                .OrderBy(d => d.Value, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(d => d.Value, Services.NaturalOrder.Comparer)
                 .ToList();
         }
         catch (Exception ex)

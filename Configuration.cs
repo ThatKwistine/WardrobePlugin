@@ -88,7 +88,7 @@ public class Configuration : IPluginConfiguration
         WardrobeItems.SelectMany(i => i.Tags)
             .Concat(DefinedTags)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(t => t, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(t => t, Services.NaturalOrder.Comparer)
             .ToList();
 
     // ── Base character ────────────────────────────────────────────────────────

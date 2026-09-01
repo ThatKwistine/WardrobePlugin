@@ -227,7 +227,7 @@ public static class WardrobePage
     {
         var options = values.Where(v => !string.IsNullOrWhiteSpace(v))
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(v => v, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(v => v, NaturalOrder.Comparer)
             .ToList();
 
         if (options.Count < 2) return;
