@@ -41,14 +41,18 @@ public static class TagTree
     /// makes them styles is only where they are shown: their own row under the filters rather than
     /// somewhere in the tag tree, which is the whole of what was asked for.
     /// </remarks>
-    public const string StyleRoot = "Style";
+    /// <remarks>
+    /// Defined by <see cref="Services.PageText.StyleRoot"/> and named here, where every caller
+    /// already looks for it. What a tag path means is a fact about the data rather than about this
+    /// widget, and the page layer needs the same answer without reaching into the UI for it.
+    /// </remarks>
+    public const string StyleRoot = Services.PageText.StyleRoot;
 
     /// <summary>Whether a tag is a style. A bare "Style" with nothing under it is an ordinary tag.</summary>
-    public static bool IsStyle(string tag) =>
-        tag.StartsWith(StyleRoot + "/", StringComparison.OrdinalIgnoreCase);
+    public static bool IsStyle(string tag) => Services.PageText.IsStyle(tag);
 
     /// <summary>The tag a style name is stored as.</summary>
-    public static string StylePath(string name) => $"{StyleRoot}/{name}";
+    public static string StylePath(string name) => Services.PageText.StylePath(name);
 
     /// <summary>
     /// Builds the tree from tags on items plus tags made ahead of use.

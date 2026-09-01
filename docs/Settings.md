@@ -573,6 +573,10 @@ it runs off the game's thread so play carries on while it works. Nothing already
 touched: each export is stamped with the time it was made, so exporting twice gives you two exports
 rather than one overwritten one. **Open Folder** shows the last one in Explorer.
 
+The same page is what a wardrobe somebody sent you is shown as, from
+[Sharing](Sharing.md#viewing-one-as-a-web-page) — one layout over both, so an improvement to it is an
+improvement to both. The settings above are the ones that page follows too.
+
 It is experimental because a lookbook is a design problem rather than a mechanism: what belongs on a
 card, what belongs behind it, and how much of a wardrobe of several hundred a browser will hold at
 once are all things it currently answers by guessing. It only ever reads — your wardrobe, your

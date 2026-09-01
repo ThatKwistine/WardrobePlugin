@@ -67,6 +67,9 @@ public class SharePanel : Window, IDisposable
     private string _loadedPath  = string.Empty;
     private string _imageDir    = string.Empty;
     private string _loadStatus  = string.Empty;
+
+    /// <summary>A web page of the open bundle is being written, so the button says so.</summary>
+    private volatile bool _pageBusy;
     private string _recvSearch  = string.Empty;
     private bool   _onlyWearable;
     private bool   _tagWithSender = true;
@@ -517,6 +520,20 @@ public class SharePanel : Window, IDisposable
         {
             ImGui.SameLine();
             ImGui.TextDisabled(Path.GetFileName(_loadedPath));
+        }
+
+        if (_loaded != null && _config.HtmlExportEnabled)
+        {
+            UiLayout.SameLineIfRoomForButton("  View as a web page…  ");
+            if (_pageBusy) ImGui.BeginDisabled();
+            if (ImGui.Button(_pageBusy ? "  Writing…  " : "  View as a web page…  ")) BeginPageExport();
+            if (_pageBusy) ImGui.EndDisabled();
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Writes this wardrobe out as a page you can open in a browser —\n" +
+                                 "the same page your own wardrobe exports as.\n\n" +
+                                 "For looking through somebody's wardrobe properly, on a second\n" +
+                                 "screen or away from the game, without adding any of it first.\n\n" +
+                                 "Nothing is uploaded. It writes a file to a folder you pick.");
         }
 
         if (!string.IsNullOrEmpty(_loadStatus))
@@ -1249,6 +1266,77 @@ public class SharePanel : Window, IDisposable
             if (!ok || paths.Count == 0) return;
             LoadShare(paths[0]);
         }, 1, start);
+    }
+
+    /// <summary>
+    /// Asks where to put a web page of the bundle currently open, then writes it.
+    /// </summary>
+    /// <remarks>
+    /// The page is exactly the one your own wardrobe exports as, because it is the same renderer over
+    /// the same model — see <see cref="SharedWardrobePage"/>. The settings it follows are the export's
+    /// own, since they are answers to questions this asks too: how big the pictures should be, whether
+    /// it is a folder or one file, whether the mods are listed.
+    /// <para>
+    /// Written on a background thread like the wardrobe's own export, and for the same reason: it
+    /// re-encodes every picture in the bundle, which is not something to do between two frames.
+    /// </para>
+    /// </remarks>
+    private void BeginPageExport()
+    {
+        if (_loaded is not { } share) return;
+
+        var start = Directory.Exists(_config.HtmlExportFolder)
+            ? _config.HtmlExportFolder
+            : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
+        _fileDialog.OpenFolderDialog("Where should the page go?", (ok, folder) =>
+        {
+            if (!ok || string.IsNullOrWhiteSpace(folder)) return;
+
+            var stains = new Dictionary<byte, string>();
+            foreach (var (id, name, _) in Plugin.ItemLookup.GetStains()) stains[id] = name;
+
+            var model = SharedWardrobePage.Build(share, _imageDir, stains, _config.HtmlExportIncludeMods);
+
+            var options = new PageWriteOptions
+            {
+                Folder    = folder,
+                Layout    = _config.HtmlExportLayout,
+                ImageSize = _config.HtmlExportImageSize,
+
+                // Named after whoever sent it, so two friends' wardrobes do not land in the same
+                // folder under the same name, and neither is mistaken for your own
+                Stem = string.IsNullOrWhiteSpace(share.ExportedBy)
+                    ? "Shared wardrobe"
+                    : $"{share.ExportedBy.Trim()} wardrobe",
+
+                PictureFailed = (p, why) =>
+                    _log.Warning($"[Wardrobe] Share page: skipped {p} — {why}"),
+            };
+
+            _pageBusy   = true;
+            _loadStatus = "Writing the page...";
+
+            _ = System.Threading.Tasks.Task.Run(() =>
+            {
+                try
+                {
+                    var written = WardrobePageWriter.Write(model, options);
+                    _loadStatus = $"Wrote a page of {model.Items.Count} item(s) and " +
+                                  $"{model.Outfits.Count} outfit(s), {written.Size} — {written.Path}";
+                    _log.Information($"[Wardrobe] Share page written to {written.Path}.");
+                }
+                catch (Exception ex)
+                {
+                    _loadStatus = $"Could not write the page: {ex.Message}";
+                    _log.Error(ex, "[Wardrobe] Share page failed");
+                }
+                finally
+                {
+                    _pageBusy = false;
+                }
+            });
+        }, start);
     }
 
     private void LoadShare(string path)

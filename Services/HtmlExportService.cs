@@ -4,7 +4,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
 using WardrobePlugin.Models;
-using WardrobePlugin.Ui;
 
 namespace WardrobePlugin.Services;
 
@@ -174,7 +173,7 @@ public sealed class HtmlExportService
                 Notes        = _config.HtmlExportIncludeNotes ? item.Notes : null,
             };
 
-            SplitTags(item.Tags, card);
+            PageText.SplitTags(item.Tags, card);
 
             if (!string.IsNullOrWhiteSpace(item.GlamourerItemName))
                 card.Fields.Add(new PageField { Label = "Game item", Value = item.GlamourerItemName! });
@@ -206,9 +205,9 @@ public sealed class HtmlExportService
                 card.Fields.Add(new PageField { Label = "Worn with", Value = string.Join(", ", linked) });
 
             if (_config.HtmlExportIncludeMods)
-                card.Mods.AddRange(item.Mods.Select(DescribeMod).Where(s => s.Length > 0));
+                card.Mods.AddRange(item.Mods.Select(PageText.DescribeMod).Where(s => s.Length > 0));
 
-            if (!string.IsNullOrWhiteSpace(card.Notes)) card.Links = NoteText.Links(card.Notes);
+            if (!string.IsNullOrWhiteSpace(card.Notes)) card.Links = PageText.Links(card.Notes);
 
             model.Items.Add(card);
         }
@@ -237,7 +236,7 @@ public sealed class HtmlExportService
                              : null,
             };
 
-            SplitTags(outfit.Tags, card);
+            PageText.SplitTags(outfit.Tags, card);
 
             if (outfit.IsDesign && !string.IsNullOrWhiteSpace(outfit.DesignName))
                 card.Fields.Add(new PageField { Label = "Design", Value = outfit.DesignName });
@@ -246,8 +245,8 @@ public sealed class HtmlExportService
             {
                 if (!byId.TryGetValue(id, out var piece)) continue;
 
-                var dye = outfit.Dyes.TryGetValue(id.ToString(), out var d) ? DescribeDye(d, stains) : null;
-                card.Pieces.Add(PieceLine(piece.Slot.DisplayName(), piece.Name, dye));
+                var dye = outfit.Dyes.TryGetValue(id.ToString(), out var d) ? PageText.DescribeDye(d, stains) : null;
+                card.Pieces.Add(PageText.PieceLine(piece.Slot.DisplayName(), piece.Name, dye));
             }
 
             foreach (var pair in outfit.VanillaItems.OrderBy(v => v.Key, StringComparer.Ordinal))
@@ -256,10 +255,10 @@ public sealed class HtmlExportService
                     ? parsed.DisplayName()
                     : pair.Key;
 
-                var dye = DescribeDye(
+                var dye = PageText.DescribeDye(
                     new OutfitDye { Stain1 = pair.Value.Stain1, Stain2 = pair.Value.Stain2 }, stains);
 
-                card.Pieces.Add(PieceLine(label, pair.Value.Name, dye));
+                card.Pieces.Add(PageText.PieceLine(label, pair.Value.Name, dye));
             }
 
             model.Outfits.Add(card);
@@ -268,83 +267,4 @@ public sealed class HtmlExportService
         return model;
     }
 
-    // ── Shared with the builders that are not the local wardrobe ──────────────
-
-    /// <summary>One line of an outfit's contents: where it goes, what it is, how it is dyed.</summary>
-    /// <remarks>
-    /// Internal rather than private because a page built from a bundle somebody sent describes an
-    /// outfit the same way, and two spellings of the same line is exactly the drift the shared
-    /// renderer exists to avoid.
-    /// </remarks>
-    internal static string PieceLine(string slot, string name, string? dye) =>
-        dye is null ? $"{slot} — {name}" : $"{slot} — {name} ({dye})";
-
-    /// <summary>Splits a tag list into styles and ordinary tags, dropping the reserved prefix.</summary>
-    internal static void SplitTags(IEnumerable<string> tags, PageCard card)
-    {
-        foreach (var tag in tags)
-        {
-            if (TagTree.IsStyle(tag))
-                card.Styles.Add(tag[(TagTree.StyleRoot.Length + 1)..]);
-            else
-                card.Tags.Add(tag);
-        }
-
-        card.Styles.Sort(StringComparer.OrdinalIgnoreCase);
-        card.Tags.Sort(StringComparer.OrdinalIgnoreCase);
-    }
-
-    /// <summary>One mod and the options chosen in it, as a single line.</summary>
-    /// <remarks>
-    /// Takes the fields rather than a <see cref="ModReference"/> so that a shared item's
-    /// <c>SharedMod</c> — the same four things under different type — describes itself identically.
-    /// </remarks>
-    internal static string DescribeMod(string label, string modName, string modDirectory,
-                                       IReadOnlyDictionary<string, string> single,
-                                       IReadOnlyDictionary<string, List<string>> multi,
-                                       IReadOnlyDictionary<string, Dictionary<string, bool>> states)
-    {
-        var name = string.IsNullOrWhiteSpace(modName) ? modDirectory : modName;
-        if (string.IsNullOrWhiteSpace(name)) return string.Empty;
-
-        var options = new List<string>();
-
-        foreach (var one in single)
-            options.Add($"{one.Key}: {one.Value}");
-
-        foreach (var group in states)
-        {
-            var on = group.Value.Where(s => s.Value).Select(s => s.Key).ToList();
-            if (on.Count > 0) options.Add($"{group.Key}: {string.Join(", ", on)}");
-        }
-
-        // Read only where tri-states have nothing to say for that group, matching how they are applied
-        foreach (var group in multi)
-        {
-            if (states.ContainsKey(group.Key) || group.Value.Count == 0) continue;
-            options.Add($"{group.Key}: {string.Join(", ", group.Value)}");
-        }
-
-        options.Sort(StringComparer.OrdinalIgnoreCase);
-
-        var line = !string.IsNullOrWhiteSpace(label) && label != "Main Mod"
-            ? $"{name} — {label}"
-            : name;
-
-        return options.Count == 0 ? line : $"{line} ({string.Join("; ", options)})";
-    }
-
-    private static string DescribeMod(ModReference mod) =>
-        DescribeMod(mod.Label, mod.ModName, mod.ModDirectory, mod.Options, mod.MultiOptions, mod.OptionStates);
-
-    /// <summary>The dye channels as names, or null when the piece carries none.</summary>
-    internal static string? DescribeDye(OutfitDye dye, IReadOnlyDictionary<byte, string> stains)
-    {
-        var names = new List<string>();
-        if (dye.Stain1 != 0) names.Add(stains.TryGetValue(dye.Stain1, out var a) ? a : $"Dye {dye.Stain1}");
-        if (dye.Stain2 != 0) names.Add(stains.TryGetValue(dye.Stain2, out var b) ? b : $"Dye {dye.Stain2}");
-        if (dye.Advanced.Count > 0) names.Add("advanced dyes");
-
-        return names.Count == 0 ? null : string.Join(" + ", names);
-    }
 }

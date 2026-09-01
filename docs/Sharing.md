@@ -88,6 +88,26 @@ behind it:
 
 **Only what I can wear** hides the greyed ones once you have had a look.
 
+### Viewing one as a web page
+
+**View as a web page…** writes the bundle out as a page you can open in a browser — the same page
+your own wardrobe exports as, because it is the same layout over the same data. It appears once
+[Export as a web page](Settings.md#export-as-a-web-page) is turned on in Settings → Experimental, and
+follows that section's settings for picture size, one file or a folder, and whether the mods are
+listed.
+
+It is for looking through somebody's wardrobe properly — on a second screen, or away from the game —
+without adding any of it first. The page is headed with whatever the sender called themselves and
+carries their note, and it is dated when the bundle was made rather than when you opened it.
+
+Nothing is uploaded. It writes to a folder you pick, and what it writes loads nothing from the
+internet.
+
+A few things are missing from it compared with a page of your own wardrobe, and each is missing
+because a bundle does not carry it: there are no favourites, since whose favourite would they be, and
+no "Added" date, since the sender's import date is not a fact about your wardrobe. A plate or a
+design card carries a badge saying what it was before it was shared.
+
 ### Outfits you were sent
 
 Switch to **Outfits** to see them. An outfit card says how much of it you could put together:

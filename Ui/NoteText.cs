@@ -20,31 +20,15 @@ namespace WardrobePlugin.Ui;
 /// </remarks>
 public static class NoteText
 {
-    // Everything up to whitespace is taken and the trailing punctuation trimmed afterwards, so a
-    // link at the end of a sentence survives the full stop
-    private static readonly Regex UrlPattern =
-        new(@"^https?://[^\s]+$", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    // Punctuation that reads as part of the sentence rather than the address
-    private static readonly char[] TrailingPunctuation =
-        { '.', ',', ';', ':', '!', '?', ')', ']', '}', '"', '\'' };
-
-    private static readonly char[] Separators = { ' ', '\t', '\r', '\n' };
-
     private static readonly Vector4 LinkColour        = new(0.45f, 0.70f, 1f, 1f);
     private static readonly Vector4 LinkColourHovered = new(0.65f, 0.85f, 1f, 1f);
 
     /// <summary>Web addresses in the notes, in the order written, without repeats.</summary>
-    public static List<string> Links(string? notes)
-    {
-        if (string.IsNullOrWhiteSpace(notes)) return new List<string>();
-
-        return notes.Split(Separators, StringSplitOptions.RemoveEmptyEntries)
-            .Select(w => w.TrimEnd(TrailingPunctuation))
-            .Where(w => UrlPattern.IsMatch(w) && IsSafe(w))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
+    /// <remarks>
+    /// <see cref="Services.PageText.Links"/> does the finding, so that what is clickable here and
+    /// what is clickable in an exported page are decided by one piece of code.
+    /// </remarks>
+    public static List<string> Links(string? notes) => Services.PageText.Links(notes);
 
     public static bool HasLink(string? notes) => Links(notes).Count > 0;
 
@@ -99,13 +83,8 @@ public static class NoteText
             Open(url);
     }
 
-    /// <summary>
-    /// Second gate on the address, in case the pattern above was talked into matching something it
-    /// should not have. Only absolute http and https ever get as far as the browser.
-    /// </summary>
-    private static bool IsSafe(string url) =>
-        Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
-        (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+    /// <inheritdoc cref="Services.PageText.IsSafeLink"/>
+    private static bool IsSafe(string url) => Services.PageText.IsSafeLink(url);
 
     private static void Open(string url)
     {
