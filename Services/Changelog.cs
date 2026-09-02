@@ -41,6 +41,155 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 6, 0, 0), "2 September 2026", new List<ChangelogSection>
+        {
+            new("What's new", new List<ChangelogNote>
+            {
+                new("Send your wardrobe to somebody, or open one you were sent.",
+                    "Import \u2192 Share. A share file describes your items and outfits \u2014 which " +
+                    "mod each piece needs, which options, which game item, which dyes \u2014 and " +
+                    "carries your pictures with it. It is a .wardrobe file you send yourself; " +
+                    "nothing is uploaded and nothing is fetched.\n\n" +
+                    "Opening one shows it as a grid you can browse. Anything you already own the " +
+                    "mods for can be added to your wardrobe with a button, worn straight away, or " +
+                    "left where it is; anything you do not is shown greyed with the mod it needs " +
+                    "named, so a bundle tells you what to go and find rather than quietly dropping " +
+                    "half of itself.\n\n" +
+                    "The mods themselves are never in the file. Both sides need to own a mod for an " +
+                    "item made from it to work."),
+
+                new("Your wardrobe as a web page.",
+                    "Settings \u2192 Backups & Data \u2192 Export As A Web Page writes the whole " +
+                    "wardrobe out as a page anyone can open in a browser \u2014 the pictures, the " +
+                    "names, the tags, and what each piece is made of, searchable and filterable with " +
+                    "no plugin, no game and no account needed at the other end.\n\n" +
+                    "Written to a folder you pick, loading nothing from the internet. Sending it to " +
+                    "somebody is a separate thing you do yourself.\n\n" +
+                    "Experimental: the shape of a good lookbook is not settled yet, so what belongs " +
+                    "on a card may still change."),
+
+                new("The wardrobe remembers what you were wearing.",
+                    "Glamourer forgets your look when the game closes, so your mods stay enabled " +
+                    "while your character comes back in their own gear. The wardrobe can write down " +
+                    "what you had on \u2014 the items, the plain gear worn with them, and their " +
+                    "dyes \u2014 and offer to put it back when you next log in.\n\n" +
+                    "Off until you ask for it, in Settings \u2192 Glamourer & Outfits, or on the " +
+                    "fifth step of first-time setup. Set it to ask and a small window appears at " +
+                    "login saying what it remembers, with a button; set it to automatic and it goes " +
+                    "back on once your character has finished loading. Nothing is ever applied " +
+                    "without you having chosen one of those.\n\n" +
+                    "What you wear is written down whether the setting is on or not, so turning it " +
+                    "on later has something to work with straight away. /wardrobe restore puts the " +
+                    "remembered look back at any time, for a macro or for anyone who dismissed the " +
+                    "offer."),
+
+                new("A wardrobe for each character.",
+                    "Off until you ask for it, in Settings \u2192 Characters, or on the third step of " +
+                    "first-time setup. On, each character gets their own items, outfits, base " +
+                    "characters, camera angles and pictures folder, and logging in loads theirs.\n\n" +
+                    "Your tags and styles stay shared, so a scheme is built once and means the same " +
+                    "thing on every character.\n\n" +
+                    "Nothing is ever switched without asking. A character the wardrobe has not seen " +
+                    "before is offered the wardrobe you are already on, or one of their own, and " +
+                    "until you answer nothing changes. Two characters can share one wardrobe by " +
+                    "binding both to it."),
+
+                new("Copy items and outfits between your wardrobes.",
+                    "Import \u2192 From Another Wardrobe pulls pieces in; the right-click menu on a " +
+                    "card and the Select panel push them out. Either way they arrive as copies with " +
+                    "the same mods and options, ready to be edited for that character \u2014 editing " +
+                    "one never touches the other.\n\n" +
+                    "An outfit brings whatever it is made of with it, reusing anything you have " +
+                    "already taken across rather than making a second copy. Items copied together " +
+                    "keep their links and their variant grouping."),
+
+                new("A menu bar instead of fifteen buttons.",
+                    "Import, Character, View and Screenshots, with the item count at the right-hand " +
+                    "end. The toggles keep their lit-up state as a tick, and the entries that do " +
+                    "something different with Ctrl or Shift held say so beside their name.\n\n" +
+                    "The old toolbar is still there if you prefer it \u2014 Settings \u2192 Grid & " +
+                    "Cards \u2192 Toolbar."),
+
+                new("Settings have their own window, in eight categories.",
+                    "Nineteen sections in one column became a short list of categories, each holding " +
+                    "a few collapsing sections, with a search box that cuts across all of them. " +
+                    "Dalamud's own settings button on the plugin installer opens it.\n\n" +
+                    "The grouping is by subject now. Screenshots had been holding the folder, the " +
+                    "image size, three session tick boxes, the camera presets, the presets file, the " +
+                    "diagnostics and the crop guide; tags were split across three sections nowhere " +
+                    "near each other. Experimental is no longer a drawer \u2014 those features sit " +
+                    "beside the ones they resemble, badged."),
+
+                new("The panel column can be dragged wider.",
+                    "The divider between the grid and the right-hand panel resizes it, and the width " +
+                    "is remembered. It used to be a fixed 360 pixels shared by the import panel, the " +
+                    "tag tree, the image browser and the outfit editor, which suited none of them " +
+                    "equally."),
+
+                new("Tag each mod as you go in Mass Import.",
+                    "A Tags column on every row, alongside the batch tags on the Import row. An item " +
+                    "gets both, so the batch can say what the whole import is while a row says what " +
+                    "that one piece is."),
+
+                new("Animations can belong to a base character, and Shift strips them.",
+                    "Strip, Unequip All and Show In-Game Look have always left animations, VFX and " +
+                    "mounts running, since they are not on the character. Hold Shift and they come " +
+                    "off too.\n\n" +
+                    "Base characters can hold them now for the same reason: an idle that is part of " +
+                    "who the character is survives a Shift-strip, exactly as their ears survive an " +
+                    "ordinary one."),
+
+                new("Right-click a picture again to close it.",
+                    "The full-size viewer opens on a right-click and now closes on one, so looking " +
+                    "at a piece and dismissing it never leaves the mouse. Escape still works."),
+            }),
+
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("Camera angles no longer jam GPose panning.",
+                    "A saved angle past the game's own pan limit killed all four pan keys until " +
+                    "another angle was applied. Both axes are now held inside the range the controls " +
+                    "actually travel, measured off the game rather than guessed at \u2014 and the two " +
+                    "are not alike: pan reaches about 0.87 either way, where tilt only reaches " +
+                    "about 0.35.\n\n" +
+                    "If you have a preset that was doing this, applying it now works and the log says " +
+                    "it was brought into range. Re-save it to keep the angle you actually want."),
+
+                new("The wardrobe no longer stutters while you scroll it.",
+                    "Two separate causes. The grid was filtering and sorting every item on every " +
+                    "frame, which on a wardrobe of a thousand pieces is tens of thousands of string " +
+                    "comparisons a frame for a list that had not changed; it is now rebuilt only when " +
+                    "something it depends on moves.\n\n" +
+                    "The other was reading your whole look back out of Glamourer every frame to keep " +
+                    "the last-worn record up to date. That runs on the thread the game draws on and " +
+                    "the thread pictures load on, which is why it showed up as both stutter and slow " +
+                    "thumbnails. It now happens every few seconds instead, which the record does not " +
+                    "notice."),
+
+                new("The right-hand panel cannot be pushed off the window any more.",
+                    "On a narrow window the grid and the panel could be told to occupy more space " +
+                    "than there was, and the panel ended up drawn underneath the grid. Both columns " +
+                    "are now measured against what the window actually has, and below the width where " +
+                    "both fit the panel takes the window rather than the two sharing a space neither " +
+                    "fits in."),
+
+                new("Camera angles are kept per wardrobe, and so is their file.",
+                    "With a wardrobe per character, every angle you saved was being written to one " +
+                    "shared presets file and read back into whichever wardrobe was active at startup " +
+                    "\u2014 so two characters with different angles overwrote each other's, a launch " +
+                    "at a time. Each wardrobe now has its own file, and a new one starts with none."),
+
+                new("The full-size picture viewer opens in the middle of the screen.",
+                    "It was being placed before it knew how big it was, which left it down and to the " +
+                    "right of centre, near wherever you had clicked."),
+
+                new("Shared wardrobe cards line up.",
+                    "A card whose item name wrapped onto a second line pushed its buttons a row below " +
+                    "every other card. Names and badges now sit in a fixed space, so a row of cards " +
+                    "is a row."),
+            }),
+        }),
+
         new(new Version(1, 5, 5, 0), "30 August 2026", new List<ChangelogSection>
         {
             new("What's new", new List<ChangelogNote>

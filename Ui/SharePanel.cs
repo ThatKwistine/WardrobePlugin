@@ -722,6 +722,59 @@ public class SharePanel : Window, IDisposable
         ImGui.EndChild();
     }
 
+    // Every card is the same height, so a row of them lines its buttons up. Two lines for a name,
+    // one for the badge under it — both are slots rather than however much the text happened to
+    // need, because cards are laid out with SameLine and SameLine aligns tops, not bottoms.
+    private const int NameLines  = 2;
+    private const int BadgeLines = 1;
+
+    /// <summary>Height of a slot that always holds this many lines, whatever is put in it.</summary>
+    private static float LinesH(int lines) => ImGui.GetTextLineHeightWithSpacing() * lines;
+
+    /// <summary>
+    /// Draws wrapped text into a fixed slot, cut short with an ellipsis when it would need more
+    /// lines than the slot has, and leaving the cursor below the slot either way.
+    /// </summary>
+    /// <remarks>
+    /// What makes the cards a grid rather than a ragged row. A mod called
+    /// <c>[Anno] Ruthless (Ring (R))</c> wraps where its neighbours do not, and without a slot to
+    /// sit in it pushes that one card's buttons a line below everybody else's.
+    /// <para>
+    /// Nothing is lost to the ellipsis: the card's tooltip carries the full name, and it is the
+    /// same hover that says what the item needs.
+    /// </para>
+    /// </remarks>
+    private static void TextBlock(string text, float width, int lines, Vector4? colour = null)
+    {
+        var top     = ImGui.GetCursorPosY();
+        var ceiling = ImGui.GetTextLineHeight() * lines + 1f;
+        var shown   = text;
+
+        if (Wrapped(text, width) > ceiling)
+        {
+            // Longest prefix that still fits the slot once the ellipsis is on it. Binary search,
+            // because measuring wrapped text is not free and this runs for every card, every frame.
+            int lo = 0, hi = text.Length;
+            while (lo < hi)
+            {
+                var mid = (lo + hi + 1) / 2;
+                if (Wrapped(text[..mid] + "…", width) <= ceiling) lo = mid;
+                else                                              hi = mid - 1;
+            }
+            shown = lo > 0 ? text[..lo] + "…" : "…";
+        }
+
+        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
+        if (colour.HasValue) ImGui.TextColored(colour.Value, shown);
+        else                 ImGui.TextUnformatted(shown);
+        ImGui.PopTextWrapPos();
+
+        ImGui.SetCursorPosY(top + LinesH(lines));
+
+        static float Wrapped(string text, float width) =>
+            ImGui.CalcTextSize(text, false, width).Y;
+    }
+
     private void DrawSharedCard(SharedItem item, float width)
     {
         var availability = Available(item);
@@ -742,9 +795,7 @@ public class SharePanel : Window, IDisposable
 
         DrawCardImage(item, width);
 
-        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
-        ImGui.TextUnformatted(item.Name);
-        ImGui.PopTextWrapPos();
+        TextBlock(item.Name, width, NameLines);
 
         ImGui.TextDisabled(item.Slot.DisplayName());
 
@@ -790,32 +841,38 @@ public class SharePanel : Window, IDisposable
             ImGui.GetColorU32(new Vector4(0.18f, 0.18f, 0.20f, 1f)), UiScale.S(4f));
     }
 
+    /// <remarks>
+    /// Always takes <see cref="BadgeLines"/> lines, even with nothing to say. A card that reports
+    /// nothing is the commonest card there is, and if it were shorter than its neighbours every
+    /// row would be ragged wherever one of them had something to report.
+    /// </remarks>
     private void DrawCardBadge(SharedItem item, ItemAvailability availability, bool imported, float width)
     {
+        var top = ImGui.GetCursorPosY();
+
         if (imported)
         {
-            ImGui.TextColored(new Vector4(0.5f, 0.8f, 0.5f, 1f), "In your wardrobe");
-            return;
+            TextBlock("In your wardrobe", width, BadgeLines, new Vector4(0.5f, 0.8f, 0.5f, 1f));
         }
-
-        if (availability.PrimaryMissing)
+        else if (availability.PrimaryMissing)
         {
             var missing = availability.Missing.Count > 0
                 ? availability.Missing[0].ModName
                 : "a mod";
 
-            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + width);
-            ImGui.TextColored(new Vector4(0.9f, 0.6f, 0.4f, 1f), $"Needs {Shorten(missing)}");
-            ImGui.PopTextWrapPos();
-            return;
+            TextBlock($"Needs {Shorten(missing)}", width, BadgeLines,
+                new Vector4(0.9f, 0.6f, 0.4f, 1f));
+        }
+        // Wearable, but not quite as its sender has it — an upscale or a patch is absent
+        else if (availability.Missing.Count > 0)
+        {
+            TextBlock($"Missing {availability.Missing.Count} extra", width, BadgeLines,
+                new Vector4(0.85f, 0.8f, 0.4f, 1f));
         }
 
-        // Wearable, but not quite as its sender has it — an upscale or a patch is absent
-        if (availability.Missing.Count > 0)
-        {
-            ImGui.TextColored(new Vector4(0.85f, 0.8f, 0.4f, 1f),
-                $"Missing {availability.Missing.Count} extra");
-        }
+        // Nothing to report, or the block above already moved past it — either way the slot is the
+        // same height for every card
+        ImGui.SetCursorPosY(top + LinesH(BadgeLines));
     }
 
     private void DrawCardTooltip(SharedItem item, ItemAvailability availability)

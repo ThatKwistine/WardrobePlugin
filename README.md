@@ -24,6 +24,10 @@ and the slot goes empty.
 - **Linked items.** Pieces that belong together go on and come off together, with a button for
   wearing just the one.
 - **Outfits.** Save a whole look, wear it in one click, dye it in another.
+- **Picks up where you left off.** Glamourer forgets what you had on when the game closes; the
+  wardrobe does not. Turn it on and a small window asks, when you log in, whether to put the whole
+  look back on — items, the plain gear worn with them, and their dyes — wherever you are and whether
+  or not the wardrobe is open. Or it does it for you, without asking.
 - **Your glamour plates.** Sync the game's own plates in as read-only outfits, preview them anywhere
   through Glamourer, photograph them like anything else — or apply one for real, in game.
 - **Your Glamourer designs.** Show them in the grid as a live link — no syncing — and attach the mods
@@ -31,7 +35,10 @@ and the slot goes empty.
 - **Pictures.** Drag images onto cards, or let the plugin take the screenshots for you — several per
   item if you want the side and the back as well as the front.
 - **Find things.** Nested tags, favourites, search across names and notes, sort by name or date.
-- **Bulk import.** Bring in a batch of mods at once instead of one at a time.
+- **Bulk import.** Bring in a batch of mods at once instead of one at a time, tagging each as you go.
+- **A wardrobe per character.** Optional. Give each character their own items, outfits, bases and
+  camera angles, and the wardrobe follows you as you log in. Tags and styles stay shared, and pieces
+  can be copied from one character to another as templates to re-fit.
 - **Show someone.** Export the whole wardrobe as a web page — pictures, tags and all — that opens in
   any browser with no plugin, no game and no account at the other end. Nothing is uploaded; it is a
   file on your disk that you send yourself. Experimental.
@@ -74,8 +81,12 @@ Updates then arrive through the normal plugin installer like any other plugin.
 ## Getting started
 
 Open the wardrobe with `/wardrobe` (or `/wr`) or the plugin icon. On a fresh install you get a short setup for
-the settings that cause the most trouble when left unset — your Penumbra collection and your image
-folders. All of it is skippable and editable later.
+the settings that cause the most trouble when left unset — your Penumbra collection, whether each
+character gets their own wardrobe, and your image folders. All of it is skippable and editable later.
+
+Everything is reached from the menu bar along the top: **Import**, **Character**, **View** and
+**Screenshots**. If you preferred the two rows of buttons the wardrobe used before 1.6, they are
+still there — **Settings → Grid & Cards → Toolbar**.
 
 > **Set your collection to the one your character actually uses.** This is far and away the most
 > common reason a wardrobe item appears to do nothing. Check **Collections → Your Character** in
@@ -90,12 +101,12 @@ folders. All of it is skippable and editable later.
 5. Optionally add upscales or patches under **+ Add Supplementary Mod**
 6. Click **Import**
 
-Then open **Images** in the toolbar and drag a picture onto the new card — or use a
+Then open **View → Images** and drag a picture onto the new card — or use a
 [screenshot session](docs/Images-and-Screenshots.md) and let the plugin do it.
 
 ### Importing a batch
 
-**Mass Import** in the toolbar lists every mod in a collection at once, for when you are filling a
+**Import → Mass Import** lists every mod in a collection at once, for when you are filling a
 wardrobe rather than adding one piece. Tick what you want, optionally set each mod's options and
 attach its supplementary mods, then click **Import Mods**. Items are named after the mod, and slots
 you already have an item for are skipped.
@@ -113,6 +124,7 @@ so it is worth being liberal here and tidying up later. See
 | `/wardrobe` | Open the wardrobe window |
 | `/wardrobe wear <name>` | Wear an item by exact name (case-insensitive) |
 | `/wardrobe unequip` | Unequip all currently worn items |
+| `/wardrobe restore` | Put back on whatever you were last wearing |
 
 `/wr` is a shorthand for `/wardrobe` and takes the same arguments.
 
@@ -128,6 +140,7 @@ so it is worth being liberal here and tidying up later. See
 | [Tags](docs/Tags.md) | Sub-tags, making tags ahead of use, tagging a batch, filtering |
 | [Images and screenshots](docs/Images-and-Screenshots.md) | Previews, automated sessions, camera presets |
 | [Sharing a wardrobe](docs/Sharing.md) | Sending your wardrobe as a file, opening one you were sent |
+| [A wardrobe per character](docs/Wardrobes.md) | Separate wardrobes, binding characters, copying between them |
 | [Settings and backups](docs/Settings.md) | Every setting, and how backups work |
 | [Custom slot icons](docs/Custom-Icons.md) | Naming icons, installing icon packs, building one to share |
 | [**Troubleshooting**](docs/Troubleshooting.md) | When something doesn't show up |

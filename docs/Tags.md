@@ -1,7 +1,7 @@
 # Tags
 
 Tags are free-form labels for finding things. An item can carry as many as you like, and the
-**Tags** panel in the toolbar filters the grid by them.
+**Tags** panel, under **View**, filters the grid by them.
 
 ## Styles
 
@@ -171,7 +171,7 @@ can never take a tag off an item. Deleting a parent deletes any unused tags nest
   underneath — every known tag appears there, including ones made ahead of use. Right-click a
   suggestion to edit it before adding, which is how you make a sibling of an existing sub-tag
   without retyping the whole path.
-- **To a batch.** **Select** in the toolbar, tick the items, then **Edit Selected → Tags**. **Add
+- **To a batch.** **View → Select Mode**, tick the items, then **Edit Selected → Tags**. **Add
   Tag** and **Remove Tag** act on the whole selection, leaving alone both the tags an item already
   has and any tag you are not naming. This is the fastest way to use a tag you made ahead of time.
 
@@ -179,6 +179,15 @@ can never take a tag off an item. Deleting a parent deletes any unused tags nest
   put it in the box, or type a new one. Branches collapse, so this stays usable as the tag list
   grows, and seeing what already exists under a heading is what stops a near-duplicate being typed
   in beside it. Greyed tags are ones no item has yet.
+
+- **While mass importing.** Two levels, and an item gets both. **Batch Tags**, on the Import row, go
+  on everything the import creates — best for what is true of the whole batch, a body type or a
+  creator. The **Tags** column on each row covers that mod alone, and every item that mod produces
+  gets them.
+
+  A row carrying tags is coloured, so a long list can be scanned for what has been done. Tagging as
+  you go is much less work than finding the same pieces again afterwards, since the import screen is
+  the one place you can still see which mod each item came from.
 
 ## Filtering
 

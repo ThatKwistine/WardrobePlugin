@@ -16,7 +16,7 @@ Wear a look you like, type a name, and **Save current look** records every item 
 | **Edit** | Opens the outfit for renaming, previews, and managing its contents |
 
 Outfit cards start the same size as item cards, with their own slider behind the magnifying glass on
-the toolbar — worth turning up if your previews are full-body shots showing too little. See
+**View → Card Size** — worth turning up if your previews are full-body shots showing too little. See
 [Card size](Settings.md#card-size).
 
 **Right-click an outfit's picture** to see it full size, on a card or in its edit panel. See
@@ -29,7 +29,7 @@ deleting it. Everything on it stays — items, pictures, tags, notes — and a *
 appears above the grid to bring them back. The tick box resets on every launch, so the tidied grid
 is what you open to.
 
-For more than one at a time, use **Select** on the toolbar. It works on the outfits grid the same way
+For more than one at a time, use **View → Select Mode**. It works on the outfits grid the same way
 it works on items: filter or search down to the cards you do not want, **Select All**, then **Hide**
 in the panel. That is the practical answer to a Glamourer library of several hundred designs, where
 right-clicking each card is not an answer at all.
@@ -185,7 +185,7 @@ capturing on one is refused because it would freeze a copy over the top of the l
 The game's own twenty glamour plates can be brought into the wardrobe and worn as outfits, so a look
 you already built in-game does not have to be rebuilt here before it can be photographed.
 
-**Sync Plates**, on the toolbar row at the top of the outfits view, reads them and saves each
+**Sync Plates**, on the row at the top of the outfits view, reads them and saves each
 non-empty plate as an outfit named `Glamour Plate 1`…`20`, tagged with the **Glamour Plate** style so
 the whole set can be filtered in or out with the styles dropdown. They sit in the same grid as
 everything else, with a blue border and a `Glamour Plate` label on the card.
@@ -253,7 +253,7 @@ the two do not race.
 Animations, VFX and mounts are left running. A plate has nothing to say about them, and a dance
 stopping because you changed your shirt would be a surprise.
 
-**Show In-Game Look**, next to the apply button, does the same thing on its own, and the toolbar's
+**Show In-Game Look**, next to the apply button, does the same thing on its own, and the Character menu's
 **In-Game Look** button does it from anywhere — useful for answering "what do I actually look like
 to everyone else?" without taking every item off by hand. See
 [In-Game Look](Wearing-Items.md#in-game-look) for how it sits beside Strip and Unequip All.

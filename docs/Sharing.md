@@ -4,7 +4,7 @@ A **share file** is your wardrobe, or part of it, in one `.wardrobe` file you ca
 over Discord. They open it in their own copy of the plugin, browse everything you sent, and take the
 pieces they want into their own wardrobe.
 
-Press **Share** on the toolbar.
+Open **Import → Share**.
 
 ## What a share file contains
 

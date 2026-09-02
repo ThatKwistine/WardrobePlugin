@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace WardrobePlugin.Models;
 
@@ -198,6 +199,57 @@ public class Outfit : IImageOwner
 
     /// <inheritdoc cref="WardrobeItem.SharedFromId"/>
     public Guid? SharedFromId { get; set; }
+
+    /// <summary>The <see cref="Id"/> this was copied from, on an outfit brought in from another wardrobe.</summary>
+    /// <remarks>Provenance, and what stops the copy offer making a second one every time it is used.</remarks>
+    public Guid? CopiedFromId { get; set; }
+
+    /// <summary>
+    /// A copy of this outfit for another wardrobe, with its items pointed at that wardrobe's copies.
+    /// </summary>
+    /// <param name="items">
+    /// Old item id to new. Anything absent is dropped rather than carried: an id the other wardrobe
+    /// has never heard of would resolve to nothing every time the outfit was worn.
+    /// </param>
+    /// <remarks>
+    /// The plate link is deliberately not carried. <see cref="GlamourPlateId"/> names a slot in one
+    /// character's glamour plates, and the character being copied to has their own twenty — pointing
+    /// a copy at plate 4 because the original was plate 4 would claim a sync that was never made.
+    /// The Glamourer design is kept, because designs belong to Glamourer rather than to a character.
+    /// </remarks>
+    public Outfit CopyForWardrobe(IReadOnlyDictionary<Guid, Guid> items)
+    {
+        var copy = new Outfit
+        {
+            Id                     = Guid.NewGuid(),
+            Name                   = Name,
+            ImagePath              = ImagePath,
+            ExtraImages            = new List<string>(ExtraImages),
+            VanillaItems           = VanillaItems.ToDictionary(kv => kv.Key, kv => kv.Value),
+            Tags                   = new List<string>(Tags),
+            DateAdded              = DateTime.UtcNow,
+            DesignId               = DesignId,
+            DesignName             = DesignName,
+            DesignAppliesEquipment = DesignAppliesEquipment,
+            DesignAppliesHairstyle = DesignAppliesHairstyle,
+            HatVisible             = HatVisible,
+            WeaponVisible          = WeaponVisible,
+            SharedFromId           = SharedFromId,
+            CopiedFromId           = Id,
+            Hidden                 = Hidden,
+        };
+
+        foreach (var id in ItemIds)
+            if (items.TryGetValue(id, out var mapped))
+                copy.ItemIds.Add(mapped);
+
+        // Keyed by item id, so the keys move with the items
+        foreach (var (key, dye) in Dyes)
+            if (Guid.TryParse(key, out var id) && items.TryGetValue(id, out var mapped))
+                copy.Dyes[mapped.ToString()] = dye;
+
+        return copy;
+    }
 
     /// <summary>
     /// Kept out of the grid until you ask to see it.

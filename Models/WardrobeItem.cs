@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace WardrobePlugin.Models;
 
@@ -313,6 +314,66 @@ public class WardrobeItem : IImageOwner
     /// </para>
     /// </remarks>
     public Guid? SharedFromId { get; set; }
+
+    /// <summary>
+    /// The <see cref="Id"/> this was copied from, on an item brought over from another wardrobe.
+    /// </summary>
+    /// <remarks>
+    /// Provenance, and the way the copy offer can say a wardrobe already has this piece rather than
+    /// silently making a second one every time the menu is used. Points at an item in a different
+    /// wardrobe, so it will not resolve against the one in force — which is exactly why it is kept
+    /// separately from <see cref="VariantOfId"/> and the links, both of which are meaningless
+    /// across wardrobes and are dropped by the copy.
+    /// </remarks>
+    public Guid? CopiedFromId { get; set; }
+
+    /// <summary>
+    /// A copy of this item for another wardrobe: everything that describes the piece, nothing that
+    /// describes where it sat.
+    /// </summary>
+    /// <remarks>
+    /// The point of copying rather than sharing is that the copy is a template to be edited — the
+    /// other character may need different mod options, a different collection, a different size —
+    /// so every dictionary and list is rebuilt and the two items have nothing in common afterwards.
+    /// <para>
+    /// What is deliberately not carried over: <see cref="LinkedItemIds"/> and
+    /// <see cref="VariantOfId"/>, which name items in the wardrobe being copied from and mean
+    /// nothing in the one being copied to — the caller remaps them where a whole batch is copied
+    /// together. <see cref="IsFavorite"/> goes too, because a favourite is a judgement about one
+    /// wardrobe's contents rather than a property of the piece.
+    /// </para>
+    /// <para>
+    /// Pictures are carried as paths, so both items show the same file. Nothing on disk is copied
+    /// or moved: the picture is of the piece, and the piece is the same piece.
+    /// </para>
+    /// </remarks>
+    public WardrobeItem CopyForWardrobe() => new()
+    {
+        Id                     = Guid.NewGuid(),
+        Name                   = Name,
+        Slot                   = Slot,
+        ImagePath              = ImagePath,
+        ExtraImages            = new List<string>(ExtraImages),
+        Mods                   = Mods.Select(m => m.Copy()).ToList(),
+        GlamourerItemId        = GlamourerItemId,
+        GlamourerItemName      = GlamourerItemName,
+        ModelSetId             = ModelSetId,
+        HairIdByRace           = new Dictionary<string, ushort>(HairIdByRace),
+        CustomizeIdsByRace     = CustomizeIdsByRace.ToDictionary(kv => kv.Key,
+                                                                 kv => new List<ushort>(kv.Value)),
+        Replaces               = Replaces,
+        Layer                  = Layer,
+        DesignId               = DesignId,
+        DesignName             = DesignName,
+        DesignAppliesEquipment = DesignAppliesEquipment,
+        DesignAppliesHairstyle = DesignAppliesHairstyle,
+        Notes                  = Notes,
+        Tags                   = new List<string>(Tags),
+        ForceRedraw            = ForceRedraw,
+        DateAdded              = DateTime.UtcNow,
+        SharedFromId           = SharedFromId,
+        CopiedFromId           = Id,
+    };
 
     /// <summary>
     /// Key this item occupies in <see cref="Configuration.WornItems"/>, which is what decides

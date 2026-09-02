@@ -1,20 +1,48 @@
 # Settings and Backups
 
-Settings are reached from the toolbar, and the sections below are in the order they appear.
+Settings open in their own window, from **View → Settings**, from Dalamud's settings button beside
+the plugin in the installer, or with the **Settings** button if you use the old toolbar.
+
+The window opens on a list of categories rather than on every setting at once. Pick one and its
+sections appear as collapsing headers; the search box at the top cuts across all of them at once, so
+anything you know the name of can be found without knowing which category it was filed under.
+
+| Category | Holds |
+|---|---|
+| **Penumbra & Mods** | Collection, importing, other mod types, uncompressed textures |
+| **Glamourer & Outfits** | Wearing, what you were last wearing, advanced dyes, Glamourer designs |
+| **Characters** | Base character, per-character wardrobes |
+| **Grid & Cards** | Toolbar, card size, slot icons, variants |
+| **Tags & Styles** | Tag picker, tag colours, tags from Glamourer |
+| **Images** | Images folder, FFXIV screenshots folder, captured image size |
+| **Screenshot Sessions** | During a session, fully automatic sessions, crop guide, camera angles and their file, camera diagnostics |
+| **Backups & Data** | Backups, export as a web page, changelog, first-time setup |
+
+Features that are not finished are badged **Experimental** where they sit rather than kept in a
+drawer of their own. Being unproven says nothing about what a setting is for, so it is not a useful
+way to file one.
+
+The sections below follow that order.
 
 ---
 
 ## First run
 
-On a fresh install the window opens into a short six-step setup covering the things that cause the
+On a fresh install the window opens into a short eight-step setup covering the things that cause the
 most trouble when left unset:
 
 1. **Intro**
 2. **Which Penumbra collection does your character use?**
-3. **What should the wardrobe hold?** Gear is always managed; animations, VFX and mounts are optional
-4. **Where should item images live?**
-5. **Where does FFXIV save your screenshots?**
-6. **Keep backups of your wardrobe?**
+3. **Do you play more than one character?** Whether each gets a wardrobe of their own
+4. **What should the wardrobe hold?** Gear is always managed; animations, VFX and mounts are optional
+5. **Pick up where you left off?** Whether to be offered your last look back when you log in
+6. **Where should item images live?**
+7. **Where does FFXIV save your screenshots?**
+8. **Keep backups of your wardrobe?**
+
+Step 3 is the one worth answering now rather than later. Everything else here can be changed at any
+time with no consequences; splitting a wardrobe afterwards means deciding, piece by piece, which
+character each of several hundred items belonged to.
 
 Every step is skippable and everything is editable afterwards. Existing configurations skip the
 walkthrough automatically, since anything already imported is taken as evidence the plugin is set
@@ -187,6 +215,38 @@ applied.
 
 ---
 
+## What you were last wearing
+
+What the wardrobe does at the next login with the look the game was closed in. See
+[Wearing items](Wearing-Items.md) for what is remembered and how.
+
+**Do nothing** — the default, and what the plugin did before this existed. Nothing is offered and
+nothing is applied. What you wear is still written down, so turning this on later has something to
+work with straight away. First-run setup asks whether you want it, and this is where to change your
+mind either way.
+
+**Offer to put it back on.** You are told what you were wearing, with a button that puts it on.
+Nothing about your character changes until you press it.
+
+**Ask in a window of its own**, under that option and on by default, is where the offer appears: a
+small window over the game when you log in, wherever you are and whether or not the wardrobe is open.
+Closing it means Not Now. Turn it off and the offer goes above the wardrobe's grid instead, where you
+will only see it once you open the wardrobe.
+
+**Put it back on automatically.** Dresses you as soon as your character has finished loading, without
+asking. Only ever on the character the look was captured on.
+
+**Wait after logging in** is how long to leave the character alone first, ten seconds by default.
+Penumbra and Glamourer are both still working when a character appears, and anything applied into
+that lands on a body the game is about to rebuild. Raise it if the look comes back wrong on a slow
+zone-in.
+
+Underneath is what is remembered right now, with **Put It Back On Now** — the same thing
+`/wardrobe restore` does — and **Forget It**, which throws the record away without changing anything
+about your character.
+
+---
+
 ## Base character
 
 The character underneath the clothes: what a strip leaves on, and what a screenshot session puts back
@@ -232,6 +292,36 @@ the same design you have the character set up with, and the two travel together.
 pointed by hand, once — Glamourer cannot be asked which design is currently applied, because a
 design becomes ordinary character state the moment it lands, so no plugin can work out on its own
 which one you are wearing.
+
+---
+
+## Per-Character Wardrobes
+
+Off unless you ask for it. On, each character gets their own items, outfits, base characters, camera
+angles and pictures folder, and logging in loads theirs; tags and styles stay shared. Nothing is ever
+switched without asking, and a character the plugin has not seen before is offered a choice rather
+than given one.
+
+The panel lists every wardrobe with the characters it loads for, a button that binds or unbinds
+whoever is logged in, and a box for adding another. Binding several characters to one wardrobe is how
+they share it.
+
+Fully covered in [A wardrobe per character](Wardrobes.md), including what copying between them does
+and does not carry.
+
+---
+
+## Toolbar
+
+What sits above the grid. The menu bar is the default: **Import**, **Character**, **View** and
+**Screenshots**, with the item count at the right-hand end.
+
+**Use the old button toolbar** puts back the two rows of buttons the wardrobe had before 1.6 — every
+action as its own button, visible and one press away, at the cost of the row the grid gets back.
+Everything is reachable either way; only where it sits changes.
+
+Settings are the exception and are not offered in their old shape. That was not a trade between two
+layouts, it was one 360px column holding every setting the plugin has.
 
 ---
 
@@ -315,9 +405,9 @@ Separate because the two grids are looked at differently: an outfit preview is u
 shot and wants the room, while more item cards on screen is the point of the item grid. One slider
 for both traded them against each other.
 
-Both are also behind the magnifying glass on the toolbar, beside **Strip**, **Refresh** and **Scan** —
-card size is judged by looking at the grid while dragging, which a settings panel four clicks away
-cannot show you.
+Both are also on **View → Card Size**, or behind the magnifying glass at the right-hand end of the
+old toolbar's second row — card size is judged by looking at the grid while dragging, which a
+settings window you have to go and find cannot show you.
 
 It scales the cards in **both** grids — items and outfits — so a wardrobe browsed by picture can have
 big previews everywhere rather than only where a toggle exists. Larger cards mean fewer per row, and
@@ -437,12 +527,7 @@ Capturing, re-capturing and clearing rows all happen per item in an outfit's edi
 
 ---
 
-## Experimental
-
-Features that are finished enough to try but have not been proven in the game yet. Off by default.
-Anything here either graduates into a section of its own or goes.
-
-### Fully automatic sessions
+## Fully automatic sessions
 
 **Fully automatic sessions** has a screenshot session take the pictures itself: each item is worn, the
 camera moves to the angle its slot asks for, the shot is taken, cropped and filed, and it moves on.
@@ -469,7 +554,7 @@ picture immediately rather than waiting out the countdown. Shoot Now is there in
 included. Everything it does is written to the log; open it with `/xllog`. See
 [Fully automatic sessions](Images-and-Screenshots.md#fully-automatic-sessions).
 
-### Flag uncompressed textures
+## Flag uncompressed textures
 
 **Flag uncompressed textures on worn items** puts a warning triangle beside the name on any worn card
 that is putting textures on your character in a format storing every pixel whole. Hover it for how
@@ -522,7 +607,7 @@ It is experimental because the list of formats it recognises covers what mods no
 not exhaustive. A format it does not know is passed over rather than guessed at, so it will
 under-report before it cries wolf.
 
-### Export as a web page
+## Export as a web page
 
 **Offer exporting to a web page** writes your wardrobe out as a page anyone can open in a browser —
 the pictures, the names, the slots, the tags and styles, what each item is made of, and what each

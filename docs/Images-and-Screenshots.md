@@ -2,7 +2,7 @@
 
 ## Assigning an image by hand
 
-Open **Images** in the toolbar, point Settings at a folder of images, then drag a thumbnail onto any
+Open **View → Images**, point Settings at a folder of images, then drag a thumbnail onto any
 item or outfit card.
 
 ## Several pictures per item
@@ -174,7 +174,7 @@ much of the point of bringing them in.
 
 ### A session over just the items you pick
 
-**Select** in the toolbar, tick the items, then **Edit Selected → Screenshots → Photograph**. The
+**View → Select Mode**, tick the items, then **Edit Selected → Screenshots → Photograph**. The
 session then covers exactly those items, in place of the whole wardrobe.
 
 This runs **everything you ticked**, including items that already have a preview — those get
@@ -205,7 +205,7 @@ you where to put the camera. A second frame over the top of it would be the wors
 | **During screenshot sessions** | On from the moment a session starts until it ends. The default |
 | **Always** | On whenever the game is showing |
 
-A **Crop Guide** button on the toolbar turns it on and off without a trip to settings, and the
+**View → Crop Guide** picks between its three modes without a trip to settings, and the
 compact session view has the same button under its action row — framing is done from whichever of
 those you are watching a session from. Switching it off and back on keeps the mode you chose, so
 setting it to **Always** and then using the toggle does not quietly move you onto **During

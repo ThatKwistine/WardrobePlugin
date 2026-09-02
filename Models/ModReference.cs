@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace WardrobePlugin.Models;
 
@@ -40,4 +41,22 @@ public class ModReference
     /// </para>
     /// </remarks>
     public Dictionary<string, Dictionary<string, bool>> OptionStates { get; set; } = new();
+
+    /// <summary>A copy sharing nothing with this one, for putting an item in another wardrobe.</summary>
+    /// <remarks>
+    /// The dictionaries are rebuilt rather than handed over. The whole point of copying an item
+    /// between wardrobes is to change its options for the other character, and two items sharing
+    /// one options dictionary would have every such edit land on both.
+    /// </remarks>
+    public ModReference Copy() => new()
+    {
+        Label        = Label,
+        Collection   = Collection,
+        ModDirectory = ModDirectory,
+        ModName      = ModName,
+        Options      = new Dictionary<string, string>(Options),
+        MultiOptions = MultiOptions.ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value)),
+        OptionStates = OptionStates.ToDictionary(kv => kv.Key,
+                                                 kv => new Dictionary<string, bool>(kv.Value)),
+    };
 }

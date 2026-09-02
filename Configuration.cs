@@ -20,19 +20,253 @@ public enum OwnershipNoticeState
     Done        = 2,
 }
 
+/// <summary>
+/// What the wardrobe does at the next login with the look it remembers. Values are persisted, so do
+/// not renumber.
+/// </summary>
+public enum LastWornRestore
+{
+    /// <summary>Nothing. The look is still written down, so turning this on later has something to use.</summary>
+    Off = 0,
+
+    /// <summary>Say what is remembered and wait to be told, which is the default.</summary>
+    Ask = 1,
+
+    /// <summary>Put it back on as soon as the character has finished loading.</summary>
+    Automatic = 2,
+}
+
 [Serializable]
 public class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
 
+    // ── Per-character wardrobes ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Whether each character gets a wardrobe of their own.
+    /// </summary>
+    /// <remarks>
+    /// Off, and everything below still works exactly as it did: there is one wardrobe, it is bound
+    /// to nobody, and nothing ever switches. What the setting turns on is the switching — logging
+    /// in looks for a wardrobe bound to that character, and offers to sort it out when none is.
+    /// </remarks>
+    public bool PerCharacterWardrobes { get; set; }
+
+    /// <summary>Every wardrobe. There is always at least one. See <see cref="WardrobeProfile"/>.</summary>
+    public List<WardrobeProfile> Profiles { get; set; } = new();
+
+    /// <summary>Which wardrobe everything else in this class is talking about.</summary>
+    public Guid? ActiveProfileId { get; set; }
+
+    /// <summary>Whether <see cref="MigrateProfiles"/> has run. See there for why it is a flag.</summary>
+    public bool ProfilesMigrated { get; set; }
+
+    /// <summary>
+    /// The wardrobe in force, which every item, outfit and base below reads through.
+    /// </summary>
+    /// <remarks>
+    /// Self-healing rather than trusting what is stored: a config with no wardrobes gets one, and
+    /// an active id naming a wardrobe that has since been deleted falls back to the first rather
+    /// than throwing. This is read on nearly every frame the grid draws, so it can never be a path
+    /// that fails.
+    /// </remarks>
+    [Newtonsoft.Json.JsonIgnore]
+    public WardrobeProfile ActiveProfile
+    {
+        get
+        {
+            if (Profiles.Count == 0) Profiles.Add(new WardrobeProfile());
+
+            if (ActiveProfileId is { } id && Profiles.Find(p => p.Id == id) is { } found)
+                return found;
+
+            ActiveProfileId = Profiles[0].Id;
+            return Profiles[0];
+        }
+    }
+
+    /// <summary>
+    /// Moves a pre-wardrobes config into its first wardrobe.
+    /// </summary>
+    /// <remarks>
+    /// Must run before anything reads a facade property, because reading one creates an empty
+    /// wardrobe on the spot — so <see cref="Plugin"/> calls this first of all the migrations, ahead
+    /// even of loading the camera presets.
+    /// <para>
+    /// Gated on a flag rather than on the wardrobe list being empty, precisely so that an empty
+    /// wardrobe conjured by an early read cannot be mistaken for a config that has already been
+    /// migrated, leaving the old data stranded where nothing will ever look for it again.
+    /// </para>
+    /// </remarks>
+    /// <para>
+    /// The old fields are emptied once their contents are across, so the file does not carry two
+    /// copies of a wardrobe under two sets of names. The safety net is a file copy taken before any
+    /// of this runs — see <c>Plugin.BackUpBeforeMigrating</c> — rather than stale data left in the
+    /// config, which would go out of date on the first edit and mislead whoever found it.
+    /// </para>
+    /// <returns>True when anything moved, so the caller can save.</returns>
+    public bool MigrateProfiles()
+    {
+        if (ProfilesMigrated) return false;
+        ProfilesMigrated = true;
+
+        if (Profiles.Count == 0) Profiles.Add(new WardrobeProfile());
+        var profile = Profiles[0];
+
+        if (LegacyWardrobeItems.Count > 0)            profile.Items                 = LegacyWardrobeItems;
+        if (LegacyOutfits.Count > 0)                  profile.Outfits               = LegacyOutfits;
+        if (LegacyWornItems.Count > 0)                profile.WornItems             = LegacyWornItems;
+        if (LegacyLastWorn != null)                   profile.LastWorn              = LegacyLastWorn;
+        if (LegacyExpandedVariantGroups.Count > 0)    profile.ExpandedVariantGroups = LegacyExpandedVariantGroups;
+        if (LegacyBaseCharacters.Count > 0)           profile.BaseCharacters        = LegacyBaseCharacters;
+        if (LegacyActiveBaseCharacterId != null)      profile.ActiveBaseCharacterId = LegacyActiveBaseCharacterId;
+        if (!string.IsNullOrEmpty(LegacyImagesFolder)) profile.ImagesFolder         = LegacyImagesFolder;
+        if (LegacySlotCameraPresetLists.Count > 0)    profile.SlotCameraPresetLists = LegacySlotCameraPresetLists;
+
+        LegacyWardrobeItems         = new List<WardrobeItem>();
+        LegacyOutfits               = new List<Outfit>();
+        LegacyWornItems             = new Dictionary<string, Guid>();
+        LegacyLastWorn              = null;
+        LegacyExpandedVariantGroups = new HashSet<string>();
+        LegacyBaseCharacters        = new List<BaseCharacter>();
+        LegacyActiveBaseCharacterId = null;
+        LegacyImagesFolder          = string.Empty;
+        LegacySlotCameraPresetLists = new Dictionary<string, List<CameraPreset>>();
+
+        ActiveProfileId = profile.Id;
+        return true;
+    }
+
+    /// <summary>
+    /// Makes a wardrobe, seeded with the one setting a new one has no way to guess.
+    /// </summary>
+    /// <remarks>
+    /// The pictures folder is carried over rather than left empty. It is where the plugin writes,
+    /// and a new wardrobe that silently cannot save a screenshot is a worse first impression than
+    /// one sharing a folder until it is told otherwise.
+    /// </remarks>
+    public WardrobeProfile AddProfile(string name)
+    {
+        var profile = new WardrobeProfile
+        {
+            Name         = string.IsNullOrWhiteSpace(name) ? "New wardrobe" : name.Trim(),
+            ImagesFolder = ActiveProfile.ImagesFolder,
+        };
+
+        Profiles.Add(profile);
+        return profile;
+    }
+
+    /// <summary>The wardrobe bound to this character, or null when none is.</summary>
+    public WardrobeProfile? ProfileFor(string name, uint world) =>
+        Profiles.Find(p => p.IsFor(name, world));
+
     /// <summary>Saved outfits — named sets of wardrobe items worn and removed together.</summary>
-    public List<Outfit> Outfits { get; set; } = new();
+    [Newtonsoft.Json.JsonIgnore]
+    public List<Outfit> Outfits
+    {
+        get => ActiveProfile.Outfits;
+        set => ActiveProfile.Outfits = value;
+    }
+
+    /// <summary>Where this lived before wardrobes could be per-character.</summary>
+    /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
+    [Newtonsoft.Json.JsonProperty("Outfits")]
+    public List<Outfit> LegacyOutfits { get; set; } = new();
+
 
     // ── Wardrobe items ────────────────────────────────────────────────────────
-    public List<WardrobeItem>         WardrobeItems { get; set; } = new();
+    [Newtonsoft.Json.JsonIgnore]
+    public List<WardrobeItem> WardrobeItems
+    {
+        get => ActiveProfile.Items;
+        set => ActiveProfile.Items = value;
+    }
+
+    /// <summary>Where this lived before wardrobes could be per-character.</summary>
+    /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
+    [Newtonsoft.Json.JsonProperty("WardrobeItems")]
+    public List<WardrobeItem> LegacyWardrobeItems { get; set; } = new();
+
 
     /// <summary>Slot name (EquipSlot.ToString()) → currently worn WardrobeItem ID.</summary>
-    public Dictionary<string, Guid>   WornItems     { get; set; } = new();
+    [Newtonsoft.Json.JsonIgnore]
+    public Dictionary<string, Guid> WornItems
+    {
+        get => ActiveProfile.WornItems;
+        set => ActiveProfile.WornItems = value;
+    }
+
+    /// <summary>Where this lived before wardrobes could be per-character.</summary>
+    /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
+    [Newtonsoft.Json.JsonProperty("WornItems")]
+    public Dictionary<string, Guid> LegacyWornItems { get; set; } = new();
+
+
+    // ── What was last worn ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The look the wardrobe last saw on the character, kept across restarts. See
+    /// <see cref="Services.LastWornService"/>.
+    /// </summary>
+    /// <remarks>
+    /// Written whether or not <see cref="RestoreLastWorn"/> is on, and cleared when everything comes
+    /// off. Recording costs nothing and is the only way turning the setting on can mean anything
+    /// before the session after next; not recording would make the first login after switching it on
+    /// a login with nothing to offer, which reads exactly like the feature not working.
+    /// </remarks>
+    [Newtonsoft.Json.JsonIgnore]
+    public WornSnapshot? LastWorn
+    {
+        get => ActiveProfile.LastWorn;
+        set => ActiveProfile.LastWorn = value;
+    }
+
+    /// <summary>Where this lived before wardrobes could be per-character.</summary>
+    /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
+    [Newtonsoft.Json.JsonProperty("LastWorn")]
+    public WornSnapshot? LegacyLastWorn { get; set; }
+
+
+    /// <summary>What to do with <see cref="LastWorn"/> when a character logs in.</summary>
+    /// <remarks>
+    /// Off, which is what the plugin did before this existed: nothing appears over anybody's game
+    /// and nobody's character is dressed by something they did not ask for. Turned on during
+    /// first-run setup, where it is one tick among the other questions, or in settings afterwards.
+    /// <para>
+    /// Ask rather than Automatic is the recommended way to have it on, and what the setup tick sets:
+    /// putting clothes on somebody without asking is a change to their character that they did not
+    /// make. The offer only ever appears when there is genuinely something to put back, and it
+    /// carries the button that turns it off again for good.
+    /// </para>
+    /// </remarks>
+    public LastWornRestore RestoreLastWorn { get; set; } = LastWornRestore.Off;
+
+    /// <summary>
+    /// Whether the offer appears in a window of its own rather than above the wardrobe's grid.
+    /// </summary>
+    /// <remarks>
+    /// True, because an offer nobody sees is not an offer. Above the grid it is only ever read by
+    /// somebody who opened the wardrobe, and the whole point of the feature is the login where you
+    /// have not opened anything yet — the same reason the changelog gets a window instead of a panel.
+    /// <para>
+    /// Off puts it back above the grid for anyone who would rather nothing appeared over the game
+    /// unasked. Only ever read in <see cref="LastWornRestore.Ask"/>: there is no offer to place in
+    /// the other two.
+    /// </para>
+    /// </remarks>
+    public bool LastWornOfferPopup { get; set; } = true;
+
+    /// <summary>Seconds to wait after the character appears before restoring anything.</summary>
+    /// <remarks>
+    /// Not a cosmetic delay. Penumbra and Glamourer are asked for things the moment this fires, and
+    /// a character still loading answers badly: mods enabled against a draw object that is about to
+    /// be rebuilt, and a Glamourer apply landing on a body the game has not finished putting
+    /// together. Ten seconds is comfortably past that on a slow zone-in, and anyone who wants it
+    /// sooner can say so.
+    /// </remarks>
+    public int RestoreLastWornDelay { get; set; } = 10;
 
     /// <summary>
     /// Tags created before anything has them, so a scheme can be laid out ahead of tagging.
@@ -65,7 +299,18 @@ public class Configuration : IPluginConfiguration
     /// starts folded, which is the point of grouping — a wardrobe of colour variants opens as one
     /// card each. An id whose item is gone is simply never matched, so stale entries are harmless.
     /// </remarks>
-    public HashSet<string> ExpandedVariantGroups { get; set; } = new();
+    [Newtonsoft.Json.JsonIgnore]
+    public HashSet<string> ExpandedVariantGroups
+    {
+        get => ActiveProfile.ExpandedVariantGroups;
+        set => ActiveProfile.ExpandedVariantGroups = value;
+    }
+
+    /// <summary>Where this lived before wardrobes could be per-character.</summary>
+    /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
+    [Newtonsoft.Json.JsonProperty("ExpandedVariantGroups")]
+    public HashSet<string> LegacyExpandedVariantGroups { get; set; } = new();
+
 
     /// <summary>How <c>Create variant of this item</c> names the copy it makes.</summary>
     /// <remarks>
@@ -94,7 +339,18 @@ public class Configuration : IPluginConfiguration
     // ── Base character ────────────────────────────────────────────────────────
 
     /// <summary>Saved base characters — what a strip leaves on. See <see cref="BaseCharacter"/>.</summary>
-    public List<BaseCharacter> BaseCharacters { get; set; } = new();
+    [Newtonsoft.Json.JsonIgnore]
+    public List<BaseCharacter> BaseCharacters
+    {
+        get => ActiveProfile.BaseCharacters;
+        set => ActiveProfile.BaseCharacters = value;
+    }
+
+    /// <summary>Where this lived before wardrobes could be per-character.</summary>
+    /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
+    [Newtonsoft.Json.JsonProperty("BaseCharacters")]
+    public List<BaseCharacter> LegacyBaseCharacters { get; set; } = new();
+
 
     /// <summary>
     /// The base character currently in force, or null when stripping takes everything.
@@ -104,7 +360,18 @@ public class Configuration : IPluginConfiguration
     /// what a screenshot session keeps between shots. Two settings for that would only ever be a way
     /// to have the session photograph a character that is not the one you set up.
     /// </remarks>
-    public Guid? ActiveBaseCharacterId { get; set; }
+    [Newtonsoft.Json.JsonIgnore]
+    public Guid? ActiveBaseCharacterId
+    {
+        get => ActiveProfile.ActiveBaseCharacterId;
+        set => ActiveProfile.ActiveBaseCharacterId = value;
+    }
+
+    /// <summary>Where this lived before wardrobes could be per-character.</summary>
+    /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
+    [Newtonsoft.Json.JsonProperty("ActiveBaseCharacterId")]
+    public Guid? LegacyActiveBaseCharacterId { get; set; }
+
 
     /// <summary>The active base character, or null when none is set or the saved one is gone.</summary>
     public BaseCharacter? ActiveBaseCharacter =>
@@ -163,7 +430,18 @@ public class Configuration : IPluginConfiguration
     public bool KeepBaseCharacterOnRevert { get; set; } = true;
 
     /// <summary>Folder on disk containing wardrobe item images, shown in the image browser.</summary>
-    public string ImagesFolder { get; set; } = string.Empty;
+    [Newtonsoft.Json.JsonIgnore]
+    public string ImagesFolder
+    {
+        get => ActiveProfile.ImagesFolder;
+        set => ActiveProfile.ImagesFolder = value;
+    }
+
+    /// <summary>Where this lived before wardrobes could be per-character.</summary>
+    /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
+    [Newtonsoft.Json.JsonProperty("ImagesFolder")]
+    public string LegacyImagesFolder { get; set; } = string.Empty;
+
 
     /// <summary>Folder where FFXIV saves screenshots, watched during screenshot sessions.</summary>
     public string ScreenshotsFolder { get; set; } = string.Empty;
@@ -211,7 +489,18 @@ public class Configuration : IPluginConfiguration
     /// (<see cref="CameraPreset.IsDefault"/>), not decided by its position, so the list can be kept
     /// in whatever order suits and the default chosen independently of it.
     /// </remarks>
-    public Dictionary<string, List<CameraPreset>> SlotCameraPresetLists { get; set; } = new();
+    [Newtonsoft.Json.JsonIgnore]
+    public Dictionary<string, List<CameraPreset>> SlotCameraPresetLists
+    {
+        get => ActiveProfile.SlotCameraPresetLists;
+        set => ActiveProfile.SlotCameraPresetLists = value;
+    }
+
+    /// <summary>Where this lived before wardrobes could be per-character.</summary>
+    /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
+    [Newtonsoft.Json.JsonProperty("SlotCameraPresetLists")]
+    public Dictionary<string, List<CameraPreset>> LegacySlotCameraPresetLists { get; set; } = new();
+
 
     /// <summary>
     /// The single preset per slot that presets used to be, kept only so it can be migrated.
@@ -279,7 +568,46 @@ public class Configuration : IPluginConfiguration
     }
 
     /// <summary>Path to the JSON file used for exporting/importing camera presets.</summary>
-    public string CameraPresetsPath { get; set; } = string.Empty;
+    [Newtonsoft.Json.JsonIgnore]
+    public string CameraPresetsPath
+    {
+        get => ActiveProfile.CameraPresetsPath;
+        set => ActiveProfile.CameraPresetsPath = value;
+    }
+
+    /// <summary>Where the presets path lived before it belonged to a wardrobe.</summary>
+    /// <remarks>Emptied by <see cref="MigrateCameraPresetsPath"/>.</remarks>
+    [Newtonsoft.Json.JsonProperty("CameraPresetsPath")]
+    public string LegacyCameraPresetsPath { get; set; } = string.Empty;
+
+    /// <summary>Whether <see cref="MigrateCameraPresetsPath"/> has run.</summary>
+    public bool CameraPresetsPathMigrated { get; set; }
+
+    /// <summary>
+    /// Moves the shared presets path onto the wardrobe that was using it.
+    /// </summary>
+    /// <remarks>
+    /// A migration of its own rather than a line inside <see cref="MigrateProfiles"/>, because that
+    /// one has already run for anyone who has launched a build with wardrobes in it — adding a
+    /// field to it now would move nothing for exactly the people who need it moved.
+    /// <para>
+    /// Onto the first wardrobe only. The path was one value shared by all of them, and the first is
+    /// the one that inherited everything else the config used to hold at the top level.
+    /// </para>
+    /// </remarks>
+    public bool MigrateCameraPresetsPath()
+    {
+        if (CameraPresetsPathMigrated) return false;
+        CameraPresetsPathMigrated = true;
+
+        if (string.IsNullOrEmpty(LegacyCameraPresetsPath)) return true;
+
+        if (Profiles.Count == 0) Profiles.Add(new WardrobeProfile());
+        Profiles[0].CameraPresetsPath = LegacyCameraPresetsPath;
+        LegacyCameraPresetsPath       = string.Empty;
+
+        return true;
+    }
 
     /// <summary>
     /// A session waits on each item until you say to move on, taking as many pictures as you like.
@@ -611,6 +939,38 @@ public class Configuration : IPluginConfiguration
     public float SlotIconRowScale { get; set; } = 1f;
 
     /// <summary>
+    /// Width, in unscaled design pixels, of the wardrobe's right-hand panel column.
+    /// </summary>
+    /// <remarks>
+    /// Was a hard-coded 360 shared by the import panel, the tag tree, the image browser, the
+    /// outfit editor and the camera presets, which meant it was too narrow for some of them and
+    /// too wide for others — and, on a narrow window, wide enough to leave the grid beside it with
+    /// no room at all. Dragging the divider between the two columns sets it.
+    /// <para>
+    /// Unscaled, so it means the same thing at every Global Font Scale, and clamped on read rather
+    /// than on write: what fits depends on how wide the window is at that moment, not on how wide
+    /// it was when the divider was last dragged.
+    /// </para>
+    /// </remarks>
+    public float RightPanelWidth { get; set; } = 360f;
+
+    /// <summary>
+    /// Draw the old two-row button toolbar instead of the menu bar.
+    /// </summary>
+    /// <remarks>
+    /// Off, so a new install and an updated one both get the menu bar. The old toolbar is kept
+    /// because the two are a genuine trade rather than an improvement: a button is one press with
+    /// its state visible without opening anything, a menu is two presses and gives the row back to
+    /// the grid. Somebody who had learned where fifteen buttons were should not have to relearn
+    /// them because the default changed.
+    /// <para>
+    /// Only the toolbar. Settings are not offered in their old shape — that was not a trade but one
+    /// column holding every setting the plugin has, with the grouping no longer describing anything.
+    /// </para>
+    /// </remarks>
+    public bool ClassicToolbar { get; set; }
+
+    /// <summary>
     /// Size multiplier for the cards in the item and outfit grids. 1 is the original size.
     /// </summary>
     /// <remarks>
@@ -915,7 +1275,25 @@ public class Configuration : IPluginConfiguration
         return true;
     }
 
-    public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
+    /// <summary>
+    /// Bumped on every save, so anything caching a view of the wardrobe can tell in one comparison
+    /// whether the wardrobe has changed under it.
+    /// </summary>
+    /// <remarks>
+    /// Not serialised, and meaningless across sessions — it only ever answers "is this the same
+    /// data I looked at last frame". Every edit the plugin makes ends in <see cref="Save"/>, which
+    /// is what makes one counter here stand in for watching every field.
+    /// </remarks>
+    [NonSerialized] private int _revision;
+
+    /// <summary>See <see cref="_revision"/>.</summary>
+    public int Revision => _revision;
+
+    public void Save()
+    {
+        _revision++;
+        Plugin.PluginInterface.SavePluginConfig(this);
+    }
 
     /// <summary>
     /// Decides whether to explain, once, that mods enabled by an older version are not claimed.
