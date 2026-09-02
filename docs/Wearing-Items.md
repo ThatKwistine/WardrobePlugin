@@ -93,7 +93,7 @@ press only.
 
 ## In-Game Look
 
-The three take-off buttons in the toolbar do different things:
+The three take-off entries on the **Character** menu do different things:
 
 | Button | What you end up looking like |
 | --- | --- |
@@ -109,7 +109,14 @@ The items are taken off properly — their Penumbra mods disabled, the wardrobe'
 rather than merely cleared out of Glamourer. A bare revert would leave the mods enabled with nothing
 showing them, which is the state the desync notice exists to complain about.
 
-Animations, VFX and mounts are left running, exactly as with **Strip**.
+Animations, VFX and mounts are left running, exactly as with **Strip** — they are not on the
+character, so emptying equipment slots has nothing to say about them.
+
+**Hold Shift** on any of the three and they come off as well, for the times when "take everything
+off" was meant to include the emote you are stuck in. An animation named on your
+[base character](Settings.md#base-character) survives even that, exactly as their ears survive an
+ordinary strip. The entries name both modifiers beside themselves, and only while the modifier has
+something to act on.
 
 ### Keeping your character through it
 
@@ -129,6 +136,52 @@ alone, whatever the setting says — the same Ctrl that **Unequip All** uses to 
 everything else. For the moment you want the honest answer to "what do I actually look like" without
 changing a setting you will only have to change back. The status line says so when it happens.
 
+## What you were last wearing
+
+Glamourer keeps nothing across a restart. Close the game and your Penumbra mods are still enabled
+when you come back, but your character is in their own gear — so the look is half there, and the
+wardrobe used to think nothing was worn at all.
+
+So the wardrobe writes down what you have on while you play: the items, the plain gear filling the
+slots they do not, their dyes, and whether your hat and weapon were showing. Log back in and it can
+put all of it back on.
+
+**It is off until you ask for it.** First-run setup offers it as a tick — *Pick up where you left
+off?* — and Settings → Glamourer & outfits → *What you were last wearing* turns it on or off at any
+time. What you wear is written down either way, so switching it on has something to work with
+straight away rather than only from the session after next.
+
+Turned on, it **offers**: a small fixed window appears over the game when you log in — wherever you
+are, and whether or not the wardrobe is open. It says what you were wearing and gives you three
+buttons across it: **Put It Back On**, **Not Now**, and **Never Ask**. Nothing about your character
+changes until you press one; closing the window means Not Now.
+
+Settings has the rest of it. Turn off **Ask in a window of its own** and the offer goes above the
+wardrobe's grid instead, where you will see it next time you open the wardrobe. The third mode puts
+the look back on automatically, as soon as your character has finished loading, without asking at
+all.
+
+`/wardrobe restore` does the same thing at any time, whichever setting you are on.
+
+A few things worth knowing:
+
+- **It is the whole look, not just the outfit.** Items worn one at a time count exactly as much as a
+  saved outfit does. If an outfit was on, the wardrobe remembers that too, so the card reads as worn
+  afterwards.
+- **It is per character.** The record notes who was wearing it, and an alt is left in their own
+  clothes rather than handed somebody else's. It is one record, not one each — logging in as your
+  alt does not overwrite what your main was wearing, but wearing something on the alt does.
+- **Taking everything off is remembered as taking everything off.** Strip before you log out and
+  there is nothing to put back on next time, which is the point.
+- **It is worn over what you have on**, exactly as pressing Wear on an outfit is. Nothing is
+  stripped first.
+- **Screenshot sessions are ignored.** A session dresses your character one item at a time, and none
+  of those is a look you chose.
+
+The wait after logging in is a setting, ten seconds by default. Penumbra and Glamourer are both still
+working when a character appears, and anything applied into that lands on a body the game is about to
+rebuild. Raise it if the look comes back wrong on a slow zone-in.
+
 ## Linked items
 
 Two items can be linked so they are worn and taken off together — a top and the gloves that finish
@@ -146,7 +199,7 @@ Unequipping only takes off the partners that are actually on.
 
 Two ways in, and they do the same thing:
 
-- **Select** in the toolbar, tick two or more items, then **Edit Selected → Link**. This links every
+- **View → Select Mode**, tick two or more items, then **Edit Selected → Link**. This links every
   item in the selection to every other one.
 - The **Linked items** section in an item's edit panel, which lists its partners and has a search
   box to add another.

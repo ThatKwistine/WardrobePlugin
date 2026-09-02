@@ -1438,7 +1438,14 @@ public class WardrobeService : IDisposable
     /// sitting in the slot, which is what keeps a mod that redirects it drawing. Strip wants that;
     /// Unequip All, which is meant to leave the character wearing nothing at all, does not.
     /// </param>
-    public void StripAll(bool ignoreBase = false, bool toNothing = false)
+    /// <param name="stripAnimations">
+    /// Also turn off animations, VFX and mounts. Off by default, which is what a strip has always
+    /// done: they are not on the character, so emptying equipment slots has nothing to say about
+    /// them and a dance left running keeps running. Held Shift asks for them as well, for the times
+    /// when "take everything off" was meant to include the emote you are stuck in.
+    /// </param>
+    public void StripAll(bool ignoreBase = false, bool toNothing = false,
+        bool stripAnimations = false)
     {
         // Everything below already does the right thing when there is no base character, so ignoring
         // one is just pretending there isn't one. The only line that cannot be expressed that way is
@@ -1459,9 +1466,11 @@ public class WardrobeService : IDisposable
                 continue;
             }
 
-            if (item.Slot.IsModCategory()) continue;
+            if (item.Slot.IsModCategory() && !stripAnimations) continue;
 
-            // The base character is what a strip strips down to, not part of what it removes
+            // The base character is what a strip strips down to, not part of what it removes. Now
+            // that a base can hold an animation, this is also what keeps a character's own idle
+            // running through a strip that is taking every other one off.
             if (keptIds.Contains(item.Id) || kept.Contains(item.Slot)) continue;
 
             // Removes its own WornItems entry
@@ -2383,7 +2392,17 @@ public class WardrobeService : IDisposable
     /// must never be shadowed by a plain copy of the same slot.
     /// </para>
     /// </remarks>
-    public int CaptureVanillaItems(Outfit outfit)
+    /// <param name="quiet">
+    /// Log at debug rather than information. For the last-worn capture, which runs on a timer: the
+    /// line at the end is written for somebody who has just pressed a button and wants to know what
+    /// it found, and one of those every half minute would bury the log it belongs to.
+    /// </param>
+    /// <param name="live">
+    /// What Glamourer says is equipped, when the caller has already asked. Each ask is a whole state
+    /// round trip, and the last-worn capture needs the same answer twice.
+    /// </param>
+    public int CaptureVanillaItems(Outfit outfit, bool quiet = false,
+        Dictionary<EquipSlot, (ulong ItemId, byte Stain1, byte Stain2)>? live = null)
     {
         // Never on a design card. The design supplies the gear for every slot it applies, and vanilla
         // pieces go on after the items — so a capture taken while the design was worn would freeze a
@@ -2399,8 +2418,8 @@ public class WardrobeService : IDisposable
         }
 
         var covered = ResolveOutfit(outfit).Select(i => i.Slot).ToHashSet();
-        var live    = _glamourer.GetEquippedPieces();
         var vanilla = new Dictionary<string, VanillaPiece>();
+        live ??= _glamourer.GetEquippedPieces();
 
         foreach (var (slot, piece) in live)
         {
@@ -2422,8 +2441,10 @@ public class WardrobeService : IDisposable
 
         // Information rather than Debug: this is the button people press when an outfit came back
         // wrong, and "what did it actually find" is the first question afterwards
-        _log.Information($"[Wardrobe] Outfit '{outfit.Name}': captured {vanilla.Count} vanilla piece(s) " +
-                         $"from {live.Count} equipped, {covered.Count} slot(s) covered by its own items");
+        var found = $"[Wardrobe] Outfit '{outfit.Name}': captured {vanilla.Count} vanilla piece(s) " +
+                    $"from {live.Count} equipped, {covered.Count} slot(s) covered by its own items";
+        if (quiet) _log.Debug(found);
+        else       _log.Information(found);
         return vanilla.Count;
     }
 
@@ -2623,6 +2644,169 @@ public class WardrobeService : IDisposable
         _config.Outfits.Remove(outfit);
         _config.Save();
         WardrobeChanged?.Invoke();
+    }
+
+    // ── What was last worn ────────────────────────────────────────────────────
+
+    /// <summary>The outfit currently on the character, or null when the look was built by hand.</summary>
+    /// <remarks>
+    /// Read by <see cref="LastWornService"/>, which has to write down which outfit was on and not
+    /// merely which items were: an outfit's dyes, its vanilla pieces and its say over the hat all
+    /// hang off knowing that, and a restore that put the items back without it would leave the
+    /// wardrobe believing nothing was worn whole.
+    /// </remarks>
+    public Guid? ActiveOutfitId => _activeOutfitId;
+
+    /// <summary>
+    /// Writes down the look on the character right now, in a form that can be worn again later.
+    /// </summary>
+    /// <remarks>
+    /// Everything is read from the character rather than from what the wardrobe was told to apply,
+    /// because those two part company constantly: a dye changed in Glamourer, a hat toggled, a piece
+    /// of plain gear swapped at a vendor. What comes back is the look as it is, not as it was asked
+    /// for.
+    /// <para>
+    /// Null for two different reasons, and the caller has to tell them apart: the wardrobe has
+    /// nothing to do with what is on screen, or the character could not be read at all. Only the
+    /// first is a look — the one where you took everything off — and only the first is a reason to
+    /// forget what was remembered. <see cref="LastWornService"/> asks which of the two it is before
+    /// calling, because from in here they look the same.
+    /// </para>
+    /// </remarks>
+    public WornSnapshot? CaptureLastWorn(string character, uint world)
+    {
+        var wornIds = _config.WornItems.Values.Distinct().ToList();
+        var active  = _activeOutfitId is { } id ? _config.Outfits.Find(o => o.Id == id) : null;
+
+        if (wornIds.Count == 0 && active == null) return null;
+
+        // A loaded character always has something in some slot, even if it is the starting smallclothes,
+        // so nothing at all means Glamourer could not answer rather than that they are wearing nothing.
+        // Answering null there is what keeps a good record from being overwritten by a bad read during
+        // a zone load or a cutscene.
+        var live = _glamourer.GetEquippedPieces();
+        if (live.Count == 0)
+        {
+            _log.Debug("[Wardrobe] Glamourer had nothing to say about what is equipped — " +
+                       "leaving the remembered look as it was.");
+            return null;
+        }
+
+        // The design half is copied from the outfit that was on rather than read off the character,
+        // because there is nothing on a character that says which design dressed it. Copied at all
+        // so a design card's customisations — a face, a body, colouring — come back with the gear.
+        var look = new Outfit
+        {
+            Name                   = active?.Name ?? "What you were wearing",
+            ItemIds                = wornIds,
+            DesignId               = active?.DesignId,
+            DesignName             = active?.DesignName ?? string.Empty,
+            DesignAppliesEquipment = active?.DesignAppliesEquipment ?? true,
+            DesignAppliesHairstyle = active?.DesignAppliesHairstyle ?? true,
+            HatVisible             = _glamourer.GetHatVisible(),
+            WeaponVisible          = _glamourer.GetWeaponVisible(),
+        };
+
+        CaptureLastWornDyes(look, active, wornIds, live);
+
+        // Skips itself on a design card, by its own guard, and that is wanted here for the reason it
+        // is wanted there: a design's gear frozen into a copy would be laid over the live design at
+        // every restore, and quietly stop following it.
+        CaptureVanillaItems(look, quiet: true, live: live);
+
+        return new WornSnapshot
+        {
+            Look      = look,
+            OutfitId  = active?.Id,
+            Character = character,
+            World     = world,
+            SavedAt   = DateTime.UtcNow,
+        };
+    }
+
+    /// <summary>Records the colour each worn piece is actually showing.</summary>
+    /// <remarks>
+    /// Stains come off the character, so a piece re-dyed in Glamourer is remembered as the colour it
+    /// is rather than the colour the outfit asked for. Advanced rows cannot be read that way — a row
+    /// belongs to a slot and says nothing about which item is in it — so they are taken from the
+    /// outfit that was on, which is the only record of whose rows they are. What is taken from the
+    /// character is their contents: the outfit says which rows belong to this item, and the live
+    /// block says what those rows say now.
+    /// <para>
+    /// That block is read once for the whole character rather than asked for per item, and not at all
+    /// unless something is looking for it. Each ask is a full Glamourer state round trip, and this
+    /// runs on a timer.
+    /// </para>
+    /// </remarks>
+    private void CaptureLastWornDyes(Outfit look, Outfit? active, List<Guid> wornIds,
+        Dictionary<EquipSlot, (ulong ItemId, byte Stain1, byte Stain2)> live)
+    {
+        // Only asked for when the outfit that is on has rows of its own to look for, which for almost
+        // every wardrobe is never. It is a Glamourer state read, and this runs on a timer.
+        var wantsAdvanced = _config.AdvancedDyesEnabled && active != null &&
+                            active.Dyes.Values.Any(d => d.Advanced.Count > 0);
+
+        var materials = wantsAdvanced ? _glamourer.GetAdvancedDyes() : null;
+
+        foreach (var itemId in wornIds)
+        {
+            var item = _config.WardrobeItems.Find(x => x.Id == itemId);
+
+            // Hair, animations and the rest are not in a slot anything can be dyed in
+            if (item == null || item.Slot.IsModOnly()) continue;
+
+            var advanced = new Dictionary<string, string>();
+            if (materials != null && active != null && GetDye(active, itemId) is { } outfitDye)
+                foreach (var key in outfitDye.Advanced.Keys)
+                    if (materials[key] is { } row)
+                        advanced[key] = row.ToString(Newtonsoft.Json.Formatting.None);
+
+            live.TryGetValue(item.Slot, out var piece);
+
+            if (piece.Stain1 == 0 && piece.Stain2 == 0 && advanced.Count == 0) continue;
+
+            look.Dyes[itemId.ToString()] = new OutfitDye
+            {
+                Stain1   = piece.Stain1,
+                Stain2   = piece.Stain2,
+                Advanced = advanced,
+            };
+        }
+    }
+
+    /// <summary>Puts a remembered look back on the character.</summary>
+    /// <remarks>
+    /// Worn as an outfit, because that is what the snapshot is: the mods go on through the ordinary
+    /// per-item path with their options, the plain gear fills the slots they leave, and the hat and
+    /// the weapon end up where they were. Nothing is taken off first — a login has nothing on to
+    /// take off, and a restore asked for by hand mid-session should no more strip the character than
+    /// pressing Wear on an outfit does.
+    /// <para>
+    /// The outfit that was on is put back afterwards as the active one, which
+    /// <see cref="WearOutfit"/> cannot do for itself: it has just been handed a copy, and a copy is
+    /// not in <see cref="Configuration.Outfits"/> for anything to find later. Skipped when that
+    /// outfit has been deleted since, leaving the copy worn on its own — the clothes are still the
+    /// clothes.
+    /// </para>
+    /// </remarks>
+    /// <returns>How many of its wardrobe items still exist and were put back on.</returns>
+    public int RestoreLastWorn(WornSnapshot snapshot)
+    {
+        var items = ResolveOutfit(snapshot.Look);
+
+        WearOutfit(snapshot.Look, removeOthers: false);
+
+        _activeOutfitId = snapshot.OutfitId is { } id && _config.Outfits.Any(o => o.Id == id)
+            ? id
+            : null;
+
+        _log.Information($"[Wardrobe] Put back what was last worn: {items.Count} item(s), " +
+                         $"{snapshot.Look.VanillaItems.Count} vanilla piece(s)" +
+                         $"{(_activeOutfitId != null ? $", outfit '{snapshot.Look.Name}' marked as worn" : string.Empty)}");
+
+        // WearOutfit has already raised WardrobeChanged, and the active outfit written above is read
+        // from the config rather than from anything the grid caches
+        return items.Count;
     }
 
     // ── Vanilla glamour plates ────────────────────────────────────────────────
@@ -3408,7 +3592,8 @@ public class WardrobeService : IDisposable
     /// "what do I really look like right now", with nothing of the wardrobe's put back over it.
     /// </param>
     /// <returns>How many items were taken off.</returns>
-    public int RevertToInGameLook(bool ignoreBase = false)
+    /// <param name="stripAnimations">As on <see cref="StripAll"/>: also turn off the mod categories.</param>
+    public int RevertToInGameLook(bool ignoreBase = false, bool stripAnimations = false)
     {
         var baseChar = !ignoreBase && _config.KeepBaseCharacterOnRevert
             ? _config.ActiveBaseCharacter
@@ -3432,8 +3617,9 @@ public class WardrobeService : IDisposable
             }
 
             // Animations, VFX and mounts are not on the character and a glamour plate has nothing to
-            // say about them, so a dance left running keeps running — the same line StripAll draws
-            if (item.Slot.IsModCategory()) continue;
+            // say about them, so a dance left running keeps running — the same line StripAll draws,
+            // and the same Shift takes them off here too
+            if (item.Slot.IsModCategory() && !stripAnimations) continue;
 
             if (kept.Contains(item.Slot) && baseChar?.ItemIds.Contains(item.Id) != true)
                 keptItems.Add(item);

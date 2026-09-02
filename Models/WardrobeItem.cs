@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace WardrobePlugin.Models;
 
@@ -296,6 +297,83 @@ public class WardrobeItem : IImageOwner
     /// on load by <see cref="Configuration.MigrateDateAdded"/>, which preserves their list order.
     /// </summary>
     public DateTime DateAdded { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// The <see cref="SharedItem.SourceId"/> this item came in as, on an item imported from somebody
+    /// else's share bundle. Null on everything imported from a mod in the ordinary way.
+    /// </summary>
+    /// <remarks>
+    /// Kept so importing the same bundle twice can tell what it already brought in and offer to
+    /// update those rather than making a second copy of every piece. Not the item's own
+    /// <see cref="Id"/>, which is always fresh — see <see cref="SharedItem.SourceId"/> for why
+    /// carrying a sender's id would eventually collide.
+    /// <para>
+    /// Deliberately not a claim of authorship. It records which file an item arrived in, and the
+    /// only thing it is read for is matching on re-import; it is not shown as a credit, because who
+    /// made a mod is a question about the mod and not about who sent a description of it.
+    /// </para>
+    /// </remarks>
+    public Guid? SharedFromId { get; set; }
+
+    /// <summary>
+    /// The <see cref="Id"/> this was copied from, on an item brought over from another wardrobe.
+    /// </summary>
+    /// <remarks>
+    /// Provenance, and the way the copy offer can say a wardrobe already has this piece rather than
+    /// silently making a second one every time the menu is used. Points at an item in a different
+    /// wardrobe, so it will not resolve against the one in force — which is exactly why it is kept
+    /// separately from <see cref="VariantOfId"/> and the links, both of which are meaningless
+    /// across wardrobes and are dropped by the copy.
+    /// </remarks>
+    public Guid? CopiedFromId { get; set; }
+
+    /// <summary>
+    /// A copy of this item for another wardrobe: everything that describes the piece, nothing that
+    /// describes where it sat.
+    /// </summary>
+    /// <remarks>
+    /// The point of copying rather than sharing is that the copy is a template to be edited — the
+    /// other character may need different mod options, a different collection, a different size —
+    /// so every dictionary and list is rebuilt and the two items have nothing in common afterwards.
+    /// <para>
+    /// What is deliberately not carried over: <see cref="LinkedItemIds"/> and
+    /// <see cref="VariantOfId"/>, which name items in the wardrobe being copied from and mean
+    /// nothing in the one being copied to — the caller remaps them where a whole batch is copied
+    /// together. <see cref="IsFavorite"/> goes too, because a favourite is a judgement about one
+    /// wardrobe's contents rather than a property of the piece.
+    /// </para>
+    /// <para>
+    /// Pictures are carried as paths, so both items show the same file. Nothing on disk is copied
+    /// or moved: the picture is of the piece, and the piece is the same piece.
+    /// </para>
+    /// </remarks>
+    public WardrobeItem CopyForWardrobe() => new()
+    {
+        Id                     = Guid.NewGuid(),
+        Name                   = Name,
+        Slot                   = Slot,
+        ImagePath              = ImagePath,
+        ExtraImages            = new List<string>(ExtraImages),
+        Mods                   = Mods.Select(m => m.Copy()).ToList(),
+        GlamourerItemId        = GlamourerItemId,
+        GlamourerItemName      = GlamourerItemName,
+        ModelSetId             = ModelSetId,
+        HairIdByRace           = new Dictionary<string, ushort>(HairIdByRace),
+        CustomizeIdsByRace     = CustomizeIdsByRace.ToDictionary(kv => kv.Key,
+                                                                 kv => new List<ushort>(kv.Value)),
+        Replaces               = Replaces,
+        Layer                  = Layer,
+        DesignId               = DesignId,
+        DesignName             = DesignName,
+        DesignAppliesEquipment = DesignAppliesEquipment,
+        DesignAppliesHairstyle = DesignAppliesHairstyle,
+        Notes                  = Notes,
+        Tags                   = new List<string>(Tags),
+        ForceRedraw            = ForceRedraw,
+        DateAdded              = DateTime.UtcNow,
+        SharedFromId           = SharedFromId,
+        CopiedFromId           = Id,
+    };
 
     /// <summary>
     /// Key this item occupies in <see cref="Configuration.WornItems"/>, which is what decides

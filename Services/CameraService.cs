@@ -22,6 +22,24 @@ public unsafe class CameraService : IDisposable
     {
         _framework = framework;
         _log       = log;
+
+        // Its own hook rather than the sustain's, which only runs while a preset is being held on.
+        // Measuring the range means watching the player pan by hand, which is precisely when
+        // nothing of ours is driving the camera.
+        _framework.Update += OnMeasureUpdate;
+    }
+
+    /// <summary>Whether the pan range is being watched. Off, the hook below costs one bool test.</summary>
+    public bool MeasuringPanRange { get; set; }
+
+    private void OnMeasureUpdate(IFramework _)
+    {
+        if (!MeasuringPanRange || !InGpose) return;
+
+        var mgr = CameraManager.Instance();
+        if (mgr == null || mgr->Camera == null) return;
+
+        SamplePanRange(mgr->Camera);
     }
 
     /// <summary>
@@ -160,6 +178,161 @@ public unsafe class CameraService : IDisposable
         _framesLeft--;
     }
 
+    /// <summary>
+    /// The range each pan axis actually travels, measured off the game's own controls.
+    /// </summary>
+    /// <remarks>
+    /// Pan is the one field here the camera publishes no limits for — there is no MinPan/MaxPan
+    /// beside it the way MinDistance and DirVMin sit beside their fields — so these are measured
+    /// rather than read, by holding each GPose pan key to its stop and recording where the game
+    /// parks the field. See <see cref="ObservedPanRange"/>, which is the instrument.
+    /// <para>
+    /// <b>The two axes are nothing like each other.</b> Pan runs to about ±0.87 and tilt only to
+    /// about ±0.35, so a single shared bound is wrong twice over: tight enough for tilt, it throws
+    /// away more than half of pan's travel; loose enough for pan, it lets through the tilt values
+    /// that jam the controls outright. One bound per side of each axis, and nothing shared.
+    /// </para>
+    /// <para>
+    /// <b>The range is fixed.</b> Measured twice on 2026-09-02, once at distance 1.50 / FoV 0.690
+    /// and once at distance 9.51 / FoV 0.780 — a six-fold change of distance and the whole of the
+    /// FoV range — and the stops moved by under 0.003, which is the difference between holding a key
+    /// firmly and holding it very firmly. So constants are the right shape, not functions of the
+    /// live camera.
+    /// </para>
+    /// <para>
+    /// Each bound is the least extreme value seen on that side across both runs, so every one sits
+    /// inside every observation. Erring inwards costs a few thousandths of travel that nobody can
+    /// see; erring outwards writes past the stop, which is what jams the controls.
+    /// </para>
+    /// <para>
+    /// Tilt is genuinely asymmetric — about -0.356 down against +0.337 up — and consistently so
+    /// across both runs, which is why it gets a bound per side rather than a magnitude. The tilt
+    /// figure also explains the jam that started all this exactly: a stored tilt of -0.380463 is
+    /// past the -0.3557 stop and killed all four pan keys, while -0.344889 is inside it and was fine.
+    /// </para>
+    /// </remarks>
+    private const float MinPanH = -0.870f;
+    private const float MaxPanH =  0.869f;
+    private const float MinPanV = -0.355f;
+    private const float MaxPanV =  0.337f;
+
+    /// <summary>
+    /// Holds a pan value inside the range its own axis is known to travel.
+    /// </summary>
+    /// <remarks>
+    /// The write used to carry a comment saying pan needed no clamp because the camera exposes no
+    /// limits for it. That was the bug: no published limit is not the same as no limit, and this one
+    /// is enforced by the camera going deaf rather than by the value being rejected.
+    /// </remarks>
+    private float ClampPan(float value, float min, float max, string axis)
+    {
+        if (value >= min && value <= max) return value;
+
+        var clamped = Math.Clamp(value, min, max);
+
+        _log.Warning($"[Wardrobe] Camera: {axis} of {value:F6} is outside the measured range " +
+                     $"{min:F3} to {max:F3} and would jam GPose panning — wrote {clamped:F6} " +
+                     "instead. If this was captured from a working camera, the range is not fixed " +
+                     "and the clamp needs to follow distance or field of view.");
+
+        return clamped;
+    }
+
+    // ── Measuring the pan range ───────────────────────────────────────────────
+
+    /// <summary>What the pan fields have been seen holding, and under what conditions.</summary>
+    /// <param name="Samples">Frames observed. Zero means nothing has been watched yet.</param>
+    public readonly record struct PanRange(
+        float MinH, float MaxH, float MinV, float MaxV,
+        float AtDistance, float AtFoV, float AtDirV, int Samples);
+
+    private float _minH = float.MaxValue, _maxH = float.MinValue;
+    private float _minV = float.MaxValue, _maxV = float.MinValue;
+    private float _rangeDistance, _rangeFoV, _rangeDirV;
+    private int   _rangeSamples;
+
+    /// <summary>
+    /// The widest pan values seen so far, for measuring where the game's own limit actually is.
+    /// </summary>
+    /// <remarks>
+    /// The clamp on writing is built from two data points, both negative and both on the tilt axis,
+    /// which is not a measurement of anything — it assumes the range is symmetric, that both axes
+    /// share a bound, and that the bound is fixed. None of those has been established.
+    /// <para>
+    /// This settles it by watching rather than writing: hold each of the four GPose pan keys to its
+    /// stop and the game parks the field at its own limit, which is the number wanted. Read-only, so
+    /// running the measurement cannot cause the jam it is measuring.
+    /// </para>
+    /// <para>
+    /// The distance, FoV and pitch at the time of the widest sample come with it, because the open
+    /// question is whether the limit moves with them. Measure at one distance, reset, measure at
+    /// another: if the bounds differ, a fixed clamp is the wrong shape.
+    /// </para>
+    /// </remarks>
+    public PanRange ObservedPanRange => _rangeSamples == 0
+        ? default
+        : new PanRange(_minH, _maxH, _minV, _maxV,
+                       _rangeDistance, _rangeFoV, _rangeDirV, _rangeSamples);
+
+    /// <summary>
+    /// What the pan fields hold right now, regardless of what has been seen before.
+    /// </summary>
+    /// <remarks>
+    /// The observed range is a running maximum, so on its own it can only ever notice a range
+    /// getting <i>wider</i> — hold a key to the stop under conditions where the limit is smaller and
+    /// the old, larger figure simply stays on screen. This is the reading that answers that: park
+    /// the key against the stop and look at the live number, which is where the game is holding the
+    /// field this frame.
+    /// </remarks>
+    public (float H, float V)? CurrentPan
+    {
+        get
+        {
+            var mgr = CameraManager.Instance();
+            if (mgr == null || mgr->Camera == null) return null;
+
+            return (*PanH(mgr->Camera), *PanV(mgr->Camera));
+        }
+    }
+
+    /// <summary>Starts the measurement over, for sampling under different conditions.</summary>
+    public void ResetPanRange()
+    {
+        _minH = float.MaxValue; _maxH = float.MinValue;
+        _minV = float.MaxValue; _maxV = float.MinValue;
+        _rangeSamples = 0;
+    }
+
+    /// <summary>
+    /// Records the frame's pan values, if they widen what has been seen.
+    /// </summary>
+    /// <remarks>
+    /// GPose only. Outside it these fields are not the ones the pan keys drive, so folding those
+    /// frames in would widen the range with numbers that answer a different question.
+    /// </remarks>
+    private void SamplePanRange(Camera* cam)
+    {
+        var h = *PanH(cam);
+        var v = *PanV(cam);
+
+        // Only when something actually moved outwards, so the conditions recorded alongside are the
+        // conditions the widest value was reached under rather than whatever the last frame held
+        var widened = h < _minH || h > _maxH || v < _minV || v > _maxV;
+
+        _minH = Math.Min(_minH, h);
+        _maxH = Math.Max(_maxH, h);
+        _minV = Math.Min(_minV, v);
+        _maxV = Math.Max(_maxV, v);
+
+        _rangeSamples++;
+
+        if (!widened && _rangeSamples > 1) return;
+
+        _rangeDistance = cam->Distance;
+        _rangeFoV      = cam->FoV;
+        _rangeDirV     = cam->DirV;
+    }
+
     private bool WriteToCamera(CameraPreset preset)
     {
         // Outside GPose this is the gameplay camera, not a separate one, and a preset written into it
@@ -200,9 +373,8 @@ public unsafe class CameraService : IDisposable
 
         // Only when the preset actually recorded a pan. A preset saved before pan existed leaves the
         // camera's own pan untouched, rather than writing a zero that may not be the centred value.
-        // Not clamped: unlike distance and pitch, the camera exposes no limits for these.
-        if (preset.PanH is { } panH) *PanH(cam) = panH;
-        if (preset.PanV is { } panV) *PanV(cam) = panV;
+        if (preset.PanH is { } panH) *PanH(cam) = ClampPan(panH, MinPanH, MaxPanH, "Pan");
+        if (preset.PanV is { } panV) *PanV(cam) = ClampPan(panV, MinPanV, MaxPanV, "Tilt");
 
 
         return true;
@@ -363,6 +535,7 @@ public unsafe class CameraService : IDisposable
     {
         if (!_subscribed) return;
         _framework.Update -= OnFrameworkUpdate;
+        _framework.Update -= OnMeasureUpdate;
         _subscribed = false;
     }
 

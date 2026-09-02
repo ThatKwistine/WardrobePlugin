@@ -89,7 +89,7 @@ stays in sync afterwards, so changing the mod in Penumbra later does not change 
 
 ## Mass import
 
-**Mass Import** in the toolbar opens a window listing every mod in the chosen collection, for filling
+**Import → Mass Import** opens a window listing every mod in the chosen collection, for filling
 a wardrobe rather than adding a single piece. Pick the collection first: each mod's options are read
 from Penumbra when that mod is first analysed, and switching collection afterwards does not re-read
 them.

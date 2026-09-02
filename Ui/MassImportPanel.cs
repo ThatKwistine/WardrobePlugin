@@ -103,6 +103,14 @@ public class MassImportPanel : Window, IDisposable
 
         public Dictionary<string, int>             SingleSel = new();
         public Dictionary<string, HashSet<string>> MultiSel  = new();
+
+        /// <summary>Tags for this mod alone, on top of whatever the batch is carrying.</summary>
+        /// <remarks>
+        /// Every item the mod produces gets them. A mod covering several slots is one decision
+        /// here, not one per slot: the tags people reach for during an import describe the piece,
+        /// and the piece is the mod.
+        /// </remarks>
+        public readonly List<string> Tags = new();
     }
 
     /// <summary>
@@ -158,9 +166,12 @@ public class MassImportPanel : Window, IDisposable
         // Unscaled: Dalamud scales Size and SizeConstraints itself — see IWindow's docs
         Size          = new Vector2(1100, 700);
         SizeCondition = rescale ? ImGuiCond.Always : ImGuiCond.FirstUseEver;
+        // Grew by the tags column's width and its gap when that column was added. The minimum is
+        // the width at which the three right-hand columns still end inside the list rather than
+        // being clipped by it, so it has to move whenever a column does.
         SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(700, 400),
+            MinimumSize = new Vector2(840, 400),
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
     }
@@ -373,11 +384,18 @@ public class MassImportPanel : Window, IDisposable
     // the left and grows with the window instead of running into a combo part-way across the row.
     private static float CheckColW => UiScale.S(30f);
     private static float OptColW   => UiScale.S(190f);
+    private static float TagColW   => UiScale.S(130f);
     private static float SuppColW  => UiScale.S(260f);
+    private static float ColGap    => UiScale.S(10f);
 
     private float NameColX  => CheckColW;
-    private float SuppColX  => Math.Max(NameColX + UiScale.S(130f) + OptColW, _contentW - SuppColW);
-    private float OptColX   => SuppColX - OptColW - UiScale.S(10f);
+
+    // The floor is what the three right-hand columns need plus a readable stub of name. Past that
+    // they sit against the right edge and the name takes everything left over.
+    private float SuppColX  => Math.Max(NameColX + UiScale.S(130f) + OptColW + TagColW + ColGap * 2,
+                                        _contentW - SuppColW);
+    private float TagColX   => SuppColX - TagColW - ColGap;
+    private float OptColX   => TagColX - OptColW - ColGap;
 
     /// <summary>Room a row's name has before it would run into the options column.</summary>
     private float NameColW  => Math.Max(60f, OptColX - NameColX - 12f);
@@ -436,6 +454,10 @@ public class MassImportPanel : Window, IDisposable
         ImGui.SameLine();
         ImGui.SetCursorPosX(OptColX);
         ImGui.TextUnformatted("Mod Options");
+
+        ImGui.SameLine();
+        ImGui.SetCursorPosX(TagColX);
+        ImGui.TextUnformatted("Tags");
 
         ImGui.SameLine();
         ImGui.SetCursorPosX(SuppColX);
@@ -542,6 +564,10 @@ public class MassImportPanel : Window, IDisposable
         DrawOptionsCombo(row);
 
         ImGui.SameLine();
+        ImGui.SetCursorPosX(TagColX);
+        DrawRowTags(row);
+
+        ImGui.SameLine();
         ImGui.SetCursorPosX(SuppColX);
         DrawSupplementCombo(row);
 
@@ -626,6 +652,127 @@ public class MassImportPanel : Window, IDisposable
 
         foreach (var group in row.Analysis.OptionGroups)
             ModOptionPicker.Draw(group, row.SingleSel, row.MultiSel);
+    }
+
+    // ── Per-item tags ─────────────────────────────────────────────────────────
+
+    /// <summary>Typed into whichever row's tag popup is open. Only one can be at a time.</summary>
+    private string _rowTagInput = string.Empty;
+
+    /// <summary>The row whose tag popup was opened last, so the input can be cleared between them.</summary>
+    private string? _rowTagOpen;
+
+    private const string RowTagsPopup = "##rowTags";
+
+    /// <summary>
+    /// The tag button on one mod's row, and the popup behind it.
+    /// </summary>
+    /// <remarks>
+    /// Beside the options combo rather than in the footer, because these two are the same kind of
+    /// decision: what this mod is, made while you are looking at this mod. The footer's tags say
+    /// what the whole batch is, and the two add up rather than replacing one another — a batch
+    /// tagged <c>Bibo+</c> with one row tagged <c>Formal</c> gives that row both.
+    /// <para>
+    /// A popup for the same reason the batch one is: rows are a fixed height and anything that
+    /// grows a row would push the list about as tags were added.
+    /// </para>
+    /// </remarks>
+    private void DrawRowTags(Row row)
+    {
+        var count = row.Tags.Count;
+        var label = count > 0 ? $"Tags ({count})" : "Add Tags";
+
+        // Coloured once it carries something, so a tagged row is findable by scanning the column
+        // rather than by opening every popup in it
+        if (count > 0)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.35f, 0.2f, 0.55f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.45f, 0.28f, 0.68f, 1f));
+        }
+
+        if (ImGui.Button($"{label}##rowTagsBtn", new Vector2(TagColW, 0)))
+        {
+            // Cleared per row: half a tag typed against one mod has no business appearing in the
+            // next one's box
+            if (_rowTagOpen != row.Dir) _rowTagInput = string.Empty;
+            _rowTagOpen = row.Dir;
+            ImGui.OpenPopup(RowTagsPopup);
+        }
+
+        if (count > 0) ImGui.PopStyleColor(2);
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(count > 0
+                ? $"Tags for this mod: {string.Join(", ", row.Tags)}.\n\n" +
+                  "Every item it produces gets them, on top of the batch tags\n" +
+                  "on the Import row."
+                : "Tags for this mod alone, on top of the batch tags on the\n" +
+                  "Import row. Every item it produces gets them.");
+
+        DrawRowTagsPopup(row);
+    }
+
+    private void DrawRowTagsPopup(Row row)
+    {
+        if (!ImGui.BeginPopup(RowTagsPopup)) return;
+
+        ImGui.TextDisabled($"Tags for {row.Name}.");
+
+        // What the batch is already contributing, so nobody adds the same tag twice by hand and
+        // nobody wonders where an extra one on the finished item came from
+        if (_batchTags.Count > 0)
+            ImGui.TextDisabled($"Also getting the batch tags: {string.Join(", ", _batchTags)}.");
+
+        ImGui.Spacing();
+
+        var removeIdx = -1;
+        for (var i = 0; i < row.Tags.Count; i++)
+        {
+            if (i > 0) UiLayout.SameLineIfRoom(ImGui.CalcTextSize(row.Tags[i]).X + UiScale.S(40f));
+
+            ImGui.PushID($"rtag_{i}");
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.35f, 0.2f, 0.55f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.45f, 0.28f, 0.68f, 1f));
+            ImGui.SmallButton(row.Tags[i]);
+            ImGui.PopStyleColor(2);
+            ImGui.SameLine();
+            if (UiLayout.DeleteButton("×", $"Do not put '{row.Tags[i]}' on this mod.")) removeIdx = i;
+            ImGui.PopID();
+        }
+        if (removeIdx >= 0) row.Tags.RemoveAt(removeIdx);
+
+        ImGui.SetNextItemWidth(UiScale.S(260f));
+        var entered = ImGui.InputTextWithHint("##rowTag", "tag name", ref _rowTagInput, 64,
+            ImGuiInputTextFlags.EnterReturnsTrue);
+        UiLayout.SameLineIfRoomForButton("Add");
+        if (ImGui.Button("Add##rowTagAdd") || entered) AddTag(row.Tags, ref _rowTagInput, _rowTagInput);
+
+        // Nested rather than an early return: bailing out here would skip EndPopup and leave ImGui's
+        // stack unbalanced, which crashes inside cimgui a frame or two later, far from the cause
+        if (_config.AllTags().Count > 0)
+        {
+            ImGui.Spacing();
+            var height = ImGui.GetTextLineHeightWithSpacing() * 8;
+            if (ImGui.BeginChild("##rowTagTree", new Vector2(UiScale.S(320f), height), true))
+                TagTree.DrawPicker(TagTree.Build(_config, includeStyles: true), "rowpick",
+                    path => row.Tags.Contains(path, StringComparer.OrdinalIgnoreCase),
+                    path => AddTag(row.Tags, ref _rowTagInput, path));
+            ImGui.EndChild();
+        }
+
+        ImGui.EndPopup();
+    }
+
+    /// <summary>Adds a typed or picked tag to a list, ignoring blanks and duplicates.</summary>
+    private static void AddTag(List<string> into, ref string input, string raw)
+    {
+        var tag = raw.Trim();
+        input = string.Empty;
+
+        if (tag.Length == 0) return;
+        if (into.Contains(tag, StringComparer.OrdinalIgnoreCase)) return;
+
+        into.Add(tag);
     }
 
     private void DrawSupplementCombo(Row row)
@@ -715,11 +862,13 @@ public class MassImportPanel : Window, IDisposable
         // list can fill what is left, and anything that adds a row here pushes these buttons off the
         // bottom of the window — a popup costs no height at all, however much is inside it.
         ImGui.SameLine();
-        var label = _batchTags.Count > 0 ? $"Tags ({_batchTags.Count})" : "Tags";
-        if (ImGui.Button($"{label}##batchTagsBtn", UiScale.S(120, 0)))
+        var label = _batchTags.Count > 0 ? $"Batch Tags ({_batchTags.Count})" : "Batch Tags";
+        if (ImGui.Button($"{label}##batchTagsBtn", UiScale.S(150, 0)))
             ImGui.OpenPopup(BatchTagsPopup);
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Tags added to every item this import creates.");
+            ImGui.SetTooltip("Tags added to every item this import creates.\n\n" +
+                             "The Tags column on each row adds more to that mod alone.\n" +
+                             "An item gets both.");
 
         DrawBatchTagsPopup();
     }
@@ -740,7 +889,9 @@ public class MassImportPanel : Window, IDisposable
         if (!ImGui.BeginPopup(BatchTagsPopup)) return;
 
         ImGui.TextDisabled("Added to every item this import creates. Best for what is true of\n" +
-                           "the whole batch — a body type, a creator — rather than any one piece.");
+                           "the whole batch — a body type, a creator — rather than any one\n" +
+                           "piece. The Tags column on a row covers that mod alone, and adds\n" +
+                           "to these.");
         ImGui.Spacing();
 
         var removeIdx = -1;
@@ -836,6 +987,30 @@ public class MassImportPanel : Window, IDisposable
             .Distinct()
             .ToList();
 
+    /// <summary>
+    /// The tags one mod's items are created with: the batch's, then its own.
+    /// </summary>
+    /// <remarks>
+    /// The two add up rather than one winning. A batch tag says what the whole import is — a body
+    /// type, a creator — and a row tag says what that piece is, and there is no reading of either
+    /// under which setting one should throw the other away.
+    /// <para>
+    /// Batch first, so every item in an import opens with the same tags in the same order, and
+    /// deduplicated case-insensitively: the same tag typed into both boxes is one tag, not two
+    /// spellings of it on the same item.
+    /// </para>
+    /// </remarks>
+    private List<string> TagsFor(Row row)
+    {
+        var tags = new List<string>(_batchTags);
+
+        foreach (var tag in row.Tags)
+            if (!tags.Contains(tag, StringComparer.OrdinalIgnoreCase))
+                tags.Add(tag);
+
+        return tags;
+    }
+
     private void DoImport()
     {
         var collection = SelectedCollection();
@@ -906,7 +1081,7 @@ public class MassImportPanel : Window, IDisposable
 
                     // Copied per item, not shared — one list across hundreds of items would have
                     // every one of them re-tagged when any single item was edited later
-                    Tags              = new List<string>(_batchTags),
+                    Tags              = TagsFor(row),
                 };
 
                 item.Mods.Add(new ModReference

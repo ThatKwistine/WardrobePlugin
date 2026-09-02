@@ -142,7 +142,7 @@ public class ChangelogWindow : Window
         }
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Turn this off and updates arrive quietly.\n" +
-                             "Settings → Changelog can open it again at any time.");
+                             "Settings → Backups & Data → Changelog can open it again.");
 
         if (ImGui.Button("Close", new Vector2(-1, 0))) IsOpen = false;
 

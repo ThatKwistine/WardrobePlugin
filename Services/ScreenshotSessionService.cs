@@ -1186,7 +1186,8 @@ public class ScreenshotSessionService : IDisposable
             var missed = _shutter.Read();
             _log.Warning($"[Wardrobe] Session: giving up on '{CurrentName}' ({ShotLabel}) — no " +
                          "screenshot appeared in the watched folder. Check that Settings → " +
-                         "Screenshots points at the folder the game actually saves to.");
+                         "Images → FFXIV Screenshots Folder points at the folder the game " +
+                         "actually saves to.");
             _log.Warning($"[Wardrobe] Session: shutter state — allowed: {missed.CanTake}, " +
                          $"in flight: {missed.Requested}, last result: {missed.Result}, " +
                          $"format: {missed.Format}");

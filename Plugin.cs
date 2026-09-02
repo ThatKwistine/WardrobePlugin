@@ -1,10 +1,12 @@
 using System;
+using System.Linq;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using WardrobePlugin.Ipc;
+using WardrobePlugin.Models;
 using WardrobePlugin.Services;
 using WardrobePlugin.Ui;
 
@@ -38,7 +40,10 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ModAnalysisService       _analysisService;
     private readonly ItemLookupService        _itemLookup;
     private readonly ScreenshotSessionService _screenshotSession;
+    private readonly LastWornService          _lastWorn;
     private readonly BackupService            _backupService;
+    private readonly WardrobeProfileService   _profiles;
+    private readonly WardrobeShareService     _shareService;
     private readonly HtmlExportService        _htmlExport;
     private readonly ItalicFontService        _italicFont;
     private readonly WindowSystem             _windowSystem;
@@ -46,6 +51,9 @@ public sealed class Plugin : IDalamudPlugin
     private readonly PluginUi                _ui;
     private readonly MassImportPanel         _massImport;
     private readonly ChangelogWindow         _changelog;
+    private readonly SettingsWindow          _settings;
+    private readonly SharePanel              _share;
+    private readonly LastWornWindow          _lastWornWindow;
 
     private const string CommandName  = "/wardrobe";
     private const string CommandAlias = "/wr";
@@ -56,6 +64,16 @@ public sealed class Plugin : IDalamudPlugin
         pi.Inject(this);
 
         _config = pi.GetPluginConfig() as Configuration ?? new Configuration();
+
+        // First of everything, ahead even of the presets: the items, outfits, bases and angles are
+        // now read through whichever wardrobe is active, and reading one of those before the old
+        // top-level data has been moved across would conjure an empty wardrobe and strand it.
+        if (!_config.ProfilesMigrated) BackUpBeforeMigrating(pi);
+        if (_config.MigrateProfiles()) _config.Save();
+
+        // Before LoadPresets, which reads the path this moves onto the wardrobe
+        if (_config.MigrateCameraPresetsPath()) _config.Save();
+
         _config.LoadPresets();
         if (_config.MigrateDateAdded()) _config.Save();
         if (_config.MigrateOnboarding()) _config.Save();
@@ -75,6 +93,12 @@ public sealed class Plugin : IDalamudPlugin
         // Glamourer state is not persisted across sessions, so nothing is worn on load
         if (_config.WornItems.Count > 0)
         {
+            // Before the clear, which is what would otherwise throw the record away. Only reached on
+            // the first load after the last-worn record arrived, or after a crash that took the game
+            // down between a wear and the next capture — from then on LastWornService keeps a fuller
+            // record than this, made while Glamourer was still there to be read.
+            if (_config.LastWorn == null) _config.LastWorn = LastWornFromWornItems();
+
             _config.WornItems.Clear();
             _config.Save();
         }
@@ -99,7 +123,14 @@ public sealed class Plugin : IDalamudPlugin
 
         _wardrobeService   = new WardrobeService(Penumbra, Glamourer, _config, Log, Framework);
         _screenshotSession = new ScreenshotSessionService(_wardrobeService, _config, Framework, Log, Camera, Shutter);
+
+        // After the session service, which it asks whether a shoot is running: a session dresses the
+        // character one item at a time, and none of those is a look anybody chose
+        _lastWorn          = new LastWornService(_config, _wardrobeService, _screenshotSession,
+                                                 Objects, ClientState, Framework, Log);
+        _profiles          = new WardrobeProfileService(_config, Objects, ClientState, Framework, Log);
         _backupService     = new BackupService(_config, Framework, Log);
+        _shareService      = new WardrobeShareService(Penumbra, Log);
 
         // After ItemLookup and Emotes, which it reads dye and emote names through when it flattens
         // the wardrobe for the page
@@ -112,13 +143,27 @@ public sealed class Plugin : IDalamudPlugin
 
         var panel = new ItemImportPanel(_config, _wardrobeService, Penumbra, Glamourer, _analysisService, _itemLookup, _screenshotSession, Log, _italicFont);
         _massImport = new MassImportPanel(_config, Penumbra, _analysisService, _itemLookup, Log, _italicFont);
-        _ui = new PluginUi(_config, _wardrobeService, Textures, Log, panel, _screenshotSession, _backupService, _massImport, _htmlExport);
+        _share = new SharePanel(_config, _wardrobeService, _shareService, Penumbra, Textures, Log);
+        _ui = new PluginUi(_config, _wardrobeService, Textures, Log, panel, _screenshotSession, _backupService, _massImport, _share, _htmlExport, _lastWorn, _profiles);
         _changelog = new ChangelogWindow(_config);
         _ui.Changelog = _changelog;
+
+        // Settings live in a window of their own rather than in the wardrobe's right-hand column.
+        // The two know about each other: the View menu opens it, and it draws the wardrobe's own
+        // settings body.
+        _settings   = new SettingsWindow(_ui);
+        _ui.Settings = _settings;
+
+        // Opens itself when there is an offer outstanding — see LastWornWindow.PreOpenCheck — so
+        // nothing here has to know when a character logged in
+        _lastWornWindow = new LastWornWindow(_ui, _config, _lastWorn);
 
         _windowSystem.AddWindow(_ui);
         _windowSystem.AddWindow(_massImport);
         _windowSystem.AddWindow(_changelog);
+        _windowSystem.AddWindow(_share);
+        _windowSystem.AddWindow(_settings);
+        _windowSystem.AddWindow(_lastWornWindow);
 
         ShowChangelogIfUpdated();
 
@@ -129,19 +174,56 @@ public sealed class Plugin : IDalamudPlugin
         pi.UiBuilder.DisableGposeUiHide = true;
 
         pi.UiBuilder.Draw        += _windowSystem.Draw;
+        pi.UiBuilder.Draw        += _ui.DrawFileDialog;
         pi.UiBuilder.Draw        += _cropGuide.Draw;
         pi.UiBuilder.OpenMainUi   += OpenUi;
-        pi.UiBuilder.OpenConfigUi += OpenUi;
+
+        // Dalamud's own settings button, on the plugin installer's entry for this plugin. It means
+        // settings, so it opens settings rather than the wardrobe.
+        pi.UiBuilder.OpenConfigUi += OpenSettings;
 
         Commands.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the Wardrobe window"
+            HelpMessage = "Open the Wardrobe window. /wardrobe restore puts back what you last wore."
         });
 
         Commands.AddHandler(CommandAlias, new CommandInfo(OnCommand)
         {
             HelpMessage = "Alias of /wardrobe"
         });
+    }
+
+    /// <summary>
+    /// A last-worn record built from the worn list a previous session left behind.
+    /// </summary>
+    /// <remarks>
+    /// The thin version of what <see cref="LastWornService"/> writes, and only ever a fallback for
+    /// the load that finds no record at all: the first one after this feature arrived, and the one
+    /// after a crash that took the game down before the first capture. It holds the wardrobe items
+    /// and nothing else — the dyes, the plain gear and the hat lived in Glamourer, which forgot them
+    /// when the game closed, and there is nowhere left to read them from now.
+    /// <para>
+    /// No character is recorded, which is not an oversight: the worn list never said whose it was,
+    /// and a record that named the wrong character would be refused for ever. An empty name matches
+    /// anybody — see <see cref="WornSnapshot.Matches"/> — so the first login gets the offer and the
+    /// capture that follows replaces this with the real thing.
+    /// </para>
+    /// </remarks>
+    private WornSnapshot? LastWornFromWornItems()
+    {
+        var ids = _config.WornItems.Values.Distinct()
+            .Where(id => _config.WardrobeItems.Any(i => i.Id == id))
+            .ToList();
+
+        if (ids.Count == 0) return null;
+
+        Log.Information($"[Wardrobe] Remembering {ids.Count} item(s) from the last session, " +
+                        $"from the worn list left behind.");
+
+        return new WornSnapshot
+        {
+            Look = new Outfit { Name = "What you were wearing", ItemIds = ids },
+        };
     }
 
     /// <summary>
@@ -212,6 +294,17 @@ public sealed class Plugin : IDalamudPlugin
             return;
         }
 
+        // Documented, unlike the two above: it is the same thing the offer's button does, for anyone
+        // who dismissed the offer, turned it off, or wants it in a macro
+        if (trimmed.Equals("restore", StringComparison.OrdinalIgnoreCase))
+        {
+            if (_lastWorn.Remembered is { } snapshot)
+                _lastWorn.Restore(snapshot);
+            else
+                Log.Warning("[Wardrobe] Nothing is remembered from a previous session.");
+            return;
+        }
+
         if (trimmed.StartsWith("wear ", StringComparison.OrdinalIgnoreCase))
         {
             var name = trimmed[5..].Trim();
@@ -227,21 +320,66 @@ public sealed class Plugin : IDalamudPlugin
         OpenUi();
     }
 
+    /// <summary>
+    /// Copies the config file aside, once, before the wardrobe is rearranged inside it.
+    /// </summary>
+    /// <remarks>
+    /// The one migration that moves everything somebody owns from one shape to another. Every other
+    /// one adds a field or fixes a value; this one relocates the items, the outfits and the bases,
+    /// and it runs against configs written by versions that predate the idea. A copy costs a few
+    /// hundred kilobytes and means a bad migration is an annoyance rather than a loss.
+    /// <para>
+    /// Never overwritten. If the file is already there, this has been through once before and the
+    /// copy from that first run is the one worth keeping.
+    /// </para>
+    /// </remarks>
+    private static void BackUpBeforeMigrating(IDalamudPluginInterface pi)
+    {
+        try
+        {
+            var source = pi.ConfigFile;
+            if (!source.Exists) return;
+
+            var backup = System.IO.Path.Combine(
+                source.DirectoryName ?? string.Empty,
+                System.IO.Path.GetFileNameWithoutExtension(source.Name) + ".pre-wardrobes.json");
+
+            if (System.IO.File.Exists(backup)) return;
+
+            source.CopyTo(backup);
+            Log.Information($"[Wardrobe] Config copied to '{backup}' before the per-character migration");
+        }
+        catch (Exception ex)
+        {
+            // Not fatal. The migration itself is non-destructive within the file, and refusing to
+            // start because a copy failed would be the worse outcome.
+            Log.Warning(ex, "[Wardrobe] Could not copy the config before migrating");
+        }
+    }
+
     private void OpenUi() => _ui.IsOpen = true;
+
+    private void OpenSettings() => _settings.IsOpen = true;
 
     public void Dispose()
     {
         Commands.RemoveHandler(CommandName);
         Commands.RemoveHandler(CommandAlias);
         PluginInterface.UiBuilder.Draw        -= _windowSystem.Draw;
+        PluginInterface.UiBuilder.Draw        -= _ui.DrawFileDialog;
         PluginInterface.UiBuilder.Draw        -= _cropGuide.Draw;
         PluginInterface.UiBuilder.OpenMainUi   -= OpenUi;
-        PluginInterface.UiBuilder.OpenConfigUi -= OpenUi;
+        PluginInterface.UiBuilder.OpenConfigUi -= OpenSettings;
 
         _ui.Dispose();
         _massImport.Dispose();
+        _share.Dispose();
+        _settings.Dispose();
+        _lastWornWindow.Dispose();
         _italicFont.Dispose();
         _backupService.Dispose();
+        _lastWorn.Dispose();
+        _profiles.Dispose();
         _screenshotSession.Dispose();
         _wardrobeService.Dispose();
         Camera.Dispose();
