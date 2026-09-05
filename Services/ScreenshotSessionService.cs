@@ -1016,6 +1016,20 @@ public class ScreenshotSessionService : IDisposable
     /// <summary>Whatever the game will currently say about its screenshot task.</summary>
     public ShutterState ReadShutter() => _shutter.Read();
 
+    /// <summary>Whether the folder the game's own worker is holding is a folder that is there.</summary>
+    /// <remarks>
+    /// Reported rather than acted on. The game's screenshot folder is not the wardrobe's to set, but a
+    /// worker pointed somewhere that does not exist is a request that is accepted and never finishes —
+    /// which is indistinguishable, from this side, from a client that has simply stopped answering.
+    /// </remarks>
+    private static string SaveFolderExists(ShutterState state)
+    {
+        if (!state.Worker || state.SaveFolder.Length <= 1 || state.SaveFolder.StartsWith('('))
+            return "unknown";
+
+        return Directory.Exists(state.SaveFolder) ? "yes" : "NO";
+    }
+
     /// <summary>Pictures filed since this session began, for the line it ends on.</summary>
     private int _filedThisSession;
 
@@ -1059,6 +1073,19 @@ public class ScreenshotSessionService : IDisposable
         if (!_camera.InGpose)
             _log.Warning("[Wardrobe] Not in GPose — camera angles will not be applied and every " +
                          "picture will be taken from wherever the camera is standing.");
+
+        // The one piece of state a run cannot recover from and cannot see from its own log: a shutter
+        // that was already jammed before anything here asked it for anything
+        var shutter = _shutter.Read();
+        _log.Information($"[Wardrobe]   shutter        : allowed: {shutter.CanTake}, " +
+                         $"in flight: {shutter.Requested}, last result: {shutter.Result}, " +
+                         $"format: {shutter.Format}, worker: {(shutter.Worker ? "present" : "missing")}");
+        _log.Information($"[Wardrobe]   game saves to  : {shutter.SaveFolder}");
+
+        if (shutter.Requested)
+            _log.Warning("[Wardrobe] The game already had a screenshot in flight before this run " +
+                         "started. If it does not clear on its own the run will clear it, which is " +
+                         "also what gets your own screenshot key working again.");
     }
 
     /// <summary>Starts the countdown to the next automatic shot.</summary>
@@ -1157,16 +1184,23 @@ public class ScreenshotSessionService : IDisposable
 
                 var stuck = _shutter.Read();
                 _log.Error("[Wardrobe] Session: the game accepted the screenshot request " +
-                           $"{StuckShotGiveUpSeconds:0} seconds ago and has never finished it. Its " +
-                           "screenshot task is stuck, which also stops your own screenshot key working " +
-                           "until the game is restarted. Pausing the run.");
+                           $"{StuckShotGiveUpSeconds:0} seconds ago and has never finished it. " +
+                           "Pausing the run.");
                 _log.Error($"[Wardrobe] Session: shutter state — allowed: {stuck.CanTake}, " +
-                           $"in flight: {stuck.Requested}, last result: {stuck.Result}, " +
-                           $"format: {stuck.Format}");
+                           $"in flight: {stuck.Requested} ({stuck.InFlightSeconds:0}s), " +
+                           $"last result: {stuck.Result}, format: {stuck.Format}, " +
+                           $"finished this session: {stuck.Completed}, " +
+                           $"worker: {(stuck.Worker ? "present" : "missing")}");
+                _log.Error($"[Wardrobe] Session: the game's own screenshot folder is {stuck.SaveFolder} " +
+                           $"(exists: {SaveFolderExists(stuck)})");
+
+                // A jammed flag refuses the user's own screenshot key too, and leaving it standing
+                // for them to restart the client over is not something to pause politely in front of
+                _shutter.Unjam($"the run gave up on it after {StuckShotGiveUpSeconds:0}s");
 
                 SetShutterProblem(
-                    "The game accepted the screenshot but never finished it. Its screenshot task is " +
-                    "stuck — your own screenshot key will not work either until the game is restarted.");
+                    "The game accepted the screenshot but never finished it. The stuck request has " +
+                    "been cleared, so your screenshot key works again — resume to try once more.");
 
                 _autoFired = false;
                 SetAutoPaused(true);
@@ -1228,8 +1262,13 @@ public class ScreenshotSessionService : IDisposable
         _blockedSince ??= now;
         if ((now - _blockedSince.Value).TotalSeconds >= BlockedGiveUpSeconds)
         {
+            var blocked = _shutter.Read();
             _log.Warning("[Wardrobe] Session: the game has been refusing screenshots for " +
                          $"{BlockedGiveUpSeconds:0} seconds — pausing the automatic run.");
+            _log.Warning($"[Wardrobe] Session: shutter state — allowed: {blocked.CanTake}, " +
+                         $"in flight: {blocked.Requested} ({blocked.InFlightSeconds:0}s), " +
+                         $"last result: {blocked.Result}, format: {blocked.Format}, " +
+                         $"finished this session: {blocked.Completed}");
 
             SetShutterProblem("The game has been refusing screenshots for " +
                               $"{BlockedGiveUpSeconds:0} seconds, so the run has stopped here.");

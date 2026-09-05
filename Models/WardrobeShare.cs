@@ -162,6 +162,14 @@ public class SharedOutfit
     public bool? HatVisible    { get; set; }
     public bool? WeaponVisible { get; set; }
 
+    /// <summary>Whether the outfit strips before it dresses — see <see cref="Outfit.ClearSlotsFirst"/>.</summary>
+    /// <remarks>
+    /// Travels because it says what the look is rather than anything about this machine: an outfit
+    /// built as a whole outfit is one on the other side too, and arriving without it would have the
+    /// copy quietly layer itself over whatever the recipient had on.
+    /// </remarks>
+    public bool ClearSlotsFirst { get; set; }
+
     /// <summary>
     /// What the outfit was on the sender's side, when it was not an ordinary one — for telling the
     /// recipient why a plate or a design card arrived holding less than it used to.

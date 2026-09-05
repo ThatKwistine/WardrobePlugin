@@ -217,8 +217,9 @@ public class WardrobeShareService
             SourceId      = outfit.Id,
             Name          = outfit.Name,
             Tags          = new List<string>(outfit.Tags),
-            HatVisible    = outfit.HatVisible,
-            WeaponVisible = outfit.WeaponVisible,
+            HatVisible      = outfit.HatVisible,
+            WeaponVisible   = outfit.WeaponVisible,
+            ClearSlotsFirst = outfit.ClearSlotsFirst,
             Origin        = outfit.IsGlamourPlate ? SharedOutfitOrigin.GlamourPlate
                           : outfit.IsDesign       ? SharedOutfitOrigin.DesignCard
                           :                         SharedOutfitOrigin.Normal,
@@ -724,8 +725,9 @@ public class WardrobeShareService
         {
             Name          = shared.Name,
             Tags          = new List<string>(shared.Tags),
-            HatVisible    = shared.HatVisible,
-            WeaponVisible = shared.WeaponVisible,
+            HatVisible      = shared.HatVisible,
+            WeaponVisible   = shared.WeaponVisible,
+            ClearSlotsFirst = shared.ClearSlotsFirst,
             DateAdded     = DateTime.UtcNow,
         };
 

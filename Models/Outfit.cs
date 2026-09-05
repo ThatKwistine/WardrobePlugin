@@ -197,6 +197,22 @@ public class Outfit : IImageOwner
     /// <inheritdoc cref="HatVisible" path="/remarks"/>
     public bool? WeaponVisible { get; set; }
 
+    /// <summary>Empty the slots this outfit has nothing for, rather than dressing over what is worn.</summary>
+    /// <remarks>
+    /// False, which is what wearing an outfit has always done: its own pieces go on and every slot it
+    /// has nothing for is left as it was found, so one outfit can be worn over another on purpose.
+    /// That is the wrong answer for a look that is meant to be the whole outfit — worn over something
+    /// with a coat in it, the coat is still there, in a slot the new outfit never claimed.
+    /// <para>
+    /// True empties exactly those unclaimed slots on the way in — not a strip, which would take off
+    /// the pieces the outfit is about to put back on and leave the character bare in between. The
+    /// base character keeps its slots, and emotes, VFX and mounts keep running. Per outfit rather than
+    /// one setting for all of them, because whether a look is complete or a layer is a fact about that
+    /// look — a full outfit wants this on, a pair of earrings saved as an outfit does not.
+    /// </para>
+    /// </remarks>
+    public bool ClearSlotsFirst { get; set; }
+
     /// <inheritdoc cref="WardrobeItem.SharedFromId"/>
     public Guid? SharedFromId { get; set; }
 
@@ -234,6 +250,7 @@ public class Outfit : IImageOwner
             DesignAppliesHairstyle = DesignAppliesHairstyle,
             HatVisible             = HatVisible,
             WeaponVisible          = WeaponVisible,
+            ClearSlotsFirst        = ClearSlotsFirst,
             SharedFromId           = SharedFromId,
             CopiedFromId           = Id,
             Hidden                 = Hidden,

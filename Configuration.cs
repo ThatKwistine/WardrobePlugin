@@ -778,6 +778,29 @@ public class Configuration : IPluginConfiguration
     public float AutoScreenshotDelay { get; set; } = 2f;
 
     /// <summary>
+    /// Press the game's screenshot key rather than calling its screenshot function directly.
+    /// </summary>
+    /// <remarks>
+    /// On at least one machine the direct call has never once taken a picture, while the key it is
+    /// meant to be equivalent to always does. Both were proved identical at the call — same object,
+    /// same callback, same parameter — so what differs is where in the frame the request is made,
+    /// which is not something a caller can choose. Pressing the key hands that back to the game.
+    /// <para>
+    /// Left as a setting rather than a replacement because the direct call is the cleaner mechanism
+    /// where it works: it needs no key bound and cannot be confused by a keyboard.
+    /// </para>
+    /// </remarks>
+    public bool UseScreenshotKey { get; set; } = true;
+
+    /// <summary>The virtual-key code of the game's screenshot keybind. 44 is Print Screen.</summary>
+    /// <remarks>
+    /// The game's own default, and the only value most people will ever need. It is a setting because
+    /// the keybind is rebindable and a wrong one here is a session that presses a key that does
+    /// nothing — which looks exactly like the fault it is meant to work around.
+    /// </remarks>
+    public int ScreenshotKeyCode { get; set; } = 44;
+
+    /// <summary>
     /// List Penumbra's mods newest first when importing, instead of alphabetically.
     /// </summary>
     /// <remarks>
@@ -1104,6 +1127,17 @@ public class Configuration : IPluginConfiguration
     /// mod lists.
     /// </summary>
     public bool HideSupportMods { get; set; }
+
+    /// <summary>
+    /// Shade every other row of the bulk import list, so the controls on the right of a row can be
+    /// traced back to the mod name on the left of it.
+    /// </summary>
+    /// <remarks>
+    /// On by default. The list is as wide as the window and its four columns sit far apart, which
+    /// is exactly the case a banded background is for; anyone who would rather have the plain list
+    /// back can turn it off.
+    /// </remarks>
+    public bool StripeImportRows { get; set; } = true;
 
     // ── Backups ───────────────────────────────────────────────────────────────
 

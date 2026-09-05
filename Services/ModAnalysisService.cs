@@ -209,13 +209,18 @@ public record ModAnalysisResult(
     /// The layer an item for this slot should be given, or null when the question does not arise.
     /// </summary>
     /// <remarks>
-    /// Null for everything but customisation, which is the only place two mods can be on one slot
-    /// doing different jobs — and null too for a customisation slot this analysis never saw, so a
-    /// hand-made item with no mod behind it is left blank rather than guessed at. Blank means the
-    /// item takes the whole slot, which is what every item did before layers existed.
+    /// Null for everything but the customisation slots that layer, which are the only place two
+    /// mods can be on one slot doing different jobs — and null too for a slot this analysis never
+    /// saw, so a hand-made item with no mod behind it is left blank rather than guessed at. Blank
+    /// means the item takes the whole slot, which is what every item did before layers existed.
+    /// <para>
+    /// Hair is deliberately excluded — see <see cref="EquipSlotEx.SupportsLayers"/>. Giving a hair
+    /// item a layer only ever split it away from the hair items that had none, letting two
+    /// hairstyles read as worn at the same time.
+    /// </para>
     /// </remarks>
     public string? LayerFor(EquipSlot slot) =>
-        !slot.IsCustomization() || !DetectedSlots.Contains(slot)
+        !slot.SupportsLayers() || !DetectedSlots.Contains(slot)
             ? null
             : ModelSlots.Contains(slot) ? SculptLayer : TextureLayer;
 }

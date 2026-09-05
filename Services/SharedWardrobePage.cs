@@ -79,7 +79,9 @@ public static class SharedWardrobePage
             if (!string.IsNullOrWhiteSpace(item.GlamourerItemName))
                 card.Fields.Add(new PageField { Label = "Game item", Value = item.GlamourerItemName! });
 
-            if (!string.IsNullOrWhiteSpace(item.Layer))
+            // Slot-checked, not just blank-checked: a hair item carrying a layer from before hair
+            // stopped having them would otherwise print one the wardrobe no longer reads.
+            if (!string.IsNullOrWhiteSpace(item.Layer) && item.Slot.SupportsLayers())
                 card.Fields.Add(new PageField { Label = "Layer", Value = item.Layer! });
 
             if (!string.IsNullOrWhiteSpace(item.Replaces))

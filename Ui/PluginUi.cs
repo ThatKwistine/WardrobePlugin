@@ -1558,7 +1558,19 @@ public partial class PluginUi : Window, IDisposable
             ? "You were"
             : $"{snapshot.Character} was";
 
-        return $"{who} last wearing {what}.";
+        // A hidden hat or a put-away weapon is part of the look and invisible in a count of items, so
+        // it is said rather than left to be noticed afterwards. Only when the answer is "hidden": null
+        // means Glamourer could not be read for that flag and the restore leaves the toggle alone,
+        // which is nothing to announce, and showing is what everyone expects anyway.
+        var hidden = new List<string>();
+        if (snapshot.Look.HatVisible    is false) hidden.Add("headgear");
+        if (snapshot.Look.WeaponVisible is false) hidden.Add("weapon");
+
+        var alsoHidden = hidden.Count > 0
+            ? $" The {string.Join(" and ", hidden)} {(hidden.Count == 1 ? "was" : "were")} hidden."
+            : string.Empty;
+
+        return $"{who} last wearing {what}.{alsoHidden}";
     }
 
     /// <summary>
@@ -4480,8 +4492,10 @@ public partial class PluginUi : Window, IDisposable
         ImGui.PushStyleColor(ImGuiCol.Border,
             worn ? new Vector4(1f, 0.85f, 0.25f, 1f) : border);
 
+        // NoScrollWithMouse as well as NoScrollbar, for the reason given on the outfit card: the bar
+        // being hidden does not stop the wheel, and a card that ate it would stop the grid scrolling
         ImGui.BeginChild($"##card_{item.Id}", new Vector2(CardWidth, CardHeight),
-            true, ImGuiWindowFlags.NoScrollbar);
+            true, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
 
         DrawItemImage(item);
 
@@ -6223,10 +6237,109 @@ public partial class PluginUi : Window, IDisposable
         }
 
         ImGui.Text($"Screenshots allowed : {state.CanTake}");
-        ImGui.Text($"Shot in flight      : {state.Requested}");
-        ImGui.Text($"Last result         : {state.Result}");
+        ImGui.Text($"Shot in flight      : {state.Requested}" +
+                   (state.Requested ? $" (for {state.InFlightSeconds:0}s)" : string.Empty));
+        ImGui.Text($"Last result         : {GameScreenshotService.DescribeResult(state.Result)}");
         ImGui.Text($"Saving as           : {state.Format}");
         ImGui.Text($"Last shot at        : {(state.Timestamp == 0 ? "never" : state.Timestamp.ToString())}");
+        if (Plugin.Shutter.CompletionCounted)
+            ImGui.Text($"Finished for us     : {state.Completed}" +
+                       (GameScreenshotService.LastCompletionResult is { } code ? $" (last code {code})" : string.Empty));
+        ImGui.Text($"Worker thread       : {(state.Worker ? "present" : "missing")}");
+        ImGui.Text($"Game saves to       : {state.SaveFolder}");
+
+        // The game's own folder, not the watched one. A request that is accepted and never finishes
+        // is what a worker pointed at a folder that is not there looks like from this side
+        if (state.Worker && state.SaveFolder.Length > 1 && !state.SaveFolder.StartsWith('(')
+            && !Directory.Exists(state.SaveFolder))
+        {
+            ImGui.Spacing();
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+            ImGui.TextColored(new Vector4(1f, 0.45f, 0.4f, 1f),
+                              "That folder does not exist. The game cannot write a screenshot to it, " +
+                              "which is enough on its own to explain a request that is accepted and " +
+                              "never finishes. Set it in the game's own settings.");
+            ImGui.PopTextWrapPos();
+        }
+
+        ImGui.Spacing();
+
+        // How a shot is asked for, which on some machines is the whole difference between a session
+        // that works and one that takes nothing
+        var byKey = _config.UseScreenshotKey;
+        if (ImGui.Checkbox("Take shots by pressing the game's screenshot key", ref byKey))
+        {
+            _config.UseScreenshotKey = byKey;
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("On: the plugin presses your screenshot key, so the game takes the\n" +
+                             "picture exactly as it does for you.\nOff: the plugin calls the game's " +
+                             "screenshot function directly, which is\ncleaner but does not work on " +
+                             "every machine.");
+
+        if (byKey)
+        {
+            var keyCode = _config.ScreenshotKeyCode;
+            ImGui.SetNextItemWidth(140f);
+            if (ImGui.InputInt("Screenshot key code", ref keyCode))
+            {
+                _config.ScreenshotKeyCode = Math.Clamp(keyCode, 0, 255);
+                _config.Save();
+            }
+
+            ImGui.SameLine();
+            ImGui.TextDisabled(Plugin.Keys.IsVirtualKeyValid(_config.ScreenshotKeyCode)
+                                   ? "(44 is Print Screen)"
+                                   : "the game does not track this key");
+
+            // The one way this setting can bite: it is not a preference, it is a key the plugin
+            // will really press in the game, once per shot, for the length of a session
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+            ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
+                              "A session presses this key in the game, once per picture. It has to " +
+                              "be the key your screenshot keybind is on — set it to a key bound to " +
+                              "something else and a session will do that something else instead, " +
+                              "once for every shot it takes.");
+            ImGui.PopTextWrapPos();
+        }
+
+        ImGui.Spacing();
+
+        // The button that answers the only question the log cannot: whether asking for a picture is
+        // itself what breaks the shutter, with no session, no camera preset and no redraw in the way
+        var busy = Plugin.Shutter.Probing || state.Requested;
+        ImGui.BeginDisabled(busy);
+        if (ImGui.Button("Take a test screenshot"))
+            Plugin.Shutter.Probe();
+        ImGui.EndDisabled();
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Asks the game for one picture with nothing else running, then watches " +
+                             "what it does for twenty seconds and writes it all to the log.\nRun it " +
+                             "on a freshly started game, before any session.");
+
+        ImGui.SameLine();
+        ImGui.TextDisabled(Plugin.Shutter.Probing ? "watching..." : "(writes its findings to the log)");
+
+        // The one variable left between a request that takes a picture and one that hangs
+        var canReplay = Plugin.Shutter.CanReplayGameCall;
+        var replay    = Plugin.Shutter.ReplayGameCall;
+
+        ImGui.BeginDisabled(!canReplay);
+        if (ImGui.Checkbox("Make the game's exact call", ref replay))
+            Plugin.Shutter.ReplayGameCall = replay;
+        ImGui.EndDisabled();
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(canReplay
+                ? "Borrows the callback the game passes for its own screenshots, so the request is\n" +
+                  "identical to the one your screenshot key makes."
+                : "Press your own screenshot key once first, so there is a call to copy.");
+
+        if (!canReplay)
+            ImGui.TextDisabled("Press your screenshot key once to let the plugin see the game's own call.");
 
         if (state.Requested)
         {
@@ -6235,8 +6348,21 @@ public partial class PluginUi : Window, IDisposable
             ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
                               "A shot is in flight. If this never goes back to False, the game's " +
                               "screenshot function is stuck, and your own screenshot key will not " +
-                              "work either until the game is restarted.");
+                              "work either until it is cleared.");
             ImGui.PopTextWrapPos();
+
+            ImGui.Spacing();
+
+            // The button exists for the case a session cannot reach: a shutter jammed by something
+            // that was not a run, with no run started to notice it. It is one byte, and the same one
+            // restarting the client clears — which is what people were being told to do instead.
+            if (ImGui.Button("Clear the stuck request"))
+                Plugin.Shutter.Unjam("cleared by hand from the diagnostics panel");
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Tells the game no screenshot is pending. Does the same thing as " +
+                                 "restarting the game, without restarting it.\nOnly worth pressing " +
+                                 "if this has said True for more than a few seconds.");
         }
 
         if (string.Equals(state.Result, "NoDiskSpace", StringComparison.OrdinalIgnoreCase))
@@ -6988,10 +7114,11 @@ public partial class PluginUi : Window, IDisposable
         if (outfits.Any(o => o.Tags.Any(TagTree.IsStyle)))
             cardH += ImGui.GetTextLineHeightWithSpacing();
 
-        // Same rule for the plate cards' apply button: paid for across the grid so the rows still
-        // line up, rather than per card, which would leave the plates standing taller than the rest
+        // A plate card carries two rows the others do not: the badge line naming the plate, and the
+        // apply button under the wear row. Both paid for across the grid so the rows still line up,
+        // rather than per card, which would leave the plates standing taller than the rest.
         if (outfits.Any(o => o.IsGlamourPlate))
-            cardH += ImGui.GetFrameHeightWithSpacing();
+            cardH += ImGui.GetFrameHeightWithSpacing() + ImGui.GetTextLineHeightWithSpacing();
 
         // A design card carries a badge line naming the design, and the same rule applies to it: paid
         // for once across the grid, or the button row would be pushed off the bottom of those cards
@@ -7404,8 +7531,11 @@ public partial class PluginUi : Window, IDisposable
         ImGui.PushStyleColor(ImGuiCol.Border,
             worn ? new Vector4(1f, 0.85f, 0.25f, 1f) : border);
 
+        // NoScrollWithMouse as well as NoScrollbar: hiding the bar does not stop the wheel, and a card
+        // whose contents overrun it would quietly swallow the scroll meant for the grid behind it. With
+        // this the wheel always reaches the grid, and a card that overruns clips as it is meant to.
         ImGui.BeginChild($"##outfit_{outfit.Id}", new Vector2(cardW, cardH),
-            true, ImGuiWindowFlags.NoScrollbar);
+            true, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
 
         DrawOutfitImage(outfit, cardW - CardPad * 2);
 
@@ -7534,8 +7664,19 @@ public partial class PluginUi : Window, IDisposable
                 _wardrobe.WearOutfit(outfit, removeOthers: false);
             ImGui.PopStyleColor(2);
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip(outfit.IsGlamourPlate
-                    ? "Shows this plate's gear through Glamourer, leaving anything else you have on in place.\n\n" +
+            {
+                // What happens to everything else is the one part of this that the outfit's own
+                // clear-the-slots answer changes, so it is said once at the front rather than woven
+                // into three descriptions that would each then have to be written twice
+                var others = outfit.ClearSlotsFirst
+                    ? "Empties the slots this outfit has nothing of its own for, so none of them\n" +
+                      "is left holding what the last outfit put there. Weapons and your base\n" +
+                      "character are left alone.\n\n"
+                    : string.Empty;
+
+                ImGui.SetTooltip(others + (outfit.IsGlamourPlate
+                    ? "Shows this plate's gear through Glamourer" +
+                      (outfit.ClearSlotsFirst ? ".\n\n" : ", leaving anything else you have on in place.\n\n") +
                       "This is not the game applying the plate: your real glamour and equipment are\n" +
                       "untouched and only you see the change. In exchange it works anywhere — no\n" +
                       "summoning bell, no gearset — including gpose."
@@ -7543,7 +7684,10 @@ public partial class PluginUi : Window, IDisposable
                     ? $"Applies the design '{outfit.DesignName}', then any items attached to it.\n\n" +
                       "The design goes on first, so an attached item always wins the slot it\n" +
                       "occupies and the design dresses everything else."
-                    : "Wear these items, leaving anything else you have on in place.");
+                    : outfit.ClearSlotsFirst
+                    ? "Wear these items."
+                    : "Wear these items, leaving anything else you have on in place."));
+            }
         }
 
         ImGui.SameLine();
@@ -7723,6 +7867,42 @@ public partial class PluginUi : Window, IDisposable
             ImGui.TextDisabled("Leaves both as you have them.");
     }
 
+    /// <summary>Whether wearing this outfit empties the slots it has nothing of its own for.</summary>
+    /// <remarks>
+    /// A plain tick box rather than the three-state pickers beside it, because there is no third
+    /// answer to give here. Off is what wearing an outfit has always done — dress over whatever is
+    /// on, and leave a slot this outfit has nothing for exactly as it was found — and it stays the
+    /// default, so no outfit that already exists changes what it does.
+    /// </remarks>
+    private void DrawOutfitClearSlots(Outfit outfit)
+    {
+        ImGui.TextDisabled("Wearing this outfit");
+        ImGui.Spacing();
+
+        var clear = outfit.ClearSlotsFirst;
+        if (ImGui.Checkbox("Take everything else off first##outfitclear", ref clear))
+        {
+            outfit.ClearSlotsFirst = clear;
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("For a look that is the whole outfit rather than something worn over one.\n\n" +
+                             "Wear empties the slots this outfit has nothing of its own for, so none\n" +
+                             "of them is left holding whatever the last outfit put there. Only those\n" +
+                             "slots — this is not a strip, so the pieces it is about to put on are\n" +
+                             "never taken off first and you never flash bare in between.\n\n" +
+                             "Weapons are left alone: what you can hold is your job's business, not\n" +
+                             "the look's. A weapon in the outfit is still equipped, and Headgear and\n" +
+                             "weapon below is still how a look puts one away.\n\n" +
+                             "Your base character keeps its slots and its items, as it does through a\n" +
+                             "strip. Emotes, VFX and mounts keep running — this is about clothes.");
+
+        Hint(clear
+            ? "Empties the slots it has nothing for, and dresses the rest."
+            : "Goes on over what you are wearing, leaving slots it has nothing for alone.");
+    }
+
     /// <summary>A leave-alone / show / hide picker over a nullable bool.</summary>
     /// <remarks>
     /// Null first and selected by default, so the neutral answer is the one a glance lands on and the
@@ -7857,6 +8037,12 @@ public partial class PluginUi : Window, IDisposable
         ImGui.Spacing();
 
         DrawOutfitVanillaItems(outfit);
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        DrawOutfitClearSlots(outfit);
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -10105,6 +10291,22 @@ public partial class PluginUi : Window, IDisposable
                              "instead of showing them greyed and italic.\n\n" +
                              "With both options on, the lists show only mods the\n" +
                              "wardrobe does not reference at all.");
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("How the bulk import list reads.");
+        ImGui.Spacing();
+
+        var stripes = _config.StripeImportRows;
+        if (ImGui.Checkbox("Shade every other row when bulk importing", ref stripes))
+        {
+            _config.StripeImportRows = stripes;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Bands the bulk import list light and dark, a row at a time, so\n" +
+                             "the options, tags and supplement controls at the right of a row\n" +
+                             "are easy to trace back to the mod name at the left of it.\n\n" +
+                             "Off, the list is drawn on a plain background.");
     }
 
     private void DrawWearingSettings()

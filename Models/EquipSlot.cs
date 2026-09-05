@@ -117,6 +117,23 @@ public static class EquipSlotEx
         or EquipSlot.Other;
 
     /// <summary>
+    /// Whether two items in this slot can be worn at once by sitting on different layers — a
+    /// sculpt and the texture painted over it.
+    /// </summary>
+    /// <remarks>
+    /// Every customisation slot but hair. The character has exactly one hairstyle, and two hair
+    /// mods on at the same time is not a look anyone can wear: one of them is simply the mod for a
+    /// hairstyle you are not currently on, sitting enabled and invisible. Faces, tails, ears and
+    /// skin are different — a shape mod and a texture over it are both showing at once, which is
+    /// the whole point of layering.
+    /// <para>
+    /// Read by <see cref="WardrobeItem.WornKey"/>, which is what decides whether wearing one item
+    /// takes another off.
+    /// </para>
+    /// </remarks>
+    public static bool SupportsLayers(this EquipSlot s) => s.IsCustomization() && s != EquipSlot.Hair;
+
+    /// <summary>
     /// True for mods that are not worn on the character — animations, VFX, mounts and minions.
     /// </summary>
     /// <remarks>
@@ -133,6 +150,15 @@ public static class EquipSlotEx
     /// and enabling the Penumbra mod is the entire effect.
     /// </summary>
     public static bool IsModOnly(this EquipSlot s) => s.IsCustomization() || s.IsModCategory();
+
+    /// <summary>True for the two hands.</summary>
+    /// <remarks>
+    /// What they hold is decided by the job rather than by the look, which is why they are left out
+    /// of anything that empties the slots a look has no opinion about — see
+    /// <c>WardrobeService.ClearUnusedSlots</c>. A weapon an outfit does name is worn like any other
+    /// piece, and <see cref="Outfit.WeaponVisible"/> is how a look puts one away.
+    /// </remarks>
+    public static bool IsWeapon(this EquipSlot s) => s is EquipSlot.MainHand or EquipSlot.OffHand;
 
     /// <summary>
     /// Whether an item in this slot redraws the character on apply unless told otherwise.

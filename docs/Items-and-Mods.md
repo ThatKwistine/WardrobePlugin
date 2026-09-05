@@ -357,9 +357,9 @@ Pick the matching hairstyle in the character screen or Glamourer yourself.
 ### Layers: two mods on one slot
 
 A face sculpt and a face retexture are both Face items, and they are not alternatives to each other —
-the texture goes *on* the sculpt. The same is true of a body sculpt under a skin texture, or a hair
-model under a hair retexture. Keying customisation on the slot alone made every pair like this
-mutually exclusive: applying one took the other off, with no way to have both.
+the texture goes *on* the sculpt. The same is true of a body sculpt under a skin texture. Keying
+customisation on the slot alone made every pair like this mutually exclusive: applying one took the
+other off, with no way to have both.
 
 Each customisation item therefore carries a **Layer**, shown on the import and edit panels:
 
@@ -376,6 +376,17 @@ out, which is what keeps two face sculpts behaving as the alternatives they are.
 deliberate — filling them all in as independent would leave two sculpts enabled at once. Press
 **Re-detect** in an item's edit panel to fill it in; the detection message says which layer it chose.
 Moving an item to a different slot clears it, since a layer belongs to the slot it was read on.
+
+#### Hair is never layered
+
+Hair has no layer, and the field is not shown on a hair item. A character has exactly one hairstyle,
+so two hair mods on at once is not a look anyone can wear — one of them is simply the mod for a
+hairstyle you are not currently on, sitting enabled and invisible. Every hair item takes the whole
+Hair slot, and applying one reverts whichever hair item was on before it.
+
+It did carry a layer up to 1.6.0.0, and that was the bug this replaced: an older hair item had a
+blank layer while a newly imported one was detected as `sculpt`, the two sat on different keys, and
+neither could displace the other. The grid showed two hairstyles worn at the same time.
 
 ### A design applied with the item
 

@@ -628,10 +628,12 @@ public class ItemImportPanel : IDisposable
             DrawReplacesEditor(SelectedSlot(_editSlotIdx));
 
         // Customisation is exclusive per slot but not per kind: a sculpt and the texture painted on
-        // it share the slot and are not alternatives, so which of the two this is has its own field
+        // it share the slot and are not alternatives, so which of the two this is has its own field.
+        // Hair is the exception — one hairstyle at a time — and is offered no layer to set.
         if (SelectedSlot(_editSlotIdx).IsCustomization())
         {
-            DrawLayerEditor(SelectedSlot(_editSlotIdx));
+            if (SelectedSlot(_editSlotIdx).SupportsLayers())
+                DrawLayerEditor(SelectedSlot(_editSlotIdx));
             DrawItemDesignPicker(_editTarget!, SelectedSlot(_editSlotIdx));
         }
 
@@ -1834,7 +1836,7 @@ public class ItemImportPanel : IDisposable
     /// would quietly change the key it is worn under, where gear has no layers at all.
     /// </summary>
     private string? EditedLayer() =>
-        SelectedSlot(_editSlotIdx).IsCustomization() && !string.IsNullOrWhiteSpace(_editLayer)
+        SelectedSlot(_editSlotIdx).SupportsLayers() && !string.IsNullOrWhiteSpace(_editLayer)
             ? _editLayer.Trim()
             : null;
 

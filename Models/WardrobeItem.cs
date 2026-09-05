@@ -385,16 +385,24 @@ public class WardrobeItem : IImageOwner
     /// falling back to the item's own id when that is unknown so the item is simply independent
     /// rather than colliding with every other item in its category.
     /// <para>
-    /// Customisation sits between the two: exclusive by default, but a slot can carry more than one
-    /// kind of mod at once — a sculpt and the texture painted on it — so a <see cref="Layer"/> may
-    /// narrow the key to that kind. Blank leaves the item on the bare slot name, exclusive as
-    /// before, which is why an item that has never been given a layer behaves exactly as it did.
+    /// Most customisation slots sit between the two: exclusive by default, but a slot can carry
+    /// more than one kind of mod at once — a sculpt and the texture painted on it — so a
+    /// <see cref="Layer"/> may narrow the key to that kind. Blank leaves the item on the bare slot
+    /// name, exclusive as before, which is why an item that has never been given a layer behaves
+    /// exactly as it did.
+    /// </para>
+    /// <para>
+    /// Hair is the exception, and takes the bare slot name whatever its layer says: a character
+    /// has one hairstyle, so a second hair mod is never a second thing you are wearing. Layered
+    /// hair keys were a real bug — an item imported before layers existed sat on <c>Hair</c> while
+    /// a newer one sat on <c>Hair:sculpt</c>, and neither could displace the other, so the grid
+    /// showed two hairstyles worn at once. See <see cref="EquipSlotEx.SupportsLayers"/>.
     /// </para>
     /// A method rather than a property so it is not written into the saved config.
     /// </remarks>
     public string WornKey() => Slot.IsModCategory()
         ? $"{Slot}:{(string.IsNullOrWhiteSpace(Replaces) ? Id.ToString() : Replaces.Trim())}"
-        : Slot.IsCustomization() && !string.IsNullOrWhiteSpace(Layer)
+        : Slot.SupportsLayers() && !string.IsNullOrWhiteSpace(Layer)
             ? $"{Slot}:{Layer.Trim()}"
             : Slot.ToString();
 }

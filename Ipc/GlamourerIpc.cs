@@ -1162,9 +1162,11 @@ public class GlamourerIpc : IDisposable
     /// <remarks>
     /// Needed so the plugin can put weapon visibility back the way the user had it, rather than
     /// assuming it was visible — plenty of people keep weapons hidden permanently.
-    /// The state layout is undocumented and turned out not to be top-level, so rather than guess a
-    /// path this searches for a property named after the weapon anywhere in the object, accepting
-    /// either a bare bool or Glamourer's nested { "Show": bool } shape.
+    /// The known path is tried first, as the hat's is: <c>Equipment.Weapon.Show</c>, beside the hat's
+    /// own flag in what <c>DesignBase.SerializeEquipment</c> writes. The search behind it is how this
+    /// was written before that layout was confirmed, and is kept for the same reason the hat keeps
+    /// one — it accepts either a bare bool or the nested { "Show": bool } shape, anywhere in the
+    /// object, so a move within the state does not silently turn the answer into "unknown".
     /// </remarks>
     public bool? GetWeaponVisible()
     {
@@ -1173,6 +1175,9 @@ public class GlamourerIpc : IDisposable
         {
             var (ec, state) = _getState.InvokeFunc(PlayerIndex, 0u);
             if (ec != 0 || state == null) return null;
+
+            if (state["Equipment"]?["Weapon"]?["Show"] is { Type: JTokenType.Boolean } shown)
+                return shown.Value<bool>();
 
             var found = FindWeaponVisibility(state);
             if (found.HasValue) return found;

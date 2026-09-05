@@ -2490,14 +2490,25 @@ public class WardrobeService : IDisposable
     /// options applied — which is the whole reason for handling outfits here rather than leaving
     /// it to a Glamourer design.
     /// </remarks>
-    public void WearOutfit(Outfit outfit, bool removeOthers)
+    /// <param name="clearSlots">
+    /// Whether the outfit's own <see cref="Outfit.ClearSlotsFirst"/> is honoured. True everywhere it
+    /// matters — an outfit is being arrived at, and an outfit that says it is the whole look empties
+    /// what it does not fill. False only for <see cref="ReapplyOutfit"/>, which is already in the look.
+    /// </param>
+    public void WearOutfit(Outfit outfit, bool removeOthers, bool clearSlots = true)
     {
         var items = ResolveOutfit(outfit);
         var missing = outfit.ItemIds.Count - items.Count;
         if (missing > 0)
             _log.Warning($"[Wardrobe] Outfit '{outfit.Name}': {missing} item(s) no longer exist and were skipped.");
 
-        if (removeOthers)
+        // An outfit that clears its slots is saying it is the whole look rather than a layer, so the
+        // slots it has nothing of its own for are emptied instead of being left holding what the last
+        // outfit put there. Only those slots: the pieces about to go on are never taken off and put
+        // back, and the character is never briefly bare. It takes off every wardrobe item outside
+        // them, which is all the removeOthers pass below would have done.
+        if (clearSlots && outfit.ClearSlotsFirst) ClearUnusedSlots(outfit, items);
+        else if (removeOthers)
         {
             var keep = items.Select(i => i.Id).ToHashSet();
 
@@ -2547,6 +2558,88 @@ public class WardrobeService : IDisposable
                          $"{outfit.VanillaItems.Count} vanilla piece(s))");
     }
 
+    /// <summary>
+    /// Empties the equipment slots this outfit has nothing of its own for, leaving the base
+    /// character's slots and everything the outfit is about to fill alone.
+    /// </summary>
+    /// <remarks>
+    /// What <see cref="Outfit.ClearSlotsFirst"/> does, and deliberately not a strip. Only the slots
+    /// nobody is about to claim are touched, so a piece the outfit is about to put on is never taken
+    /// off and put back on, and the character is never briefly bare on the way. A wardrobe item left
+    /// in one of those slots is taken off properly rather than merely hidden, so its Penumbra mods go
+    /// off with it.
+    /// <para>
+    /// Weapons are not touched at all. What you can hold is decided by the job you are on rather than
+    /// by the look, and emptying the hands of every outfit that happens to have no weapon in it would
+    /// be wrong far more often than right. An outfit that does have an opinion still gets its way: a
+    /// weapon in the outfit is equipped as any other piece is, and <see cref="Outfit.WeaponVisible"/>
+    /// puts it away where that is what the look wants.
+    /// </para>
+    /// <para>
+    /// Animations, VFX and mounts are left running, the same line <see cref="StripAll"/> draws: they
+    /// are not on the character, so an outfit has nothing to say about them. The base character is
+    /// left alone for the same reason it survives a strip — it is the floor, not part of what is
+    /// being cleared — and it is not re-applied afterwards, since nothing here displaces it.
+    /// </para>
+    /// </remarks>
+    private void ClearUnusedSlots(Outfit outfit, IReadOnlyList<WardrobeItem> items)
+    {
+        var baseChar = _config.ActiveBaseCharacter;
+        var kept     = KeptSlots(baseChar);
+        var keptIds  = baseChar?.ItemIds ?? new List<Guid>();
+
+        // Everything the outfit fills for itself: its own items, and the plain gear it keeps for the
+        // slots they do not cover. A design's pieces are deliberately not counted — the design is
+        // applied after this and writes over whatever was left in the slots it dresses.
+        var filled = items.Select(i => i.Slot).ToHashSet();
+        foreach (var slotName in outfit.VanillaItems.Keys)
+            if (Enum.TryParse<EquipSlot>(slotName, out var vanillaSlot)) filled.Add(vanillaSlot);
+
+        var needsRedraw = false;
+        var taken       = 0;
+
+        foreach (var (key, id) in _config.WornItems.ToList())
+        {
+            var item = _config.WardrobeItems.Find(x => x.Id == id);
+
+            // A key whose item has since been deleted can never be cleared by UnwearItem — the same
+            // orphan a strip sweeps up on its way past
+            if (item == null)
+            {
+                _config.WornItems.Remove(key);
+                continue;
+            }
+
+            if (item.Slot.IsModCategory() || item.Slot.IsWeapon()) continue;
+            if (filled.Contains(item.Slot)) continue;
+            if (keptIds.Contains(item.Id) || kept.Contains(item.Slot)) continue;
+
+            needsRedraw |= UnwearItem(item, save: false, redraw: false, restoreBase: false);
+            taken++;
+        }
+
+        // Then the slots themselves, so gear the wardrobe has no item for goes too — worn by hand,
+        // left behind by a plate, put on by a design. Customisation slots are skipped for the reason
+        // a strip skips them: there is no empty to set a character's hair to; weapons for the reason
+        // above.
+        foreach (var slot in EquipSlotEx.All)
+        {
+            if (slot.IsCustomization() || slot.IsWeapon()) continue;
+            if (filled.Contains(slot) || kept.Contains(slot)) continue;
+
+            var emperorsId = ItemLookupService.FindEmperorsNewItem(slot);
+            if (emperorsId.HasValue) _glamourer.SetItem(slot, emperorsId.Value);
+        }
+
+        // Once, and before the outfit goes on rather than after: a customisation mod switched off
+        // above has nothing else to make it disappear, and a redraw landing mid-dress is the timing
+        // that undoes what has just been applied.
+        if (needsRedraw) _penumbra.RedrawPlayer();
+
+        _log.Debug($"[Wardrobe] Outfit '{outfit.Name}': cleared the slots it does not fill " +
+                   $"({taken} item(s) taken off, {filled.Count} slot(s) left for the outfit)");
+    }
+
     /// <summary>Applies an outfit's hat and weapon toggles, where it has an opinion about them.</summary>
     /// <remarks>
     /// Nothing happens for a null, which is the point of it being nullable: an outfit with no opinion
@@ -2591,7 +2684,11 @@ public class WardrobeService : IDisposable
     public void ReapplyOutfit(Outfit outfit)
     {
         _log.Information($"[Wardrobe] Re-applying outfit '{outfit.Name}'");
-        WearOutfit(outfit, removeOthers: false);
+
+        // Its own clear-the-slots answer is passed over here for the same reason others are left on:
+        // that answer is about arriving in a look, and this is already in it. Emptying the slots it
+        // does not fill would take anything worn over it off, which is not what re-applying asks for.
+        WearOutfit(outfit, removeOthers: false, clearSlots: false);
     }
 
     /// <summary>Removes every item in an outfit that is currently worn.</summary>
@@ -2707,6 +2804,13 @@ public class WardrobeService : IDisposable
             WeaponVisible          = _glamourer.GetWeaponVisible(),
         };
 
+        // Said out loud rather than left to be inferred from a look that came back wrong. Either can
+        // be null — Glamourer answered, but not about that flag — and a null is not "showing": it is
+        // the restore leaving the toggle alone, which is why the two cases have to be told apart in
+        // the log as well as in the record.
+        _log.Debug($"[Wardrobe] Remembering how it was worn: headgear {Describe(look.HatVisible)}, " +
+                   $"weapon {Describe(look.WeaponVisible)}");
+
         CaptureLastWornDyes(look, active, wornIds, live);
 
         // Skips itself on a design card, by its own guard, and that is wanted here for the reason it
@@ -2723,6 +2827,10 @@ public class WardrobeService : IDisposable
             SavedAt   = DateTime.UtcNow,
         };
     }
+
+    /// <summary>How a hat or weapon toggle reads in a log line, "unknown" included.</summary>
+    private static string Describe(bool? visible) =>
+        visible switch { true => "showing", false => "hidden", null => "unknown (left alone on a restore)" };
 
     /// <summary>Records the colour each worn piece is actually showing.</summary>
     /// <remarks>
@@ -2794,14 +2902,63 @@ public class WardrobeService : IDisposable
     {
         var items = ResolveOutfit(snapshot.Look);
 
-        WearOutfit(snapshot.Look, removeOthers: false);
+        // The remembered look is a copy of what was on the character, not the outfit it came from, so
+        // the outfit's say over clearing its slots is not in it. Read off the live outfit rather than
+        // stored in the snapshot, so the answer honoured is the one it has now — and so that putting
+        // a look back on does the same thing pressing Wear on it would. Without this, a restore lands
+        // on top of whatever the game logged you in wearing and leaves a piece in every slot the look
+        // has nothing for, which is exactly what the outfit asked not to happen.
+        var source = snapshot.OutfitId is { } sourceId ? _config.Outfits.Find(o => o.Id == sourceId) : null;
+        snapshot.Look.ClearSlotsFirst = source?.ClearSlotsFirst ?? false;
+
+        // Clearing the slots is not enough on its own here. A remembered look also carries the plain
+        // gear that was filling the slots its items do not — captured on a timer, so a hat put on by
+        // hand, or the one the game logged you in wearing, is in there as surely as the look is — and
+        // that gear goes on after the clear and undoes it. For an outfit that says it is the whole
+        // look, those pieces are precisely what wearing it would have taken off, so the restore puts
+        // back only the ones the outfit itself claims a slot for.
+        var remembered = snapshot.Look.VanillaItems;
+
+        if (source is { ClearSlotsFirst: true })
+        {
+            var claimed = ResolveOutfit(source).Select(i => i.Slot.ToString()).ToHashSet();
+            foreach (var key in source.VanillaItems.Keys) claimed.Add(key);
+
+            snapshot.Look.VanillaItems = remembered
+                .Where(kv => claimed.Contains(kv.Key))
+                .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+            if (snapshot.Look.VanillaItems.Count < remembered.Count)
+                _log.Information($"[Wardrobe] '{source.Name}' clears the slots it does not fill, so " +
+                                 $"{remembered.Count - snapshot.Look.VanillaItems.Count} remembered " +
+                                 "piece(s) of plain gear were left off the restore.");
+        }
+
+        var applied = snapshot.Look.VanillaItems.Count;
+        var trimmed = applied < remembered.Count;
+
+        // The record itself keeps every piece it captured, whatever was put back on: it is a note of
+        // what was worn, not of what the wardrobe chose from it, and the outfit's answer can change
+        // between one restore and the next.
+        try
+        {
+            WearOutfit(snapshot.Look, removeOthers: false);
+        }
+        finally
+        {
+            snapshot.Look.VanillaItems = remembered;
+        }
+
+        // WearOutfit saved while the trimmed list was in place, so the copy on disk is the short one
+        // until something else happens to save. Put it right here rather than leaving that to chance.
+        if (trimmed) _config.Save();
 
         _activeOutfitId = snapshot.OutfitId is { } id && _config.Outfits.Any(o => o.Id == id)
             ? id
             : null;
 
         _log.Information($"[Wardrobe] Put back what was last worn: {items.Count} item(s), " +
-                         $"{snapshot.Look.VanillaItems.Count} vanilla piece(s)" +
+                         $"{applied} vanilla piece(s)" +
                          $"{(_activeOutfitId != null ? $", outfit '{snapshot.Look.Name}' marked as worn" : string.Empty)}");
 
         // WearOutfit has already raised WardrobeChanged, and the active outfit written above is read
@@ -3777,8 +3934,9 @@ public class WardrobeService : IDisposable
 
         // Carried, unlike the design and plate links above: those are what a copy is deliberately cut
         // loose from, while a hood being off is part of the look the copy is starting from
-        HatVisible    = source.HatVisible,
-        WeaponVisible = source.WeaponVisible,
+        HatVisible      = source.HatVisible,
+        WeaponVisible   = source.WeaponVisible,
+        ClearSlotsFirst = source.ClearSlotsFirst,
     };
 
     /// <summary>

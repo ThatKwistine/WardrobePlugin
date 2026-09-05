@@ -155,19 +155,53 @@ function and says which of several different faults this is:
 - **Screenshots allowed: False** that never turns true — the game is refusing screenshots outright.
   A cutscene or a loading screen does this for a moment; anything longer is the client, not the
   wardrobe.
-- **Shot in flight: True** that never goes back to False — the game accepted the request and never
-  finished it. Its screenshot function is stuck, and your own screenshot key will not work either
-  until the game is restarted. An automatic run notices this after 45 seconds and pauses rather than
-  waiting on it forever.
+- **Shot in flight: True** that never goes back to False — the game accepted a request and never
+  finished it. While that flag stands the game refuses every later screenshot, the wardrobe's and
+  your own screenshot key's alike. A run clears it by itself after 45 seconds and says so in the log,
+  and a **Clear the stuck request** button under the readout does the same by hand without restarting
+  the game — but clearing it only buys the next shot, so a client doing this gets one picture per
+  attempt rather than a working run. **The usual cause is not the wardrobe at all — see below.**
+- **Worker thread: missing**, or a **Game saves to** path that is not on disk — the game's own
+  screenshot worker cannot write where it is pointed. That produces exactly the case above: the
+  request is accepted, the flag goes up, and nothing is ever written or finished. The folder is the
+  game's own setting, not the wardrobe's.
 - **Saving as: Dds** — the game is writing a format nothing here can open. Set the screenshot format
   to PNG or JPG in the game's own settings. PNG, JPG and BMP are all picked up.
 - **Last result: NoDiskSpace** — the game's own words for a screenshot it could not write.
+- **Finished for us: 0** after a run has asked for several — the game is taking the requests and
+  never reporting a picture finished. That is the stuck case above rather than a folder problem.
 
 If none of those apply, the folder is the next thing to check: **Settings → Screenshots** has to
 point at the folder the game actually saves to.
 
-Whatever it says, the reasons are all the game's rather than the wardrobe's, so the readout is worth
-copying into a bug report.
+## An automatic session takes no pictures
+
+**Settings → Experimental → Screenshot diagnostics** has a tick box, **Take shots by pressing the
+game's screenshot key**. Leave it on. It is the default, and on some machines it is the only thing
+that works.
+
+With it on, the plugin presses your screenshot key at the game's window and the game takes the
+picture exactly as it does for you. With it off, the plugin calls the game's screenshot function
+directly — which is the cleaner mechanism, and on some machines never takes a picture at all: the
+request is accepted, **Shot in flight** goes to True and stays there, and nothing is written. The two
+requests have been compared side by side and are identical in every argument, so what differs is
+where in the frame the request is made, which a plugin cannot choose.
+
+If a session takes nothing with the key setting on:
+
+- **Check the key code matches your keybind.** 44 is Print Screen, the game's default. If you have
+  rebound your screenshot key, put its code in the box beside the tick. A code that matches nothing
+  is a press that silently does nothing.
+- **Press your own screenshot key** with **Shot in flight: False** and look in the game's screenshots
+  folder. If no file appears, the game itself cannot take a picture and nothing here can make it. A
+  program that records or streams your screen by hooking the game's frames can do this — ReShade,
+  GShade, Discord Clips, Parsec, OBS, NVIDIA ShadowPlay. The date on the newest file in your
+  screenshots folder tells you when it started.
+- **Take a test screenshot** in the diagnostics writes a full trace to the log, including whether the
+  request reached the game and whether a file appeared. That trace is the thing to put in a bug
+  report.
+
+The readout is worth copying into a bug report whichever of these it turns out to be.
 
 ## Mod names show as boxes or missing glyphs
 

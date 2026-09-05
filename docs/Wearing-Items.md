@@ -173,8 +173,17 @@ A few things worth knowing:
   alt does not overwrite what your main was wearing, but wearing something on the alt does.
 - **Taking everything off is remembered as taking everything off.** Strip before you log out and
   there is nothing to put back on next time, which is the point.
-- **It is worn over what you have on**, exactly as pressing Wear on an outfit is. Nothing is
-  stripped first.
+- **A hidden hat or a put-away weapon is remembered as hidden.** Both are read out of Glamourer when
+  the record is written, and put back the same way, so a hood that hid the hair does not come back as
+  a hat. The offer says so — *the headgear was hidden* — rather than leaving you to notice. If
+  Glamourer cannot be read for one of them the record says nothing about it, and the restore leaves
+  that toggle exactly as it finds it; the plugin log names which of the two it was.
+- **It goes on exactly as pressing Wear on the outfit would**, including that outfit's answer to
+  [Take everything else off first](Outfits.md#wearing-over-or-instead-of). Normally that means it is
+  worn over what you have on and nothing is cleared. If the look came from an outfit that clears the
+  slots it has nothing for, the restore clears them too — and leaves off the plain gear the record
+  picked up for those slots, since that gear is what wearing the outfit would have taken off. The
+  record itself still keeps it; the outfit's answer can change between one login and the next.
 - **Screenshot sessions are ignored.** A session dresses your character one item at a time, and none
   of those is a look you chose.
 

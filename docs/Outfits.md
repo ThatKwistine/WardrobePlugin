@@ -8,7 +8,7 @@ Wear a look you like, type a name, and **Save current look** records every item 
 
 | Button | Effect |
 |---|---|
-| **Wear** | Wears the outfit's items, leaving anything else you have on in place |
+| **Wear** | Wears the outfit's items, leaving anything else you have on in place — unless the outfit [clears its slots first](#wearing-over-or-instead-of) |
 | **Only this** | Wears them and removes everything else the wardrobe has on |
 | **Update** | Replaces **Only this** while the outfit is on; saves what you are wearing now |
 | **Remove** | Takes the outfit's items back off |
@@ -69,6 +69,37 @@ Every item in the outfit is listed as a row with a small thumbnail, its name and
   other removal — see [Deleting things](Items-and-Mods.md#deleting-things).
 
 An **Add to outfit** picker at the bottom adds any wardrobe item not already in it, searchable by name.
+
+## Wearing over, or instead of
+
+**Wearing this outfit → Take everything else off first**, in the edit panel, decides which of the two
+an outfit is.
+
+Off — the default, and what wearing an outfit has always done — the outfit dresses over whatever you
+have on. A slot it has nothing of its own for keeps whatever is in it, which is what makes wearing a
+pair of earrings or a single coat over a look work at all.
+
+On, **Wear** empties the slots this outfit has nothing of its own for, so none of them is left
+holding what the last outfit put there. It is the answer for a look that is the whole outfit:
+without it, wearing a short top over a look with a long coat leaves the coat on, because the new
+outfit never claimed that slot.
+
+Only those slots. This is not a strip: the pieces the outfit is about to put on are never taken off
+first, so nothing is removed and re-equipped for the sake of it and you never flash bare in between.
+A wardrobe item cleared out of a slot is taken off properly, mods and all, rather than merely hidden.
+
+**Weapons are never cleared.** What you can hold is decided by the job you are on rather than by the
+look, so emptying the hands of every outfit that happens to have no weapon in it would be wrong far
+more often than right. An outfit that does have an opinion still gets it: a weapon saved into the
+outfit is equipped like any other piece, and **Headgear and weapon** is how a look puts one away.
+
+Your [base character](Wearing-Items.md#base-character) keeps its slots and its items, as it does
+through a strip, and emotes, VFX and mounts keep running — this is about clothes.
+
+It is set per outfit rather than once for all of them, because whether a look is complete or a layer
+is a fact about that look. **Re-apply** ignores it: that puts back an outfit you are already wearing,
+and clearing on the way would take off anything you had layered over it, which is not what re-applying
+is for.
 
 ## Duplicating an outfit
 
