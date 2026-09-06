@@ -169,6 +169,8 @@ public class ItemImportPanel : IDisposable
         public bool      AlreadyImported;
         /// <summary>Model set ID for this slot, used to offer items sharing the same model.</summary>
         public ushort?   SetId;
+        /// <summary>A weapon's b number — see <see cref="WardrobeItem.ModelBaseId"/>.</summary>
+        public ushort?   BaseId;
         /// <summary>Search text for this row's manual game-item picker. Per row, so two open at
         /// once do not share one box.</summary>
         public string    ItemSearch = string.Empty;
@@ -682,7 +684,7 @@ public class ItemImportPanel : IDisposable
         // Override the auto-detected item when several share the same model
         if (_editTarget!.ModelSetId is { } editSetId)
         {
-            if (DrawGameItemPicker("edititem", editSetId, _editTarget.Slot,
+            if (DrawGameItemPicker("edititem", editSetId, _editTarget.ModelBaseId, _editTarget.Slot,
                     _editTarget.GlamourerItemId, out var pickedId, out var pickedName))
             {
                 _editTarget.GlamourerItemId   = pickedId;
@@ -1022,6 +1024,7 @@ public class ItemImportPanel : IDisposable
             GlamourerItemId   = source.GlamourerItemId,
             GlamourerItemName = source.GlamourerItemName,
             ModelSetId        = source.ModelSetId,
+            ModelBaseId       = source.ModelBaseId,
             HairIdByRace      = new Dictionary<string, ushort>(source.HairIdByRace),
             CustomizeIdsByRace = source.CustomizeIdsByRace
                 .ToDictionary(kv => kv.Key, kv => new List<ushort>(kv.Value)),
@@ -1784,15 +1787,15 @@ public class ItemImportPanel : IDisposable
     /// so being able to choose the intended one matters.
     /// Returns true when the user picked a different item.
     /// </remarks>
-    private bool DrawGameItemPicker(string id, ushort? setId, EquipSlot slot, ulong? currentId,
-        out ulong? pickedId, out string? pickedName)
+    private bool DrawGameItemPicker(string id, ushort? setId, ushort? baseId, EquipSlot slot,
+        ulong? currentId, out ulong? pickedId, out string? pickedName)
     {
         pickedId   = null;
         pickedName = null;
 
         if (setId is not { } sid || sid == 0) return false;
 
-        var candidates = _itemLookup.FindItems(sid, slot);
+        var candidates = _itemLookup.FindItems(sid, slot, baseId ?? 0);
         if (candidates.Count <= 1) return false; // nothing to choose between
 
         var currentLabel = candidates.FirstOrDefault(c => c.ItemId == currentId).ItemName
@@ -2072,12 +2075,12 @@ public class ItemImportPanel : IDisposable
 
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Switching a mod on does not reload what is already drawn on your\n" +
-                             "character, so a hair, face or skin mod can be enabled correctly and\n" +
-                             "still not appear until something redraws you. This does that redraw\n" +
-                             "as the item goes on.\n\n" +
+                             "character, so a hair, face, skin or animation mod can be enabled\n" +
+                             "correctly and still not appear until something redraws you. This\n" +
+                             "does that redraw as the item goes on.\n\n" +
                              "Leave it on unless the flicker bothers you, or the mod shows up\n" +
-                             "without it — animations, VFX and mounts are not on your character\n" +
-                             "at all and gain nothing from one.\n\n" +
+                             "without it — VFX and mounts are not on your character at all and\n" +
+                             "gain nothing from one.\n\n" +
                              "Taking the item off still redraws when nothing else would make it\n" +
                              "disappear, whatever this is set to.");
     }
@@ -2162,7 +2165,7 @@ public class ItemImportPanel : IDisposable
         }
 
         // Several game items can share one model — let the auto-picked one be overridden
-        if (DrawGameItemPicker("slotitem", cfg.SetId, cfg.Slot, cfg.GlamourerItemId,
+        if (DrawGameItemPicker("slotitem", cfg.SetId, cfg.BaseId, cfg.Slot, cfg.GlamourerItemId,
                 out var pickedId, out var pickedName))
         {
             cfg.GlamourerItemId   = pickedId;
@@ -2371,14 +2374,18 @@ public class ItemImportPanel : IDisposable
 
         var mod = _mods[Math.Min(_modIdx, _mods.Count - 1)];
 
-        // Slot → model set ID, primary first so it takes precedence
+        // Slot → model set ID, primary first so it takes precedence. Weapons carry a second
+        // number beside it, since their set alone names a whole job's armoury rather than a weapon.
         var setIds  = new Dictionary<EquipSlot, ushort>();
+        var baseIds = new Dictionary<EquipSlot, ushort>();
         var slots   = new HashSet<EquipSlot>(_analysisResult.DetectedSlots);
         var sources = new Dictionary<EquipSlot, string>();
         var replace = new Dictionary<EquipSlot, string>();
 
         foreach (var (slot, id) in _analysisResult.SlotSetIds)
             setIds.TryAdd(slot, id);
+        foreach (var (slot, id) in _analysisResult.SlotBaseIds)
+            baseIds.TryAdd(slot, id);
         foreach (var (slot, key) in _analysisResult.ReplaceKeys)
             replace.TryAdd(slot, key);
 
@@ -2400,6 +2407,8 @@ public class ItemImportPanel : IDisposable
             }
             foreach (var (slot, id) in analysis.SlotSetIds)
                 setIds.TryAdd(slot, id);
+            foreach (var (slot, id) in analysis.SlotBaseIds)
+                baseIds.TryAdd(slot, id);
             foreach (var (slot, key) in analysis.ReplaceKeys)
                 replace.TryAdd(slot, key);
             foreach (var slot in analysis.DetectedSlots)
@@ -2429,10 +2438,11 @@ public class ItemImportPanel : IDisposable
             ulong?  detectedId   = null;
             string? detectedName = null;
             ushort? slotSetId    = null;
+            ushort? slotBaseId   = baseIds.TryGetValue(slot, out var b) ? b : null;
             if (setIds.TryGetValue(slot, out var setId))
             {
                 slotSetId = setId;
-                var found = _itemLookup.FindBestItem(setId, slot);
+                var found = _itemLookup.FindBestItem(setId, slot, slotBaseId ?? 0);
                 if (found.HasValue)
                 {
                     detectedId   = found.Value.ItemId;
@@ -2446,6 +2456,7 @@ public class ItemImportPanel : IDisposable
                 Include           = !alreadyImported.Contains(slot),
                 AlreadyImported   = alreadyImported.Contains(slot),
                 SetId             = slotSetId,
+                BaseId            = slotBaseId,
                 SourceMod         = sources.GetValueOrDefault(slot),
                 Replaces          = replace.GetValueOrDefault(slot),
                 Name              = $"{mod.Name} ({slot.DisplayName()})",
@@ -2558,7 +2569,7 @@ public class ItemImportPanel : IDisposable
         var extraRefs           = BuildExtraRefs();
 
         IEnumerable<(EquipSlot slot, string name, string? image, ulong? glamId, string? glamName,
-            ushort? setId, string? replaces, bool? forceRedraw)> targets;
+            ushort? setId, ushort? baseId, string? replaces, bool? forceRedraw)> targets;
 
         if (_slotConfigs.Count > 0)
         {
@@ -2566,7 +2577,8 @@ public class ItemImportPanel : IDisposable
                 .Where(c => c.Include && !string.IsNullOrWhiteSpace(c.Name))
                 .Select(c => (c.Slot, c.Name.Trim(),
                     string.IsNullOrEmpty(c.Image) ? (string?)null : c.Image.Trim(),
-                    c.GlamourerItemId, c.GlamourerItemName, c.SetId, c.Replaces, c.ForceRedraw));
+                    c.GlamourerItemId, c.GlamourerItemName, c.SetId, c.BaseId, c.Replaces,
+                    c.ForceRedraw));
         }
         else
         {
@@ -2577,11 +2589,12 @@ public class ItemImportPanel : IDisposable
                 (SelectedSlot(_manualSlotIdx),
                  _manualName.Trim(),
                  string.IsNullOrEmpty(_manualImage) ? (string?)null : _manualImage.Trim(),
-                 (ulong?)null, (string?)null, (ushort?)null, (string?)null, _manualForceRedraw),
+                 (ulong?)null, (string?)null, (ushort?)null, (ushort?)null, (string?)null,
+                 _manualForceRedraw),
             };
         }
 
-        foreach (var (slot, name, image, glamId, glamName, setId, replaces, forceRedraw) in targets)
+        foreach (var (slot, name, image, glamId, glamName, setId, baseId, replaces, forceRedraw) in targets)
         {
             var item = new WardrobeItem
             {
@@ -2598,6 +2611,7 @@ public class ItemImportPanel : IDisposable
                 GlamourerItemId   = glamId,
                 GlamourerItemName = glamName,
                 ModelSetId        = setId,
+                ModelBaseId       = baseId,
                 HairIdByRace      = slot == EquipSlot.Hair && _analysisResult != null
                     ? _analysisResult.HairIdsByRace.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value)
                     : new Dictionary<string, ushort>(),
@@ -3097,6 +3111,11 @@ public class ItemImportPanel : IDisposable
             // on a successful lookup would silently discard it.
             item.ModelSetId = setId;
 
+            // The other half of a weapon's model id, and the whole point of a Re-detect on one: an
+            // item imported before this was read has the set only, and the set alone resolves to
+            // whichever weapon of that job sorts first rather than the one the mod replaces.
+            item.ModelBaseId = result.SlotBaseIds.TryGetValue(slot, out var reBase) ? reBase : null;
+
             if (slot == EquipSlot.Hair)
                 item.HairIdByRace = result.HairIdsByRace
                     .ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
@@ -3147,7 +3166,7 @@ public class ItemImportPanel : IDisposable
                 return;
             }
 
-            var found = _itemLookup.FindBestItem(setId, slot);
+            var found = _itemLookup.FindBestItem(setId, slot, item.ModelBaseId ?? 0);
             if (found.HasValue)
             {
                 item.GlamourerItemId   = found.Value.ItemId;
@@ -3188,6 +3207,7 @@ public class ItemImportPanel : IDisposable
 
         item.Slot              = slot;
         item.ModelSetId        = null;
+        item.ModelBaseId       = null;
         item.GlamourerItemId   = null;
         item.GlamourerItemName = null;
         item.HairIdByRace      = new Dictionary<string, ushort>();

@@ -474,11 +474,12 @@ at the edit panel.
 Switching a mod on redirects files, but it does not reload what is already drawn on your character.
 Gear does not notice, because swapping the Glamourer item reloads the piece anyway — a hair, face or
 skin mod has no item to swap, so it can be enabled perfectly correctly and still not appear until
-something redraws you.
+something redraws you. An animation is the same story: the `.pap` your character is playing was
+loaded long before the mod went on, so it keeps playing until you are rebuilt.
 
 **Redraw on apply**, on the import panel and in the edit panel, does that redraw as the item goes on.
-It is on by default for Hair, Face, Tail, Viera Ears, Skin and Other, and off for Animation, VFX and
-Mount / Minion — those are not on your character, so redrawing it does nothing for them. Items
+It is on by default for Hair, Face, Tail, Viera Ears, Skin, Other and Animation, and off for VFX and
+Mount / Minion — those two are not on your character, so redrawing it does nothing for them. Items
 imported before the toggle existed follow the same defaults; nothing needs re-importing.
 
 Turn it off for a mod that shows up without it and you would rather not have the flicker. Removing an

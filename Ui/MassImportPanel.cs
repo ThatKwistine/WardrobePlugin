@@ -1066,7 +1066,8 @@ public class MassImportPanel : Window, IDisposable
             var children = ChildrenOf(row).ToList();
             foreach (var child in children) EnsureAnalysis(child);
 
-            var slots = BuildSlots(row, children, out var setIds, out var replaces, out var layers);
+            var slots = BuildSlots(row, children, out var setIds, out var baseIds,
+                                   out var replaces, out var layers);
             if (slots.Count == 0) { skipped++; continue; }
 
             var extraRefs = children
@@ -1093,11 +1094,12 @@ public class MassImportPanel : Window, IDisposable
 
                 ulong?  glamId    = null;
                 string? glamName  = null;
-                ushort? slotSetId = null;
+                ushort? slotSetId  = null;
+                ushort? slotBaseId = baseIds.TryGetValue(slot, out var b) ? b : null;
                 if (setIds.TryGetValue(slot, out var setId))
                 {
                     slotSetId = setId;
-                    var found = _itemLookup.FindBestItem(setId, slot);
+                    var found = _itemLookup.FindBestItem(setId, slot, slotBaseId ?? 0);
                     if (found.HasValue)
                     {
                         glamId   = found.Value.ItemId;
@@ -1114,6 +1116,7 @@ public class MassImportPanel : Window, IDisposable
                     GlamourerItemId   = glamId,
                     GlamourerItemName = glamName,
                     ModelSetId        = slotSetId,
+                    ModelBaseId       = slotBaseId,
                     CustomizeIdsByRace = ItemImportPanel.CoverageFor(analysis, slot),
                     HairIdByRace      = slot == EquipSlot.Hair
                         ? analysis.HairIdsByRace.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value)
@@ -1172,15 +1175,17 @@ public class MassImportPanel : Window, IDisposable
     /// never have produced.
     /// </summary>
     private List<EquipSlot> BuildSlots(Row row, List<Row> children,
-        out Dictionary<EquipSlot, ushort> setIds, out Dictionary<EquipSlot, string> replaces,
-        out Dictionary<EquipSlot, string> layers)
+        out Dictionary<EquipSlot, ushort> setIds, out Dictionary<EquipSlot, ushort> baseIds,
+        out Dictionary<EquipSlot, string> replaces, out Dictionary<EquipSlot, string> layers)
     {
         setIds   = new Dictionary<EquipSlot, ushort>();
+        baseIds  = new Dictionary<EquipSlot, ushort>();
         replaces = new Dictionary<EquipSlot, string>();
         layers   = new Dictionary<EquipSlot, string>();
 
         var slots = new HashSet<EquipSlot>(row.Analysis!.DetectedSlots);
         foreach (var (slot, id) in row.Analysis.SlotSetIds) setIds.TryAdd(slot, id);
+        foreach (var (slot, id) in row.Analysis.SlotBaseIds) baseIds.TryAdd(slot, id);
         foreach (var (slot, key) in row.Analysis.ReplaceKeys) replaces.TryAdd(slot, key);
         foreach (var slot in row.Analysis.DetectedSlots)
             if (row.Analysis.LayerFor(slot) is { } layer) layers.TryAdd(slot, layer);
@@ -1192,6 +1197,7 @@ public class MassImportPanel : Window, IDisposable
             // TryAdd throughout: the primary is the mod the item is really "about", so it wins
             // wherever both it and a supplement describe the same slot.
             foreach (var (slot, id) in child.Analysis.SlotSetIds) setIds.TryAdd(slot, id);
+            foreach (var (slot, id) in child.Analysis.SlotBaseIds) baseIds.TryAdd(slot, id);
             foreach (var (slot, key) in child.Analysis.ReplaceKeys) replaces.TryAdd(slot, key);
             foreach (var slot in child.Analysis.DetectedSlots)
                 if (child.Analysis.LayerFor(slot) is { } layer) layers.TryAdd(slot, layer);

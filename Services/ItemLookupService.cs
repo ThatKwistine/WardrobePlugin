@@ -26,16 +26,36 @@ public class ItemLookupService
     /// Returns game items whose model set ID matches <paramref name="equipSetId"/> for the given slot.
     /// Results are sorted by row ID ascending (base items first, HQ/variant items after).
     /// </summary>
-    public IList<(ulong ItemId, string ItemName)> FindItems(ushort equipSetId, EquipSlot slot)
+    /// <param name="baseId">
+    /// A weapon's <c>b</c> number, which is the other half of its model id. Zero for everything
+    /// else, and for a weapon whose mod files were read before this was recorded.
+    /// </param>
+    /// <remarks>
+    /// The set ID alone does not name a weapon. <c>w2501</c> is every Gunbreaker arm in the game —
+    /// 155 items across 41 different <c>b</c> numbers — so matching on it and taking the first row
+    /// answered "Revolver" for every gunblade mod there is, and the mod then had nothing to attach
+    /// to because Penumbra's redirect is for the <c>b</c> the mod actually replaces.
+    /// <para>
+    /// Only applied to the hands, where bits 16-31 are that <c>b</c> number. On everything else the
+    /// same bits are the variant, which is not what is being matched and would rule out the item
+    /// being looked for.
+    /// </para>
+    /// </remarks>
+    public IList<(ulong ItemId, string ItemName)> FindItems(ushort equipSetId, EquipSlot slot,
+                                                            ushort baseId = 0)
     {
         if (_items == null || equipSetId == 0)
             return Array.Empty<(ulong, string)>();
 
+        var matchBase = baseId != 0 && slot is EquipSlot.MainHand or EquipSlot.OffHand;
+
         var results = new List<(ulong, string)>();
         foreach (var item in _items)
         {
-            // ModelMain packs: bits 0-15 = primary equip set ID, bits 16-31 = secondary (variant)
+            // ModelMain packs: bits 0-15 = primary equip set ID, bits 16-31 = secondary — the
+            // variant on equipment, and a weapon's b number
             if ((ushort)(item.ModelMain & 0xFFFF) != equipSetId) continue;
+            if (matchBase && (ushort)((item.ModelMain >> 16) & 0xFFFF) != baseId) continue;
             if (!MatchesSlot(item, slot)) continue;
 
             var name = item.Name.ExtractText();
@@ -106,9 +126,10 @@ public class ItemLookupService
     }
 
     /// <summary>Returns the best single match (first result), or null if none found.</summary>
-    public (ulong ItemId, string ItemName)? FindBestItem(ushort equipSetId, EquipSlot slot)
+    public (ulong ItemId, string ItemName)? FindBestItem(ushort equipSetId, EquipSlot slot,
+                                                        ushort baseId = 0)
     {
-        var list = FindItems(equipSetId, slot);
+        var list = FindItems(equipSetId, slot, baseId);
         return list.Count > 0 ? list[0] : null;
     }
 

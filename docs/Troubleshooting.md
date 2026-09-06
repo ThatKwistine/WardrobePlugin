@@ -92,7 +92,7 @@ character model can go on correctly and only appear the next time something redr
 why redrawing by hand in Penumbra "fixes" it.
 
 **Redraw on apply**, in the item's edit panel, does that redraw for you. It is on by default for
-customisation slots, so check it has not been turned off for that item.
+customisation slots and for animations, so check it has not been turned off for that item.
 
 If it is on and the mod still does not appear, the mod is probably built for a different face,
 hairstyle or race than your character has. A face paint made for Face 1 shows nothing on Face 5.

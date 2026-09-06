@@ -167,13 +167,21 @@ public static class EquipSlotEx
     /// Enabling a Penumbra mod does not reload what is already drawn on the character, so a mod that
     /// replaces part of the model — hair, a face, a shared texture — can go on without showing up
     /// until something else forces a reload. Gear has no such trouble: swapping the Glamourer item
-    /// reloads the piece by itself. Mod categories are not on the character at all, so redrawing it
-    /// for an animation or a mount is a stutter that buys nothing.
+    /// reloads the piece by itself.
     /// <para>
-    /// The default only — <see cref="WardrobeItem.ForceRedraw"/> overrides it per item.
+    /// Animations are the mod category that behaves like customisation rather than like a mount. A
+    /// <c>.pap</c> is bound to the character's skeleton and is already loaded by the time the mod is
+    /// switched on, so the redirection lands on nothing and the old animation goes on playing until
+    /// the character is rebuilt. VFX and mounts really are separate from the character and gain
+    /// nothing from a redraw, which is why they are still left out.
+    /// </para>
+    /// <para>
+    /// The default only — <see cref="WardrobeItem.ForceRedraw"/> overrides it per item, so an
+    /// animation an owner has explicitly ticked off stays off.
     /// </para>
     /// </remarks>
-    public static bool RedrawsByDefault(this EquipSlot s) => s.IsCustomization();
+    public static bool RedrawsByDefault(this EquipSlot s) =>
+        s.IsCustomization() || s == EquipSlot.Animation;
 
     /// <summary>
     /// Wording for the buttons that turn an item on and off. Gear is equipped, customisation is

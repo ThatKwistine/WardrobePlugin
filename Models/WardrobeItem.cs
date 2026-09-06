@@ -74,6 +74,16 @@ public class WardrobeItem : IImageOwner
     public ushort? ModelSetId { get; set; }
 
     /// <summary>
+    /// The <c>b</c> half of a weapon's model id, detected alongside <see cref="ModelSetId"/>.
+    /// </summary>
+    /// <remarks>
+    /// Only weapons have one. Their set ID names a whole job's armoury — <c>w2501</c> is all 155
+    /// Gunbreaker arms — so it takes this as well to say which weapon the mod replaces. Null on
+    /// items imported before it was recorded, which is what a Re-detect fills in.
+    /// </remarks>
+    public ushort? ModelBaseId { get; set; }
+
+    /// <summary>
     /// Hairstyle numbers this mod replaces, keyed by model race code ("0101", "1801", …).
     /// </summary>
     /// <remarks>
@@ -358,6 +368,7 @@ public class WardrobeItem : IImageOwner
         GlamourerItemId        = GlamourerItemId,
         GlamourerItemName      = GlamourerItemName,
         ModelSetId             = ModelSetId,
+        ModelBaseId            = ModelBaseId,
         HairIdByRace           = new Dictionary<string, ushort>(HairIdByRace),
         CustomizeIdsByRace     = CustomizeIdsByRace.ToDictionary(kv => kv.Key,
                                                                  kv => new List<ushort>(kv.Value)),

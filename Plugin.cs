@@ -38,6 +38,9 @@ public sealed class Plugin : IDalamudPlugin
     public static EmoteLookupService  Emotes       { get; private set; } = null!;
     public static GlamourPlateService GlamourPlates { get; private set; } = null!;
     public static GameScreenshotService Shutter     { get; private set; } = null!;
+
+    /// <summary>Reads the game's own back buffer. Experimental - see <see cref="FrameCaptureService"/>.</summary>
+    public static FrameCaptureService   Frames      { get; private set; } = null!;
     public static TextureCompressionFlagService TextureFlags { get; private set; } = null!;
 
     private readonly Configuration            _config;
@@ -124,6 +127,7 @@ public sealed class Plugin : IDalamudPlugin
         GlamourPlates      = new GlamourPlateService(Log);
 
         Shutter            = new GameScreenshotService(Log, Framework, Interop, Keys, _config);
+        Frames             = new FrameCaptureService(Log);
         TextureFlags       = new TextureCompressionFlagService(Penumbra, Framework, Log);
 
         _wardrobeService   = new WardrobeService(Penumbra, Glamourer, _config, Log, Framework);
@@ -178,6 +182,9 @@ public sealed class Plugin : IDalamudPlugin
 
         pi.UiBuilder.DisableGposeUiHide = true;
 
+        // Before the windows, so an armed capture reads the frame the game drew rather than one
+        // with this plugin's own interface already painted over it
+        pi.UiBuilder.Draw        += TickFrameCapture;
         pi.UiBuilder.Draw        += _windowSystem.Draw;
         pi.UiBuilder.Draw        += _ui.DrawFileDialog;
         pi.UiBuilder.Draw        += _cropGuide.Draw;
@@ -366,10 +373,14 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OpenSettings() => _settings.IsOpen = true;
 
+    /// <summary>Gives the frame capture its one look at the back buffer, on the render thread.</summary>
+    private void TickFrameCapture() => Frames.Tick();
+
     public void Dispose()
     {
         Commands.RemoveHandler(CommandName);
         Commands.RemoveHandler(CommandAlias);
+        PluginInterface.UiBuilder.Draw        -= TickFrameCapture;
         PluginInterface.UiBuilder.Draw        -= _windowSystem.Draw;
         PluginInterface.UiBuilder.Draw        -= _ui.DrawFileDialog;
         PluginInterface.UiBuilder.Draw        -= _cropGuide.Draw;

@@ -55,6 +55,12 @@
       <HintPath>$(DalamudLibPath)InteropGenerator.Runtime.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- Direct3D types for reading the game's back buffer. Shipped with Dalamud, so this adds no
+         dependency of its own and cannot drift from the version the game is running against. -->
+    <Reference Include="TerraFX.Interop.Windows">
+      <HintPath>$(DalamudLibPath)TerraFX.Interop.Windows.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Lumina">
       <HintPath>$(DalamudLibPath)Lumina.dll</HintPath>
       <Private>false</Private>

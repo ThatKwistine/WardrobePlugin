@@ -644,6 +644,16 @@ public partial class PluginUi : Window, IDisposable
 
         if (!_config.ClassicToolbar) DrawMenuBar();
 
+        // The item panel closes itself — from Save, from Cancel, from the X — so there is no one
+        // place to hold the card from on the way out, only this transition. Before rightOpen is
+        // read, so the hold is standing by on the same frame the columns widen again.
+        if (_panelWasOpen && !_panel.IsOpen && _lastEditItem is { } wasEditing)
+        {
+            _gridHold     = wasEditing;
+            _lastEditItem = null;
+        }
+        _panelWasOpen = _panel.IsOpen;
+
         var totalW  = ImGui.GetContentRegionAvail().X;
         var totalH  = ImGui.GetContentRegionAvail().Y;
         var rightOpen = _panel.IsOpen || _showImageBrowser || _showTags
@@ -4140,6 +4150,125 @@ public partial class PluginUi : Window, IDisposable
     private int _gridStamp = -1;
 
     /// <summary>
+    /// Where each grid was looking last frame, so a change of column count can put it back.
+    /// </summary>
+    /// <remarks>
+    /// One per grid rather than one shared: the two draw into the same scrolling child but lay their
+    /// cards out on different widths and heights, so a position recorded by one means nothing to the
+    /// other.
+    /// </remarks>
+    private readonly GridScroll _gridScroll   = new();
+    private readonly GridScroll _outfitScroll = new();
+
+    /// <summary>
+    /// A card the next reflow should hold still, rather than holding the top of the view.
+    /// </summary>
+    /// <remarks>
+    /// Set when the panel that causes the reflow is opened on a particular card, and read on the
+    /// frame the columns actually change — which is the frame after for an opening panel, and the
+    /// same frame for a closing one. Either way it is resolved against the layout recorded before
+    /// the change, which is why it travels as an id and not a position.
+    /// </remarks>
+    private Guid? _gridHold;
+
+    /// <summary>Tracks <see cref="ItemImportPanel.IsOpen"/> so its closing can be noticed.</summary>
+    private bool _panelWasOpen;
+
+    /// <summary>The last item opened for editing, to hold still when its panel closes again.</summary>
+    private Guid? _lastEditItem;
+
+    /// <summary>
+    /// Enough of a card grid's scroll position to survive the cards being rearranged.
+    /// </summary>
+    /// <remarks>
+    /// The right-hand panel takes its width off the grid, and the grid fits whole cards, so opening
+    /// or closing anything over there changes how many cards sit on a row. Scroll is measured in
+    /// pixels, so the same offset then points at an entirely different part of the wardrobe — which
+    /// is what made editing three items in one place a hunt for them again after each one.
+    /// <para>
+    /// The fix is to record the position as a card rather than as a distance: which card the view is
+    /// resting on, and how high up the view it sits. Both survive the reflow, so the scroll can be
+    /// worked out again afterwards from the new column count.
+    /// </para>
+    /// </remarks>
+    private sealed class GridScroll
+    {
+        private int   _columns;
+        private float _rowHeight;
+        private float _scroll;
+
+        /// <summary>Notes the layout a frame drew with, ready for the next one that differs.</summary>
+        public void Record(int columns, float rowHeight, float scroll)
+        {
+            _columns   = columns;
+            _rowHeight = rowHeight;
+            _scroll    = scroll;
+        }
+
+        /// <summary>
+        /// The scroll that puts the view back where it was, or null if nothing has moved.
+        /// </summary>
+        /// <param name="hold">
+        /// Index of a card to keep at the height it is at, or -1 to keep the top-left card instead.
+        /// </param>
+        /// <remarks>
+        /// Both cases are the same sum: take where the card sits on screen under the old layout,
+        /// then find the scroll that puts it at that same height under the new one. Holding the
+        /// top-left card is only the case where that height happens to be the top edge.
+        /// </remarks>
+        public float? Reflow(int columns, float rowHeight, int hold)
+        {
+            if (_columns <= 0 || _rowHeight <= 0f || _columns == columns) return null;
+
+            if (hold < 0) hold = (int)(_scroll / _rowHeight) * _columns;
+
+            var screenY = hold / _columns * _rowHeight - _scroll;
+            return Math.Max(0f, hold / columns * rowHeight - screenY);
+        }
+    }
+
+    /// <summary>
+    /// Applies a grid's remembered position to the scroll, and records where it ends up.
+    /// </summary>
+    /// <remarks>
+    /// The scroll is set for the next frame rather than this one — ImGui applies a scroll target when
+    /// the window is next begun — so this frame is still drawn at the old offset. That is deliberate:
+    /// drawing the new rows against the old scroll would show a frame of the empty space above or
+    /// below them, and one frame at the old position is the less visible of the two.
+    /// <para>
+    /// It is also the tiny flick of movement visible as the cards settle. Covering it means sliding
+    /// the whole run of cards by the difference for that one frame, since the scroll cannot be made
+    /// to land any sooner — ImGui clamps a scroll target against the content height measured at the
+    /// end of the frame before, which on the frame the columns narrow is still the old shorter
+    /// layout, and <c>SetNextWindowScroll</c> is clamped by the same stale height. Left alone as not
+    /// worth the complication.
+    /// </para>
+    /// <para>
+    /// What is recorded is where the grid is heading, not where it is, so a second change arriving
+    /// before the first has landed still measures from the right place.
+    /// </para>
+    /// </remarks>
+    /// <returns>
+    /// The scroll this frame is actually being drawn at, which is what row arithmetic has to use —
+    /// not the one it is heading for.
+    /// </returns>
+    private static float ApplyGridScroll(GridScroll state, int columns, float rowHeight,
+                                         int rows, float viewH, int hold)
+    {
+        var drawn   = ImGui.GetScrollY();
+        var settled = drawn;
+
+        if (state.Reflow(columns, rowHeight, hold) is { } target)
+        {
+            settled = Math.Clamp(target, 0f, Math.Max(0f, rows * rowHeight - viewH));
+            ImGui.SetScrollY(settled);
+        }
+
+        state.Record(columns, rowHeight, settled);
+        return drawn;
+    }
+
+    /// <summary>
     /// Everything the grid's contents depend on, in one number that is cheap to compute.
     /// </summary>
     /// <remarks>
@@ -4285,8 +4414,15 @@ public partial class PluginUi : Window, IDisposable
         // every card regardless of scroll position is what made a 200-item wardrobe expensive.
         var rowHeight = CardHeight + ImGui.GetStyle().ItemSpacing.Y;
         var totalRows = (items.Count + columns - 1) / columns;
-        var scrollY   = ImGui.GetScrollY();
         var viewH     = ImGui.GetWindowHeight();
+
+        // Hold the card the panel was opened on, or the top of the view when the reflow was not
+        // started from a card. Resolved here rather than where it was asked for, because an id is
+        // the only part of a card's position that means the same thing either side of a reflow.
+        var hold = _gridHold is { } holdId ? items.FindIndex(i => i.Id == holdId) : -1;
+        _gridHold = null;
+
+        var scrollY = ApplyGridScroll(_gridScroll, columns, rowHeight, totalRows, viewH, hold);
 
         // One row of overscan each way, so a partially-scrolled row is never clipped mid-draw
         var firstRow = Math.Max(0, (int)(scrollY / rowHeight) - 1);
@@ -6365,6 +6501,8 @@ public partial class PluginUi : Window, IDisposable
                                  "if this has said True for more than a few seconds.");
         }
 
+        DrawFrameCaptureTest();
+
         if (string.Equals(state.Result, "NoDiskSpace", StringComparison.OrdinalIgnoreCase))
         {
             ImGui.Spacing();
@@ -6380,6 +6518,95 @@ public partial class PluginUi : Window, IDisposable
                               "The game is saving screenshots as DDS, which a session cannot read. " +
                               "Set the screenshot format to PNG or JPG in the game's own settings.");
             ImGui.PopTextWrapPos();
+        }
+    }
+
+    /// <summary>
+    /// The experiment that asks whether the wardrobe could take its own pictures.
+    /// </summary>
+    /// <remarks>
+    /// Everything the session does today rests on the game taking the picture — which it will only do
+    /// for a pressed key, because its screenshot function cannot be driven from a plugin at all.
+    /// Reading the frame the game has already drawn would need neither, and would take the folder
+    /// watching, the format checks and the synthetic keypress with it.
+    /// <para>
+    /// Two things have to be true first, and neither can be settled by argument: the colours have to
+    /// match the pictures already in the wardrobe, and no plugin window may end up in the frame. So
+    /// this writes one frame to a file to be looked at, and nothing else.
+    /// </para>
+    /// </remarks>
+    private void DrawFrameCaptureTest()
+    {
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ImGui.TextDisabled("Experiment: let the wardrobe take the picture itself, from the frame the " +
+                           "game has already drawn.");
+        ImGui.Spacing();
+
+        var arming = Plugin.Frames.Arming;
+
+        ImGui.BeginDisabled(arming);
+        if (ImGui.Button(arming
+                             ? $"Capturing in {Plugin.Frames.ArmingSeconds:0.0}s..."
+                             : "Capture a test frame"))
+        {
+            var path = Path.Combine(Plugin.PluginInterface.ConfigDirectory.FullName,
+                                    $"frame-test-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+            Plugin.Frames.Arm(path);
+        }
+        ImGui.EndDisabled();
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Waits about four seconds, then saves the frame the game is drawing.\n" +
+                             "Close this window and frame the shot while it counts down.");
+
+        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+        ImGui.TextDisabled("It waits a few seconds so these windows can be closed first — whether " +
+                           "they appear in the frame is half of what the test is asking. Take a " +
+                           "normal screenshot of the same scene afterwards and compare the two.");
+        ImGui.PopTextWrapPos();
+
+        if (Plugin.Frames.Last is not { } last) return;
+
+        ImGui.Spacing();
+
+        if (last.Captured)
+        {
+            ImGui.TextColored(new Vector4(0.5f, 0.85f, 0.5f, 1f),
+                              $"Captured {last.Width}x{last.Height} ({last.Format})");
+            ImGui.TextDisabled(last.Path);
+
+            if (ImGui.Button("Show me the file"))
+                RevealInExplorer(last.Path);
+        }
+        else
+        {
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0.35f, 1f), last.Note);
+            if (last.Format != "-")
+                ImGui.TextDisabled($"Back buffer: {last.Width}x{last.Height} ({last.Format})");
+            ImGui.PopTextWrapPos();
+        }
+    }
+
+    /// <summary>Opens Explorer with the file selected, the way the export folder button does.</summary>
+    private void RevealInExplorer(string path)
+    {
+        try
+        {
+            var args = File.Exists(path) ? $"/select,\"{path}\"" : $"\"{path}\"";
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "explorer.exe",
+                Arguments       = args,
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _log.Warning($"[Wardrobe] Could not open the captured frame's folder - {ex.Message}");
         }
     }
 
@@ -7129,6 +7356,14 @@ public partial class PluginUi : Window, IDisposable
         var columns = Math.Max(1, (int)((avail + CardPad) / (cardW + CardPad)));
         var col     = 0;
         Outfit? toDelete = null;
+
+        // The same reflow the item grid guards against: the outfit editor is a right-hand panel too,
+        // so opening one takes width off this grid and rearranges every card behind it.
+        var hold = _gridHold is { } holdId ? outfits.FindIndex(o => o.Id == holdId) : -1;
+        _gridHold = null;
+
+        ApplyGridScroll(_outfitScroll, columns, cardH + ImGui.GetStyle().ItemSpacing.Y,
+                        (outfits.Count + columns - 1) / columns, ImGui.GetWindowHeight(), hold);
 
         foreach (var outfit in outfits)
         {
@@ -9305,6 +9540,13 @@ public partial class PluginUi : Window, IDisposable
     private void OpenItemEditor(WardrobeItem item)
     {
         _imageCache.Remove(item.Id);
+
+        // The panel is about to take its width off the grid, which rearranges every card behind it.
+        // Both halves of holding this one still are set here: the id the reflow anchors on, and the
+        // id to anchor on again when the panel is closed and the width comes back.
+        _gridHold     = item.Id;
+        _lastEditItem = item.Id;
+
         _panel.OpenEdit(item);
     }
 
@@ -9518,6 +9760,12 @@ public partial class PluginUi : Window, IDisposable
 
     private void CloseOutfitEdit()
     {
+        // The panel closing gives its width back to the grid, so hold the card it was opened on in
+        // the same way opening it did. Read on whichever frame the columns actually change, which
+        // is after this one either way — the panel is drawn after the grid, and a close from the
+        // delete path has already had this frame's hold cleared out from under it.
+        if (_editingOutfit != null) _gridHold = _editingOutfit.Id;
+
         _editingOutfit     = null;
         _editOutfitName    = string.Empty;
         _editOutfitImage   = string.Empty;
@@ -9530,6 +9778,7 @@ public partial class PluginUi : Window, IDisposable
 
     private void OpenOutfitEdit(Outfit outfit)
     {
+        _gridHold          = outfit.Id;
         _editingOutfit     = outfit;
         _editOutfitName    = outfit.Name;
         _editOutfitImage   = outfit.ImagePath ?? string.Empty;

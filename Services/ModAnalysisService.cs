@@ -167,6 +167,15 @@ public record ModAnalysisResult(
     /// <summary>Equipment set IDs extracted from the mod file paths, keyed by slot.</summary>
     IReadOnlyDictionary<EquipSlot, ushort> SlotSetIds,
     /// <summary>
+    /// The <c>b</c> number of a weapon's model, keyed by slot. Only weapons appear here.
+    /// </summary>
+    /// <remarks>
+    /// A weapon's set ID names a whole job's armoury, not a weapon: every Gunbreaker arm in the game
+    /// is <c>w2501</c>. It takes both halves to say which one, so this is the other half, and without
+    /// it the lookup can only offer the lowest-numbered item of the family.
+    /// </remarks>
+    IReadOnlyDictionary<EquipSlot, ushort> SlotBaseIds,
+    /// <summary>
     /// Hairstyle numbers keyed by model race code (0101, 1801, …). Hairstyle numbering differs
     /// per race, so the right one depends on who is wearing it.
     /// </summary>
@@ -248,6 +257,14 @@ public class ModAnalysisService
     /// </remarks>
     private readonly HashSet<EquipSlot> _modelSlots = new();
 
+    /// <summary>The <c>b</c> half of a weapon's model id, seen this Analyze call.</summary>
+    /// <remarks>
+    /// Kept beside the set ids rather than in them because only weapons have one, and an instance
+    /// field for the same reason <see cref="_modelSlots"/> is: it would otherwise be a fifth
+    /// dictionary threaded through <c>ClassifyPath</c> and <c>AddGroup</c> for one branch's sake.
+    /// </remarks>
+    private readonly Dictionary<EquipSlot, Detected> _weaponBaseIds = new();
+
     public ModAnalysisService(IPluginLog? log = null) => _log = log;
 
     /// <summary>An id found in a path, and whether the path that gave it was a model.</summary>
@@ -307,6 +324,20 @@ public class ModAnalysisService
 
     private static readonly Regex WeaponPattern =
         new(@"chara/weapon/w(\d+)/", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // chara/weapon/w{Set}/obj/body/b{Base}/… — the second half of a weapon's identity.
+    //
+    // A weapon is not named by its set alone. w2501 is every Gunbreaker arm in the game, 155 of
+    // them, and which one a mod replaces is the b number: w2501b0016 is the Revolver, w2501b0002
+    // the Deepgold Gunblade. Matching on the set by itself found the whole job's weapon list and
+    // took the lowest row id off the front of it, which is why every gunblade mod in a wardrobe
+    // came out as "Revolver" — see ItemLookupService.FindItems.
+    //
+    // Separate from the pattern above rather than folded into it, so a weapon path in some shape
+    // this does not expect still registers the slot exactly as it always did, and only loses the
+    // narrowing.
+    private static readonly Regex WeaponBasePattern =
+        new(@"chara/weapon/w\d+/obj/body/b(\d+)/", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // chara/human/c{race}/obj/{hair|face|tail|zear|body}/...  — character customisation, not equipment.
     // Group 1 = the body-part folder, which is what identifies the kind of mod.
@@ -412,6 +443,7 @@ public class ModAnalysisService
         _customTextures = 0;
         _modelSlots.Clear();
         _coverage.Clear();
+        _weaponBaseIds.Clear();
         var slots   = new HashSet<EquipSlot>();
         var setIds  = new Dictionary<EquipSlot, Detected>();
         var hairIds = new Dictionary<int, Detected>();
@@ -419,8 +451,8 @@ public class ModAnalysisService
         var groups  = new List<ModOptionGroup>();
 
         if (!Directory.Exists(modFolderPath))
-            return new ModAnalysisResult(slots, groups, Ids(setIds), Ids(hairIds), replace,
-                new HashSet<EquipSlot>(_modelSlots), Coverage());
+            return new ModAnalysisResult(slots, groups, Ids(setIds), Ids(_weaponBaseIds), Ids(hairIds),
+                replace, new HashSet<EquipSlot>(_modelSlots), Coverage());
 
         var meta = ReadMeta(Path.Combine(modFolderPath, "meta.json"));
 
@@ -491,8 +523,8 @@ public class ModAnalysisService
                               $"custom textures — taking it for a skin.");
         }
 
-        return new ModAnalysisResult(slots, groups, Ids(setIds), Ids(hairIds), replace,
-                new HashSet<EquipSlot>(_modelSlots), Coverage());
+        return new ModAnalysisResult(slots, groups, Ids(setIds), Ids(_weaponBaseIds), Ids(hairIds),
+                replace, new HashSet<EquipSlot>(_modelSlots), Coverage());
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -747,7 +779,18 @@ public class ModAnalysisService
         {
             slots.Add(EquipSlot.MainHand);
             if (ushort.TryParse(m.Groups[1].Value, out var id))
-                Record(setIds, EquipSlot.MainHand, id, IsModelPath(gamePath));
+            {
+                var fromModel = IsModelPath(gamePath);
+                Record(setIds, EquipSlot.MainHand, id, fromModel);
+
+                // Recorded from the same path and under the same rule as the set above, so the two
+                // halves come off one weapon rather than being paired across two of them. They can
+                // only part company if the first model path the mod ships has no obj/body in it,
+                // which is not a layout the game uses.
+                var b = WeaponBasePattern.Match(gamePath);
+                if (b.Success && ushort.TryParse(b.Groups[1].Value, out var baseId))
+                    Record(_weaponBaseIds, EquipSlot.MainHand, baseId, fromModel);
+            }
             return;
         }
 

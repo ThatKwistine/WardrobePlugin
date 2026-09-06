@@ -2502,6 +2502,12 @@ public class WardrobeService : IDisposable
         if (missing > 0)
             _log.Warning($"[Wardrobe] Outfit '{outfit.Name}': {missing} item(s) no longer exist and were skipped.");
 
+        // Taken before anything is cleared, because it is a record of what is on the character right
+        // now — see the revert below, which is the only thing it is for.
+        var outgoingRows = AdvancedRowsOn(
+            _activeOutfitId is { } previousId ? _config.Outfits.Find(o => o.Id == previousId) : null,
+            _config.WornItems.Values);
+
         // An outfit that clears its slots is saying it is the whole look rather than a layer, so the
         // slots it has nothing of its own for are emptied instead of being left holding what the last
         // outfit put there. Only those slots: the pieces about to go on are never taken off and put
@@ -2532,6 +2538,8 @@ public class WardrobeService : IDisposable
             }
         }
 
+        RevertStaleAdvancedDyes(outfit, items, outgoingRows);
+
         // Before the items, so the design is the layer they go on over: an item in the outfit wins
         // the slot it occupies, and the design dresses everything the outfit has nothing for. The
         // other way round, the design's gear would replace the very pieces the outfit is made of.
@@ -2556,6 +2564,71 @@ public class WardrobeService : IDisposable
         WardrobeChanged?.Invoke();
         _log.Information($"[Wardrobe] Wore outfit '{outfit.Name}' ({items.Count} item(s), " +
                          $"{outfit.VanillaItems.Count} vanilla piece(s))");
+    }
+
+    /// <summary>
+    /// The advanced dye rows an outfit has put on the character, across everything it is wearing.
+    /// </summary>
+    /// <remarks>
+    /// Gathered into one map because the rows are keyed by slot and row, not by item: two pieces
+    /// never write the same key, so flattening them loses nothing and gives the one set that
+    /// describes the character as it stands.
+    /// </remarks>
+    private Dictionary<string, string> AdvancedRowsOn(Outfit? outfit, IEnumerable<Guid> wornIds)
+    {
+        var rows = new Dictionary<string, string>();
+        if (outfit == null) return rows;
+
+        foreach (var id in wornIds)
+            if (GetDye(outfit, id)?.Advanced is { Count: > 0 } advanced)
+                foreach (var (key, row) in advanced)
+                    rows[key] = row;
+
+        return rows;
+    }
+
+    /// <summary>
+    /// Puts back the advanced dye rows the outfit coming off left behind and the one going on has
+    /// nothing to say about.
+    /// </summary>
+    /// <remarks>
+    /// An advanced dye row belongs to a slot rather than to a piece, and nothing but an explicit
+    /// revert takes one off — which is why <see cref="UnwearItem"/> reverts on the way out. But
+    /// wearing an outfit deliberately does not take off what it is about to replace: neither
+    /// <see cref="ClearUnusedSlots"/> nor the removeOthers pass touches a slot the new outfit fills,
+    /// precisely so the character is never briefly bare. Those slots were the hole. Swapping from an
+    /// outfit with advanced dyes to one without left every row in place, and the new outfit's pieces
+    /// wore the old one's colours.
+    /// <para>
+    /// Only the rows the incoming outfit has no opinion on. One it is about to write itself is
+    /// overwritten a moment later anyway, and reverting it first would be two state round trips to
+    /// arrive at the same place, with a frame of the game's own colour in between.
+    /// </para>
+    /// <para>
+    /// Scoped to what the wardrobe applied, never to Glamourer's whole <c>Materials</c> block. Rows
+    /// somebody set by hand in Glamourer are theirs, and clearing those because an outfit was put on
+    /// would be the wardrobe helping itself to a part of the character it was never given.
+    /// </para>
+    /// </remarks>
+    private void RevertStaleAdvancedDyes(Outfit outfit, IReadOnlyList<WardrobeItem> items,
+                                         Dictionary<string, string> outgoingRows)
+    {
+        if (!_config.AdvancedDyesEnabled || outgoingRows.Count == 0) return;
+
+        var incoming = new HashSet<string>();
+        foreach (var item in items)
+            if (GetDye(outfit, item.Id)?.Advanced is { Count: > 0 } advanced)
+                incoming.UnionWith(advanced.Keys);
+
+        var stale = outgoingRows
+            .Where(kv => !incoming.Contains(kv.Key))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+        if (stale.Count == 0) return;
+
+        _glamourer.RevertAdvancedDyes(stale);
+        _log.Debug($"[Wardrobe] Outfit '{outfit.Name}': put back {stale.Count} advanced dye row(s) " +
+                   $"the previous outfit had left on the character");
     }
 
     /// <summary>
