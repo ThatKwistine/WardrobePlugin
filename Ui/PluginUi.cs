@@ -6562,6 +6562,17 @@ public partial class PluginUi : Window, IDisposable
             ImGui.SetTooltip("Waits about four seconds, then saves the frame the game is drawing.\n" +
                              "Close this window and frame the shot while it counts down.");
 
+        ImGui.SameLine();
+
+        var hideUi = Plugin.Frames.HideUi;
+        if (ImGui.Checkbox("Hide the game's interface", ref hideUi))
+            Plugin.Frames.HideUi = hideUi;
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The game hides its own interface when it takes a screenshot, which is\n" +
+                             "why the pictures already in your wardrobe have none in them. Off, the\n" +
+                             "Group Pose panels will be in the captured frame.");
+
         ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
         ImGui.TextDisabled("It waits a few seconds so these windows can be closed first — whether " +
                            "they appear in the frame is half of what the test is asking. Take a " +

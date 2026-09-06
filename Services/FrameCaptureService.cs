@@ -4,6 +4,7 @@ using System.Drawing.Imaging;
 using System.IO;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Graphics.Kernel;
+using FFXIVClientStructs.FFXIV.Client.UI;
 using TerraFX.Interop.DirectX;
 
 namespace WardrobePlugin.Services;
@@ -45,6 +46,20 @@ public unsafe class FrameCaptureService
     /// <summary>Frames left before the capture fires, or zero when none is armed.</summary>
     private int _armedFrames;
 
+    /// <summary>Frames left for the interface to actually go away before the frame is read.</summary>
+    private int _settleFrames;
+
+    /// <summary>Whether this capture is the one that hid the interface, and so must put it back.</summary>
+    private bool _restoreUi;
+
+    /// <summary>Whether to hide the game's own interface for the capture.</summary>
+    /// <remarks>
+    /// On, because the game does it. Its screenshots come out with no interface in them at all —
+    /// which is why a wardrobe full of pictures taken by hand has none — and a capture that keeps the
+    /// Group Pose panels in shot is not the same picture however well the colours match.
+    /// </remarks>
+    public bool HideUi { get; set; } = true;
+
     /// <summary>Where the armed capture will write.</summary>
     private string _armedPath = string.Empty;
 
@@ -85,10 +100,81 @@ public unsafe class FrameCaptureService
     /// </remarks>
     public void Tick()
     {
+        // Settling: the interface has been told to go away and the frame it was in may still be the
+        // one on screen, so the read waits for it to be gone rather than photographing it
+        if (_settleFrames > 0)
+        {
+            if (--_settleFrames > 0) return;
+
+            try
+            {
+                Last = Capture(_armedPath);
+            }
+            finally
+            {
+                RestoreUi();
+            }
+
+            return;
+        }
+
         if (_armedFrames == 0) return;
         if (--_armedFrames > 0) return;
 
+        if (HideUi && TryHideUi())
+        {
+            _settleFrames = UiSettleFrames;
+            return;
+        }
+
         Last = Capture(_armedPath);
+    }
+
+    /// <summary>Frames given to the interface to disappear before the frame is read.</summary>
+    private const int UiSettleFrames = 3;
+
+    /// <summary>Hides the game's interface, and says whether it was this call that hid it.</summary>
+    /// <remarks>
+    /// False when the interface was already hidden, which is not a failure: it means the player has
+    /// hidden it themselves and it must be left exactly as found rather than switched back on
+    /// underneath them at the end of the capture.
+    /// </remarks>
+    private bool TryHideUi()
+    {
+        try
+        {
+            var atk = RaptureAtkModule.Instance();
+            if (atk == null || !atk->IsUiVisible) return false;
+
+            atk->SetUiVisibility(false);
+            _restoreUi = true;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "[Wardrobe] Frame capture: the game's interface could not be hidden.");
+            return false;
+        }
+    }
+
+    /// <summary>Puts the interface back, if this capture was the one that took it away.</summary>
+    private void RestoreUi()
+    {
+        if (!_restoreUi) return;
+        _restoreUi = false;
+
+        try
+        {
+            var atk = RaptureAtkModule.Instance();
+            if (atk != null) atk->SetUiVisibility(true);
+        }
+        catch (Exception ex)
+        {
+            // Worth shouting about: the interface is the player's whole game, and leaving it hidden
+            // with nothing left running to notice is far worse than a missed picture
+            _log.Error(ex, "[Wardrobe] Frame capture: the game's interface could not be put back. " +
+                           "Press the key you use to hide the interface, twice.");
+        }
     }
 
     /// <summary>Reads the back buffer and writes it out as a PNG.</summary>
