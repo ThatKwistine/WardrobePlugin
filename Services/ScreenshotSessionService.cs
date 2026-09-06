@@ -424,6 +424,11 @@ public class ScreenshotSessionService : IDisposable
         _filedThisSession = 0;
         CancelAutoShot();
 
+        // Held for the length of the session rather than per shot: the frame is read in a draw
+        // callback, and hiding the interface stops those coming — so a player who hides theirs to
+        // frame a shot would otherwise stop the session without either of them noticing
+        Plugin.Frames.KeepDrawing = _config.UseFrameCapture;
+
         if (Auto)
         {
             SubscribeTick();
@@ -437,6 +442,7 @@ public class ScreenshotSessionService : IDisposable
     {
         DisposeWatcher();
         UnsubscribeTick();
+        ReleaseCapture();
         CancelAutoShot();
         AutoPaused    = false;
         State         = SessionState.Idle;
@@ -513,6 +519,7 @@ public class ScreenshotSessionService : IDisposable
         {
             DisposeWatcher();
             UnsubscribeTick();
+            ReleaseCapture();
             CancelAutoShot();
 
             if (Auto)
@@ -797,10 +804,16 @@ public class ScreenshotSessionService : IDisposable
                 WaitForFile(source);
 
                 var dest = UniquePath(_config.ImagesFolder, stem + ".jpg");
+                var temporary = source.StartsWith(CaptureTemp, StringComparison.OrdinalIgnoreCase);
                 // Portrait only for an outfit, and only when the setting is on: an item preview is a
                 // close-up of one piece and has nothing to gain from a full-body frame
                 CropAndConvert(source, dest, _config.CapturedImageSize,
                     portrait: outfit != null && _config.PortraitOutfitPreviews);
+
+                // A captured frame is the wardrobe's own working file, not one the player took, so
+                // it goes as soon as the picture that matters has been written
+                if (temporary)
+                    try { File.Delete(source); } catch { /* a stray temp file is not worth a log line */ }
 
                 _framework.RunOnFrameworkThread(() =>
                 {
@@ -1117,6 +1130,8 @@ public class ScreenshotSessionService : IDisposable
     /// <summary>Asks the game for a picture, and starts the clock on it arriving.</summary>
     private bool FireShot()
     {
+        if (_config.UseFrameCapture) return CaptureShot();
+
         if (!_shutter.Take(out var refusal))
         {
             SetShutterProblem(refusal);
@@ -1133,6 +1148,91 @@ public class ScreenshotSessionService : IDisposable
         _log.Information($"[Wardrobe] Session: took a screenshot of '{CurrentName}' ({ShotLabel})");
         StateChanged?.Invoke();
         return true;
+    }
+
+    /// <summary>
+    /// Takes the picture out of the frame the game has drawn, rather than asking it for one.
+    /// </summary>
+    /// <remarks>
+    /// Asked for here and answered a frame later, because the frame may only be read on the render
+    /// thread while a session runs on this one. Only the shape the picture will be cropped to is
+    /// read: a square for an item, and the whole frame turned upright for an outfit shot in portrait
+    /// mode. Nothing else about a session changes — the picture joins the same queue a watched folder
+    /// would have put it in, and is filed by the same code.
+    /// </remarks>
+    private bool CaptureShot()
+    {
+        var portrait = CurrentOutfit != null && _config.PortraitOutfitPreviews;
+        Plugin.Frames.RequestShot(portrait ? CaptureShape.Portrait : CaptureShape.Square, OnFrameCaptured);
+
+        var now = DateTime.UtcNow;
+        _autoFired     = true;
+        _shotFiredAt   = now;
+        _autoTimeoutAt = now.AddSeconds(ShotTimeoutSeconds);
+        _blockedSince  = null;
+        SetShutterProblem(null);
+
+        _log.Information($"[Wardrobe] Session: captured '{CurrentName}' ({ShotLabel})");
+        StateChanged?.Invoke();
+        return true;
+    }
+
+    /// <summary>Where captured frames are parked between being read and being filed.</summary>
+    /// <remarks>
+    /// A file rather than a bitmap held in memory, so the picture goes through exactly the same
+    /// filing as one the game wrote — the same queue, the same crop, the same naming, the same
+    /// decisions about covers and extra angles. Deleted as soon as it has been filed.
+    /// </remarks>
+    private static readonly string CaptureTemp =
+        Path.Combine(Path.GetTempPath(), "WardrobePlugin", "captures");
+
+    /// <summary>Takes the captured frame and puts it where a watched folder would have.</summary>
+    private void OnFrameCaptured(Bitmap? bitmap, string? error)
+    {
+        if (bitmap == null)
+        {
+            _log.Warning($"[Wardrobe] Session: the frame could not be captured — {error}");
+            SetShutterProblem(error ?? "The frame could not be captured.");
+
+            // Not fired after all, so the run asks again rather than waiting out a timeout for a
+            // picture that was never taken
+            _autoFired = false;
+            return;
+        }
+
+        var serial = _targetSerial;
+
+        Task.Run(() =>
+        {
+            try
+            {
+                Directory.CreateDirectory(CaptureTemp);
+                var temp = Path.Combine(CaptureTemp, $"{Guid.NewGuid():N}.png");
+                bitmap.Save(temp, ImageFormat.Png);
+
+                _framework.RunOnFrameworkThread(() =>
+                {
+                    _pendingShots.Enqueue((temp, serial));
+                    ProcessPendingShot();
+                });
+            }
+            catch (Exception ex)
+            {
+                _log.Warning(ex, "[Wardrobe] Session: a captured frame could not be written.");
+                _framework.RunOnFrameworkThread(() => _autoFired = false);
+            }
+            finally
+            {
+                bitmap.Dispose();
+            }
+        });
+    }
+
+    /// <summary>Hands back everything the capture was holding for the session.</summary>
+    private static void ReleaseCapture()
+    {
+        Plugin.Frames.KeepDrawing = false;
+        Plugin.Frames.DiscardShot();
     }
 
     private void SubscribeTick()

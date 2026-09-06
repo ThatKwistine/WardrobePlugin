@@ -6402,6 +6402,30 @@ public partial class PluginUi : Window, IDisposable
 
         // How a shot is asked for, which on some machines is the whole difference between a session
         // that works and one that takes nothing
+        var byCapture = _config.UseFrameCapture;
+        if (ImGui.Checkbox("Take pictures from the frame the game has drawn", ref byCapture))
+        {
+            _config.UseFrameCapture = byCapture;
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The wardrobe reads the picture itself instead of asking the game for a\n" +
+                             "screenshot. Nothing to jam, nothing pressed on your behalf.\n" +
+                             "Anything applied after the game draws the frame - a ReShade preset -\n" +
+                             "will not be in the picture. Turn this off if you want yours.");
+
+        if (byCapture)
+        {
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+            ImGui.TextDisabled("Items are read as a square and outfits as the full frame turned " +
+                               "upright, so only the part that gets kept is ever read.");
+            ImGui.PopTextWrapPos();
+        }
+
+        ImGui.Spacing();
+        ImGui.BeginDisabled(byCapture);
+
         var byKey = _config.UseScreenshotKey;
         if (ImGui.Checkbox("Take shots by pressing the game's screenshot key", ref byKey))
         {
@@ -6415,7 +6439,9 @@ public partial class PluginUi : Window, IDisposable
                              "screenshot function directly, which is\ncleaner but does not work on " +
                              "every machine.");
 
-        if (byKey)
+        ImGui.EndDisabled();
+
+        if (byKey && !byCapture)
         {
             var keyCode = _config.ScreenshotKeyCode;
             ImGui.SetNextItemWidth(140f);

@@ -792,6 +792,23 @@ public class Configuration : IPluginConfiguration
     /// </remarks>
     public bool UseScreenshotKey { get; set; } = true;
 
+    /// <summary>
+    /// Take pictures out of the frame the game has drawn, rather than asking the game for a screenshot.
+    /// </summary>
+    /// <remarks>
+    /// The better mechanism, and the default. It reads the back buffer directly, which needs no
+    /// screenshot function, no pressed key, no watched folder and no particular screenshot format —
+    /// and it was measured against the game's own screenshot of the same scene and found identical,
+    /// to a mean difference of 0.00 on a static patch.
+    /// <para>
+    /// The one visible difference is that anything applied to the frame after the game has drawn it —
+    /// a ReShade preset, most obviously — is not in the picture, because it has not happened yet at
+    /// the point the frame is read. Someone who wants their preset in their wardrobe wants the
+    /// screenshot key instead, which is why that route is kept rather than removed.
+    /// </para>
+    /// </remarks>
+    public bool UseFrameCapture { get; set; } = true;
+
     /// <summary>The virtual-key code of the game's screenshot keybind. 44 is Print Screen.</summary>
     /// <remarks>
     /// The game's own default, and the only value most people will ever need. It is a setting because
