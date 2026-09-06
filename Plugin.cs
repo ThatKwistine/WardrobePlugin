@@ -400,6 +400,7 @@ public sealed class Plugin : IDalamudPlugin
 
         // After the session, so nothing can ask for a picture once the callback has been taken back
         Shutter.Dispose();
+        Frames.Dispose();
         _wardrobeService.Dispose();
         Camera.Dispose();
         Penumbra.Dispose();

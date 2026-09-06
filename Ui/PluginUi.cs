@@ -6568,6 +6568,14 @@ public partial class PluginUi : Window, IDisposable
         if (ImGui.Checkbox("Hide the game's interface", ref hideUi))
             Plugin.Frames.HideUi = hideUi;
 
+        ImGui.SameLine();
+        if (ImGui.Button("Put the interface back"))
+            Plugin.Frames.RestoreUi();
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("A way out by hand, if a capture ever leaves the game without its\n" +
+                             "interface. Harmless to press when nothing is wrong.");
+
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("The game hides its own interface when it takes a screenshot, which is\n" +
                              "why the pictures already in your wardrobe have none in them. Off, the\n" +

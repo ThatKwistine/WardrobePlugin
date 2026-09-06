@@ -37,7 +37,7 @@ public readonly record struct FrameCaptureResult(
 /// settled by reasoning about render order, only by looking.
 /// </para>
 /// </remarks>
-public unsafe class FrameCaptureService
+public unsafe class FrameCaptureService : IDisposable
 {
     private readonly IPluginLog _log;
 
@@ -54,11 +54,17 @@ public unsafe class FrameCaptureService
 
     /// <summary>Whether to hide the game's own interface for the capture.</summary>
     /// <remarks>
-    /// On, because the game does it. Its screenshots come out with no interface in them at all —
-    /// which is why a wardrobe full of pictures taken by hand has none — and a capture that keeps the
-    /// Group Pose panels in shot is not the same picture however well the colours match.
+    /// Off, because it buys nothing. The crop takes the largest centred rectangle, which at
+    /// 2560x1440 starts at x=560 for a square and x=875 for a portrait, and the Group Pose panels end
+    /// long before either — so the interface never reaches the picture that gets filed.
+    /// <para>
+    /// It is also the dangerous path. Hiding the interface stops Dalamud calling draw callbacks at
+    /// all, which is how the first version of this hid the interface and then lost the ability to put
+    /// it back. That is handled now, but a switch that can strand someone's interface is not one to
+    /// have on by default for a benefit the crop already provides.
+    /// </para>
     /// </remarks>
-    public bool HideUi { get; set; } = true;
+    public bool HideUi { get; set; }
 
     /// <summary>Where the armed capture will write.</summary>
     private string _armedPath = string.Empty;
@@ -98,8 +104,29 @@ public unsafe class FrameCaptureService
     /// touched, and it runs before Dalamud has drawn this frame's interface — which is the reason to
     /// expect a clean frame, and exactly the expectation the test exists to check.
     /// </remarks>
+    /// <summary>Frames the interface may stay hidden before it is put back regardless.</summary>
+    /// <remarks>
+    /// The backstop for every way the capture can fail to reach its own restore. Two seconds is far
+    /// longer than a capture needs and far shorter than the time it takes to wonder where the
+    /// interface went.
+    /// </remarks>
+    private const int UiWatchdogFrames = 120;
+
+    /// <summary>Frames left on the watchdog while the interface is hidden by this class.</summary>
+    private int _uiWatchdog;
+
     public void Tick()
     {
+        if (_restoreUi && --_uiWatchdog <= 0)
+        {
+            _log.Warning("[Wardrobe] Frame capture: the interface had been hidden too long — putting " +
+                         "it back without waiting for the capture.");
+            _settleFrames = 0;
+            _armedFrames  = 0;
+            RestoreUi();
+            return;
+        }
+
         // Settling: the interface has been told to go away and the frame it was in may still be the
         // one on screen, so the read waits for it to be gone rather than photographing it
         if (_settleFrames > 0)
@@ -124,6 +151,7 @@ public unsafe class FrameCaptureService
         if (HideUi && TryHideUi())
         {
             _settleFrames = UiSettleFrames;
+            _uiWatchdog   = UiWatchdogFrames;
             return;
         }
 
@@ -146,19 +174,32 @@ public unsafe class FrameCaptureService
             var atk = RaptureAtkModule.Instance();
             if (atk == null || !atk->IsUiVisible) return false;
 
+            // Without this the plugin hides the interface and is never called again, because Dalamud
+            // stops running draw callbacks while the game's interface is hidden — so the frame is
+            // never read and, far worse, the interface is never put back. Asked for first, and put
+            // back in RestoreUi, so the window in which it applies is the capture and nothing else
+            Plugin.PluginInterface.UiBuilder.DisableUserUiHide = true;
+
             atk->SetUiVisibility(false);
             _restoreUi = true;
             return true;
         }
         catch (Exception ex)
         {
+            Plugin.PluginInterface.UiBuilder.DisableUserUiHide = false;
             _log.Warning(ex, "[Wardrobe] Frame capture: the game's interface could not be hidden.");
             return false;
         }
     }
 
-    /// <summary>Puts the interface back, if this capture was the one that took it away.</summary>
-    private void RestoreUi()
+    /// <summary>
+    /// Puts the interface back, if this capture was the one that took it away.
+    /// </summary>
+    /// <remarks>
+    /// Safe to call at any time and from anywhere, including twice, because everything that can
+    /// leave the interface hidden calls it: the capture, the watchdog, and the plugin unloading.
+    /// </remarks>
+    public void RestoreUi()
     {
         if (!_restoreUi) return;
         _restoreUi = false;
@@ -173,7 +214,11 @@ public unsafe class FrameCaptureService
             // Worth shouting about: the interface is the player's whole game, and leaving it hidden
             // with nothing left running to notice is far worse than a missed picture
             _log.Error(ex, "[Wardrobe] Frame capture: the game's interface could not be put back. " +
-                           "Press the key you use to hide the interface, twice.");
+                           "Press the key you use to hide the interface.");
+        }
+        finally
+        {
+            Plugin.PluginInterface.UiBuilder.DisableUserUiHide = false;
         }
     }
 
@@ -338,4 +383,7 @@ public unsafe class FrameCaptureService
         _log.Warning("[Wardrobe] Frame capture: " + note);
         return new FrameCaptureResult(false, string.Empty, 0, 0, "-", note);
     }
+
+    /// <summary>Never leave the game without its interface because the plugin went away.</summary>
+    public void Dispose() => RestoreUi();
 }
