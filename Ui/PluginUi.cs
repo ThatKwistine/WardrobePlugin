@@ -321,6 +321,9 @@ public partial class PluginUi : Window, IDisposable
     // each frame in the outfits grid so the cards and the notice always agree.
     private string _plateSyncStatus = string.Empty;
     private string _plateApplyStatus = string.Empty;
+
+    /// <summary>Reported under the plate's own mods, which sit well above the apply button.</summary>
+    private string _plateModsStatus = string.Empty;
     private bool   _plateNoticeIgnored;
     private readonly HashSet<Guid> _platesOutOfSync = new();
 
@@ -7895,7 +7898,11 @@ public partial class PluginUi : Window, IDisposable
         // an unread design is not a design with nothing in it.
         var counts = $"{items.Count} items" + (missing > 0 ? $" · {missing} missing" : string.Empty);
         ImGui.TextUnformatted(
-            outfit.IsGlamourPlate            ? $"{outfit.VanillaItems.Count} pieces"
+            // A plate counts both halves too, once it has any: the game's pieces, and the mods the
+            // wardrobe switches on with them
+            outfit.IsGlamourPlate && items.Count > 0
+                                             ? $"{outfit.VanillaItems.Count} pieces · {counts}"
+            : outfit.IsGlamourPlate          ? $"{outfit.VanillaItems.Count} pieces"
             : design is { AppliesEquipment: true } d ? $"{d.Pieces.Count} pieces · {counts}"
             : design is { AppliesEquipment: false }  ? $"looks only · {counts}"
                                                     : counts);
@@ -8317,6 +8324,17 @@ public partial class PluginUi : Window, IDisposable
         ImGui.Spacing();
 
         DrawOutfitVanillaItems(outfit);
+
+        // The wardrobe's own half of a plate, and the one part of it that is not read-only: the game
+        // owns the gear, and Penumbra is the wardrobe's business.
+        if (outfit.IsGlamourPlate)
+        {
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            DrawPlateMods(outfit, items);
+        }
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -8848,10 +8866,13 @@ public partial class PluginUi : Window, IDisposable
             ImGui.SetCursorPos(new Vector2(top.X, top.Y + rowThumb + 6));
 
             // Dyes are a property of an equipped game item, so anything without one — hair, an
-            // animation, a mount — has nothing to dye
-            if (item.Slot.IsModOnly())
+            // animation, a mount — has nothing to dye. Facewear has an item and still no dye: the
+            // game gives the slot no channel, so the pickers would write somewhere nothing reads.
+            if (!item.Slot.SupportsDye())
             {
-                ImGui.TextDisabled($"    {item.Slot.DisplayName()} mods cannot be dyed.");
+                ImGui.TextDisabled(item.Slot.IsFacewear()
+                    ? "    Facewear cannot be dyed."
+                    : $"    {item.Slot.DisplayName()} mods cannot be dyed.");
             }
             else
             {
@@ -8969,7 +8990,7 @@ public partial class PluginUi : Window, IDisposable
     private void DrawOutfitDyeAll(Outfit outfit, List<WardrobeItem> items)
     {
         // With nothing dyeable in the outfit there is nothing for these to act on
-        if (!items.Any(i => !i.Slot.IsModOnly())) return;
+        if (!items.Any(i => i.Slot.SupportsDye())) return;
 
         DrawInheritDesignDyes(outfit);
 
@@ -9756,9 +9777,115 @@ public partial class PluginUi : Window, IDisposable
     }
 
     /// <summary>Adds an existing wardrobe item to the outfit, searchable by name.</summary>
-    private void DrawAddToOutfit(Outfit outfit)
+    /// <summary>
+    /// The mods attached to a glamour plate: what to enable when the plate's gear goes on.
+    /// </summary>
+    /// <remarks>
+    /// A plate is the game's own gear, and the game has never heard of Penumbra. A vanilla gear
+    /// upscale — the mod that makes that gear fit the body you actually use — therefore has to be
+    /// switched on by something, and before this there was nowhere to say so: the plate's contents
+    /// are read-only because they belong to the game, and the read-only-ness had swallowed the one
+    /// part that does belong to the wardrobe.
+    /// <para>
+    /// The same attaching a design card offers, for the same reason and through the same fields.
+    /// What differs is that nothing is equipped by default — see
+    /// <see cref="Models.Outfit.PlateItemsEquip"/>.
+    /// </para>
+    /// </remarks>
+    private void DrawPlateMods(Outfit outfit, List<WardrobeItem> items)
     {
-        ImGui.TextUnformatted("Add to outfit");
+        var missing = outfit.ItemIds.Count - items.Count;
+
+        ImGui.TextUnformatted($"Mods worn with this plate  ({items.Count})");
+        ImGui.TextWrapped("The plate is the game's gear and the game knows nothing about Penumbra. " +
+                          "Attach the mods that belong with it — a vanilla gear upscale, a retexture " +
+                          "of a piece in it — and they go on whenever this plate does, whether you " +
+                          "wear it here or apply it in game.");
+
+        if (missing > 0)
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f),
+                $"{missing} attached item(s) no longer exist.");
+
+        ImGui.Spacing();
+
+        Guid? removeId = null;
+        const float rowThumb = 40f;
+
+        foreach (var item in items)
+        {
+            ImGui.PushID($"platemod_{item.Id}");
+
+            var top = ImGui.GetCursorPos();
+            DrawOutfitRowThumb(item, rowThumb);
+
+            ImGui.SetCursorPos(new Vector2(top.X + rowThumb + 8, top.Y + 2));
+            ImGui.TextUnformatted(item.Name);
+
+            ImGui.SetCursorPos(new Vector2(top.X + rowThumb + 8, top.Y + 20));
+            ImGui.TextDisabled(_wardrobe.IsItemWorn(item)
+                ? $"{item.Slot.DisplayName()} · on"
+                : item.Slot.DisplayName());
+
+            ImGui.SameLine();
+            if (DeleteButton("×", "Take this mod off the plate.\nThe item itself is kept."))
+                removeId = item.Id;
+
+            ImGui.SetCursorPos(new Vector2(top.X, top.Y + rowThumb + 4));
+            ImGui.PopID();
+        }
+
+        if (removeId is { } id)
+        {
+            outfit.ItemIds.Remove(id);
+            outfit.Dyes.Remove(id.ToString());
+            _config.Save();
+        }
+
+        if (items.Count > 0)
+        {
+            ImGui.Spacing();
+
+            var equip = outfit.PlateItemsEquip;
+            if (ImGui.Checkbox("Also equip these items##plateequip", ref equip))
+            {
+                outfit.PlateItemsEquip = equip;
+                _config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Off, only the mods are switched on and the plate's own pieces stay\n" +
+                                 "exactly as the game put them on — which is what an upscale wants,\n" +
+                                 "since it is re-skinning those very pieces.\n\n" +
+                                 "On, each item's own game item is equipped as well, taking the slot\n" +
+                                 "from the plate. For attachments that are pieces in their own right\n" +
+                                 "rather than a new skin for the plate's.");
+
+            ImGui.Spacing();
+            if (ImGui.Button("Switch These Mods On Now", new Vector2(-1, 0)))
+            {
+                var applied = _wardrobe.ApplyPlateMods(outfit);
+                _plateModsStatus = applied > 0
+                    ? $"Switched on {applied} mod(s) for '{outfit.Name}'."
+                    : "Nothing attached to switch on.";
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("For a plate you applied in game earlier: puts its mods back on\n" +
+                                 "without touching your glamour.\n\n" +
+                                 "Applying the plate from here does this for you.");
+
+            if (!string.IsNullOrEmpty(_plateModsStatus))
+            {
+                ImGui.Spacing();
+                ImGui.TextWrapped(_plateModsStatus);
+            }
+        }
+
+        ImGui.Spacing();
+        DrawAddToOutfit(outfit, "Attach a mod");
+    }
+
+    private void DrawAddToOutfit(Outfit outfit, string heading = "Add to outfit")
+    {
+        ImGui.TextUnformatted(heading);
         ImGui.Spacing();
 
         var candidates = _config.WardrobeItems
@@ -9800,7 +9927,9 @@ public partial class PluginUi : Window, IDisposable
         }
 
         if (candidates.Count == 0 && string.IsNullOrWhiteSpace(_addToOutfitSearch))
-            ImGui.TextDisabled("Every wardrobe item is already in this outfit.");
+            ImGui.TextDisabled(outfit.IsGlamourPlate
+                ? "Every wardrobe item is already attached to this plate."
+                : "Every wardrobe item is already in this outfit.");
     }
 
     private void CloseOutfitEdit()
@@ -9833,6 +9962,7 @@ public partial class PluginUi : Window, IDisposable
         // plate's button reads as something that just happened to that one
         _plateApplyStatus  = string.Empty;
         _plateSyncStatus   = string.Empty;
+        _plateModsStatus   = string.Empty;
     }
 
     /// <summary>Small square thumbnail for one item inside the outfit edit list.</summary>

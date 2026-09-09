@@ -74,12 +74,19 @@ public class WardrobeItem : IImageOwner
     public ushort? ModelSetId { get; set; }
 
     /// <summary>
-    /// The <c>b</c> half of a weapon's model id, detected alongside <see cref="ModelSetId"/>.
+    /// The second half of the model id, detected alongside <see cref="ModelSetId"/>: a weapon's
+    /// <c>b</c> number, or the material variant of a piece of gear.
     /// </summary>
     /// <remarks>
-    /// Only weapons have one. Their set ID names a whole job's armoury — <c>w2501</c> is all 155
-    /// Gunbreaker arms — so it takes this as well to say which weapon the mod replaces. Null on
-    /// items imported before it was recorded, which is what a Re-detect fills in.
+    /// A weapon's set ID names a whole job's armoury — <c>w2501</c> is all 155 Gunbreaker arms — so
+    /// it takes this as well to say which weapon the mod replaces. Gear reuses a set the same way,
+    /// a variant at a time: <c>e0110</c> is the Hellhound armour at variant 1, the Grey Hound at 2
+    /// and the Shadowhound at 3, each with its own materials under the one model.
+    /// <para>
+    /// One field for both because a slot is either a weapon or it is not, so the two can never
+    /// disagree. Null on items imported before it was recorded, and on mods whose files ship no
+    /// material to read a variant from — both of which a Re-detect fills in where it can.
+    /// </para>
     /// </remarks>
     public ushort? ModelBaseId { get; set; }
 

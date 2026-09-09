@@ -342,7 +342,16 @@ public class WardrobeService : IDisposable
 
     // ── Wardrobe items ────────────────────────────────────────────────────────
 
-    public bool WearItem(WardrobeItem item, OutfitDye? dye = null)
+    /// <param name="equipItem">
+    /// Whether Glamourer is told to equip the item's detected game item, as well as its mods being
+    /// enabled in Penumbra.
+    /// </param>
+    /// <remarks>
+    /// False is for a mod that re-skins gear somebody else is putting on — a vanilla upscale
+    /// attached to a glamour plate, where equipping would replace the plate's own piece with
+    /// whatever the mod was detected as. The mod half of wearing is identical either way.
+    /// </remarks>
+    public bool WearItem(WardrobeItem item, OutfitDye? dye = null, bool equipItem = true)
     {
         // Before the slot's previous occupant is read below: after a character swap that entry can
         // name an item belonging to the collection before this one, and taking it off would be a
@@ -385,7 +394,7 @@ public class WardrobeService : IDisposable
         var stain1 = dye?.Stain1 ?? 0;
         var stain2 = dye?.Stain2 ?? 0;
 
-        if (item.GlamourerItemId.HasValue)
+        if (item.GlamourerItemId.HasValue && equipItem)
         {
             _log.Debug($"[Wardrobe]   Calling Glamourer.SetItem (pre-enable) slot={item.Slot} itemId={item.GlamourerItemId.Value} name='{item.GlamourerItemName}'");
             if (!_glamourer.SetItem(item.Slot, item.GlamourerItemId.Value, stain1, stain2))
@@ -445,9 +454,19 @@ public class WardrobeService : IDisposable
         if (success)
             _config.WornItems[slotKey] = item.Id;
 
+        // Recorded before the item comes off rather than worked out then: by the time it does, the
+        // only evidence that nothing was equipped for it is gone. See WardrobeProfile.WornModsOnly.
+        if (equipItem) _config.WornModsOnly.Remove(item.Id);
+        else if (success && !_config.WornModsOnly.Contains(item.Id)) _config.WornModsOnly.Add(item.Id);
+
         // Secondary SetItem after all mods are enabled — catches cases where the
         // first pre-enable call was overridden by UnwearItem of the previous slot item.
-        if (item.GlamourerItemId.HasValue)
+        if (!equipItem)
+        {
+            _log.Debug($"[Wardrobe] '{item.Name}' applied as a mod only — nothing equipped, so the " +
+                       "piece already in the slot is what the redirection lands on");
+        }
+        else if (item.GlamourerItemId.HasValue)
         {
             _log.Debug($"[Wardrobe]   Calling Glamourer.SetItem (post-enable) slot={item.Slot} itemId={item.GlamourerItemId.Value}");
             if (!_glamourer.SetItem(item.Slot, item.GlamourerItemId.Value, stain1, stain2))
@@ -891,8 +910,12 @@ public class WardrobeService : IDisposable
         //
         // Worse, many such mods attach themselves to an Emperor's New item precisely because it is
         // invisible, so "emptying" the slot equips the very item the mod replaces.
+        // A mod applied without being equipped never filled the slot either, and emptying it would
+        // take off whatever is genuinely there — for a plate's upscale, the plate's own piece.
+        var modsOnly = _config.WornModsOnly.Remove(item.Id);
+
         var swappedItem = false;
-        if (item.Slot != EquipSlot.Unknown && !item.Slot.IsModOnly() && item.GlamourerItemId.HasValue)
+        if (!modsOnly && item.Slot != EquipSlot.Unknown && !item.Slot.IsModOnly() && item.GlamourerItemId.HasValue)
         {
             var emperorsId = ItemLookupService.FindEmperorsNewItem(item.Slot);
             if (emperorsId.HasValue)
@@ -2244,8 +2267,9 @@ public class WardrobeService : IDisposable
     {
         foreach (var item in ResolveOutfit(outfit))
         {
-            // Hair, emotes and mounts have no equipment piece to dye
-            if (item.Slot.IsModOnly()) continue;
+            // Hair, emotes and mounts have no equipment piece to dye, and facewear has a piece
+            // the game gives no dye channel
+            if (!item.Slot.SupportsDye()) continue;
 
             var dye = GetDye(outfit, item.Id);
             var s1  = channel == 1 ? stain : dye?.Stain1 ?? 0;
@@ -2275,7 +2299,7 @@ public class WardrobeService : IDisposable
 
         foreach (var item in ResolveOutfit(outfit))
         {
-            if (item.Slot.IsModOnly()) continue;
+            if (!item.Slot.SupportsDye()) continue;
 
             var dye  = GetDye(outfit, item.Id);
             var here = channel == 1 ? dye?.Stain1 ?? 0 : dye?.Stain2 ?? 0;
@@ -2431,7 +2455,9 @@ public class WardrobeService : IDisposable
             vanilla[slot.ToString()] = new VanillaPiece
             {
                 ItemId = piece.ItemId,
-                Name   = Plugin.ItemLookup.GetItemName(piece.ItemId),
+                // Slot-aware: a facewear id is a Glasses row and means something else entirely in
+                // the Item sheet, so the id alone would name the wrong thing
+                Name   = Plugin.ItemLookup.GetItemName(piece.ItemId, slot),
                 Stain1 = piece.Stain1,
                 Stain2 = piece.Stain2,
             };
@@ -2456,11 +2482,19 @@ public class WardrobeService : IDisposable
     /// rather than as it was saved, so adding a wardrobe item to a slot that used to hold a vanilla
     /// piece leaves the stored piece harmlessly unused rather than fighting the new item for the slot.
     /// </remarks>
-    private void WearVanillaItems(Outfit outfit)
+    /// <param name="itemsEquip">
+    /// Whether the outfit's own items took the slots they name. False on a plate applying its mods
+    /// only, where nothing was equipped and so no slot is spoken for — the plate's own piece is
+    /// exactly what an attached upscale is there to re-skin, and holding the slot back would leave
+    /// it empty.
+    /// </param>
+    private void WearVanillaItems(Outfit outfit, bool itemsEquip = true)
     {
         if (outfit.VanillaItems.Count == 0) return;
 
-        var covered = ResolveOutfit(outfit).Select(i => i.Slot).ToHashSet();
+        var covered = itemsEquip
+            ? ResolveOutfit(outfit).Select(i => i.Slot).ToHashSet()
+            : new HashSet<EquipSlot>();
 
         foreach (var (slotName, piece) in outfit.VanillaItems)
         {
@@ -2545,12 +2579,18 @@ public class WardrobeService : IDisposable
         // other way round, the design's gear would replace the very pieces the outfit is made of.
         if (outfit.IsDesign) ApplyOutfitDesign(outfit);
 
+        // A plate's items are the mods that belong with it rather than pieces of it, so by default
+        // they are applied without being equipped: the plate owns the gear, and an upscale attached
+        // to it exists to re-skin the very pieces it is putting on. PlateItemsEquip says otherwise
+        // for a plate whose attachments really are worn alongside it.
+        var equipItems = !outfit.IsGlamourPlate || outfit.PlateItemsEquip;
+
         foreach (var item in items)
-            WearItem(item, GetDye(outfit, item.Id));
+            WearItem(item, GetDye(outfit, item.Id), equipItems);
 
         // After the items: a vanilla piece only ever fills a gap they left, and equipping it first
         // would put plain gear in a slot a mod is about to take anyway
-        WearVanillaItems(outfit);
+        WearVanillaItems(outfit, equipItems);
 
         // Last, so nothing after it can put a hat back on. A design carries its own hat and weapon
         // state, and applying one is exactly what would override an outfit that asked for the
@@ -3058,7 +3098,7 @@ public class WardrobeService : IDisposable
             items[piece.Slot.ToString()] = new VanillaPiece
             {
                 ItemId = piece.ItemId,
-                Name   = Plugin.ItemLookup.GetItemName(piece.ItemId),
+                Name   = Plugin.ItemLookup.GetItemName(piece.ItemId, piece.Slot),
                 Stain1 = piece.Stain1,
                 Stain2 = piece.Stain2,
             };
@@ -3911,10 +3951,48 @@ public class WardrobeService : IDisposable
                     break;
             }
 
-            await _framework.RunOnFrameworkThread(() => RevertToInGameLook());
+            await _framework.RunOnFrameworkThread(() =>
+            {
+                RevertToInGameLook();
+
+                // After the revert, never before it: the revert takes the wardrobe's clothes off and
+                // switches its mods back off with them, so mods enabled first would be turned
+                // straight off again. This is the whole point of attaching an upscale to a plate —
+                // the game is now showing the plate's own gear, and the mod re-skins it in place.
+                ApplyPlateMods(outfit);
+            });
         });
 
         return true;
+    }
+
+    /// <summary>
+    /// Enables the mods attached to a glamour plate, without equipping anything over it.
+    /// </summary>
+    /// <remarks>
+    /// The wardrobe's half of a plate. A plate is the game's own gear and the game knows nothing
+    /// about Penumbra, so a vanilla gear upscale — the mod that makes that gear fit the body you
+    /// actually use — has to be switched on by something, and this is it.
+    /// <para>
+    /// Goes through <see cref="WearItem"/> like anything else, so the mods are claimed, their
+    /// options applied, and the items recorded as worn: taking them off again is Unequip All, a
+    /// strip, or the item's own button, with no separate machinery to learn.
+    /// </para>
+    /// </remarks>
+    /// <returns>How many items were applied.</returns>
+    public int ApplyPlateMods(Outfit outfit)
+    {
+        if (!outfit.IsGlamourPlate) return 0;
+
+        var items = ResolveOutfit(outfit);
+        if (items.Count == 0) return 0;
+
+        foreach (var item in items)
+            WearItem(item, GetDye(outfit, item.Id), outfit.PlateItemsEquip);
+
+        _log.Information($"[Wardrobe] Plate '{outfit.Name}': applied {items.Count} attached mod(s)" +
+                         (outfit.PlateItemsEquip ? " and equipped their items" : ", equipping nothing"));
+        return items.Count;
     }
 
     /// <summary>

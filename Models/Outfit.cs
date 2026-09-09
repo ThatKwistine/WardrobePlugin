@@ -76,6 +76,11 @@ public class Outfit : IImageOwner
     public List<string> ExtraImages { get; set; } = new();
 
     /// <summary>Wardrobe item IDs in this outfit. Items deleted since are skipped when worn.</summary>
+    /// <remarks>
+    /// On a glamour plate these are the mods that belong with it rather than pieces of it: the plate
+    /// owns the gear and the wardrobe owns Penumbra, so this is where a vanilla gear upscale is
+    /// attached. See <see cref="PlateItemsEquip"/> for why they are applied without being equipped.
+    /// </remarks>
     public List<Guid> ItemIds { get; set; } = new();
 
     /// <summary>
@@ -112,6 +117,23 @@ public class Outfit : IImageOwner
     /// edited in-game, so the wardrobe shows them read-only and keeps them in step by resyncing.
     /// </remarks>
     public int? GlamourPlateId { get; set; }
+
+    /// <summary>
+    /// Equip a plate's attached items as well as enabling their mods.
+    /// </summary>
+    /// <remarks>
+    /// False, because the reason to attach a mod to a plate is nearly always a vanilla gear upscale:
+    /// a mod that re-skins the very pieces the plate is already putting on. Equipping its detected
+    /// item would replace the plate's own piece with whatever the mod happened to be detected as,
+    /// which is the one thing an upscale must not do — and after an in-game apply it would put a
+    /// Glamourer override back over the plate the revert had just cleared to show.
+    /// <para>
+    /// Turn it on for a plate whose attached items really are pieces in their own right, worn
+    /// alongside the plate rather than over it. Only read for plate outfits; an ordinary outfit
+    /// equips its items and always has.
+    /// </para>
+    /// </remarks>
+    public bool PlateItemsEquip { get; set; }
 
     /// <summary>When the contents were last read from the game, for the resync controls to show.</summary>
     /// <remarks>

@@ -203,6 +203,14 @@ public class Configuration : IPluginConfiguration
     [Newtonsoft.Json.JsonProperty("WornItems")]
     public Dictionary<string, Guid> LegacyWornItems { get; set; } = new();
 
+    /// <inheritdoc cref="Models.WardrobeProfile.WornModsOnly"/>
+    [Newtonsoft.Json.JsonIgnore]
+    public List<Guid> WornModsOnly
+    {
+        get => ActiveProfile.WornModsOnly;
+        set => ActiveProfile.WornModsOnly = value;
+    }
+
 
     // ── What was last worn ────────────────────────────────────────────────────
 

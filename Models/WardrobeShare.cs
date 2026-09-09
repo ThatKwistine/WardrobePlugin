@@ -219,7 +219,7 @@ public class SharedItem
     public string? GlamourerItemName { get; set; }
     public ushort? ModelSetId        { get; set; }
 
-    /// <summary>A weapon's b number — see <see cref="WardrobeItem.ModelBaseId"/>.</summary>
+    /// <summary>A weapon's b number, or gear's variant — see <see cref="WardrobeItem.ModelBaseId"/>.</summary>
     public ushort? ModelBaseId       { get; set; }
 
     public Dictionary<string, ushort>       HairIdByRace       { get; set; } = new();

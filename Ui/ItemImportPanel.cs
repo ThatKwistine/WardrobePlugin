@@ -169,7 +169,7 @@ public class ItemImportPanel : IDisposable
         public bool      AlreadyImported;
         /// <summary>Model set ID for this slot, used to offer items sharing the same model.</summary>
         public ushort?   SetId;
-        /// <summary>A weapon's b number — see <see cref="WardrobeItem.ModelBaseId"/>.</summary>
+        /// <summary>A weapon's b number, or gear's variant — see <see cref="WardrobeItem.ModelBaseId"/>.</summary>
         public ushort?   BaseId;
         /// <summary>Search text for this row's manual game-item picker. Per row, so two open at
         /// once do not share one box.</summary>
@@ -1785,6 +1785,11 @@ public class ItemImportPanel : IDisposable
     /// model is reused — "Asuran Hakama of Healing", "Nameless Hakama" and several others are one
     /// model. The stored item ID is what Glamourer equips and what worn-detection compares against,
     /// so being able to choose the intended one matters.
+    /// <para>
+    /// Items of another variant are not listed: the mod's materials are the variant's, so nothing
+    /// it can offer would show the mod. When the variant itself was read wrong, the manual search
+    /// below is the way to any item in the slot, and its help text says so.
+    /// </para>
     /// Returns true when the user picked a different item.
     /// </remarks>
     private bool DrawGameItemPicker(string id, ushort? setId, ushort? baseId, EquipSlot slot,

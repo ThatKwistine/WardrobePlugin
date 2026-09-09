@@ -320,6 +320,31 @@ public partial class PluginUi
                                        "absolute, showing the unmodded character."
                                      : string.Empty));
 
+        // Apply Base: the one button on this row that adds rather than takes away, which is why it
+        // is only here when there is a base to add. The three beside it undress the character in
+        // three different ways, and the way back from any of them was buried in the base character's
+        // own panel until now.
+        if (_config.ActiveBaseCharacter is { } toolbarBase)
+        {
+            UiLayout.SameLineIfRoomForButton(" Apply Base ");
+
+            ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.16f, 0.4f, 0.3f, 1f));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.22f, 0.55f, 0.4f, 1f));
+            if (ImGui.Button(" Apply Base "))
+            {
+                var applied = _wardrobe.ApplyBase(toolbarBase);
+                _scanStatus = applied > 0
+                    ? $"Put '{toolbarBase.Name}' back on — {applied} item(s) applied."
+                    : $"'{toolbarBase.Name}' was already on.";
+            }
+            ImGui.PopStyleColor(2);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"Put '{toolbarBase.Name}' on over what you are wearing:\n" +
+                                 "its design's customisations, then any of its items you\n" +
+                                 "are not already wearing.\n\n" +
+                                 "Nothing is taken off — this only adds the base back.");
+        }
+
         UiLayout.SameLineIfRoomForButton(" Refresh ");
 
         // Refresh: Penumbra redraw local player

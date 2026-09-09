@@ -108,6 +108,7 @@ public sealed class Plugin : IDalamudPlugin
             if (_config.LastWorn == null) _config.LastWorn = LastWornFromWornItems();
 
             _config.WornItems.Clear();
+            _config.WornModsOnly.Clear();
             _config.Save();
         }
 
@@ -115,9 +116,13 @@ public sealed class Plugin : IDalamudPlugin
         Glamourer = new GlamourerIpc(pi, Log, Objects);
         Camera    = new CameraService(Framework, Log, GameConfig, ClientState);
 
-        _analysisService   = new ModAnalysisService(Log);
         _itemLookup        = new ItemLookupService(DataManager);
         ItemLookup         = _itemLookup;
+
+        // The lookup first, because the analyser borrows it: only the Glasses sheet can say whether
+        // an e{set}_met path is a hat or a pair of spectacles. Passed as a delegate so the analyser
+        // keeps no game-data dependency of its own.
+        _analysisService   = new ModAnalysisService(Log, _itemLookup.IsFacewearSet);
 
         // Builds its map on first use rather than here: only a wardrobe with animation items ever
         // asks it anything, and it is the panel that draws one that pays for it
@@ -302,6 +307,7 @@ public sealed class Plugin : IDalamudPlugin
                 if (item != null) _wardrobeService.UnwearItem(item, save: false, restoreBase: false);
             }
             _config.WornItems.Clear();
+            _config.WornModsOnly.Clear();
             _config.Save();
             return;
         }

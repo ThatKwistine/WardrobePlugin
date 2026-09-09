@@ -65,6 +65,7 @@ why.
 | Ring (L) | `RingLeft` | `LeftRing`, `RingL` |
 | Main Hand | `MainHand` | `Weapon` |
 | Off Hand | `OffHand` | `Shield` |
+| Facewear | `Facewear` | `Glasses`, `Spectacles`, `Eyewear` |
 | Hair | `Hair` | |
 | Face | `Face` | |
 | Tail | `Tail` | |
@@ -76,7 +77,7 @@ why.
 
 The last three only appear if **Manage mods that are not equipment** is on.
 
-`Ears` is the earring accessory slot; Viera ear models are `VieraEars`. Nothing is required — supply
+`Ears` is the earring accessory slot; Viera ear models are `VieraEars`. `Facewear` is the glasses slot, and a pack made before it existed simply shows one slot short in **Which slots** until a file is added — every other icon in it goes on working. Nothing is required — supply
 two files and two icons change, and every other slot stays on the set chosen in **Icon set**.
 
 In the plugin, **Which slots** under the icon settings lists what was matched and, for anything

@@ -91,6 +91,12 @@ rather than a strip, and it is the way to take a base off without changing any s
 **Unequip All** and **In-Game Look** both take a **Ctrl**-held press to leave the base off for that
 press only.
 
+**Apply Base** is the way back from any of them, on the toolbar and the **Character** menu. It puts
+the active base character on over whatever you are wearing — its design's customisations, then any of
+its items you do not already have on — and takes nothing off. The same button lives in the base
+character's own panel; this is it where you can reach it. With no base set the menu entry is greyed
+and the toolbar button is not drawn at all.
+
 ## In-Game Look
 
 The three take-off entries on the **Character** menu do different things:
@@ -100,6 +106,8 @@ The three take-off entries on the **Character** menu do different things:
 | **Unequip All** | The wardrobe's items off, base character included. |
 | **Strip** | Every equipment slot emptied, stripped down to your base character. |
 | **In-Game Look** | Whatever the game actually has on you — your real gear and glamour. |
+
+**Apply Base** sits beside them and is the only one that adds rather than takes away.
 
 **In-Game Look** takes the wardrobe's items off *and* clears Glamourer, so nothing is overriding the
 character any more. What you see is what everyone else has been seeing all along, including any

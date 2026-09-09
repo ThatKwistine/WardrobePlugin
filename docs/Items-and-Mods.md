@@ -3,7 +3,7 @@
 ## What a wardrobe item stores
 
 - **Name** and optional **preview image**
-- **Equipment slot** (Head / Body / Hands / Legs / Feet / Earrings / Neck / Wrists / Ring / Main Hand / Off Hand)
+- **Equipment slot** (Head / Body / Hands / Legs / Feet / Earrings / Neck / Wrists / Ring / Main Hand / Off Hand / Facewear)
 - **Mods list** — collection name, mod directory, mod name, and saved option group selections for each mod
 - **Detected game item** — the FFXIV item row ID and display name auto-detected from the mod's game file paths
 - **Tags** — free-form labels for filtering
@@ -145,16 +145,54 @@ typed or chosen. Where both mods provide a model for the same slot, the primary 
 Many FFXIV items share one model — the Hakama legs model backs Asuran, Yasha, Yanxian, Nameless and
 more. Detection picks the lowest row ID among them, which is arbitrary.
 
+A model is also reused across patches, one recolour at a time. `e0110` is the Hellhound armour, the
+Grey Hound armour and the Shadowhound armour: one model, three sets of materials, kept in `v0001`,
+`v0002` and `v0003` folders beside it. A mod for one of those replaces that folder, so the wardrobe
+reads the folder number out of the mod's files and offers only the items wearing it. Without that a
+mod for the newest recolour was detected as the oldest — and wearing that item loads `v0001`, which
+the mod does not replace, so the piece came out unmodded with nothing on screen saying why.
+
+Only materials say which recolour. A mod shipping nothing but a model or textures narrows to nothing
+and offers the whole family exactly as before, which is right: those files are shared by every
+recolour of the set. Texture names carry a `v01_` prefix that looks like the same number and is not.
+
 When more than one item shares the detected model, a **Game item** dropdown appears (per slot when
 importing, and in the edit panel) listing every candidate so the intended one can be chosen. This
 matters beyond cosmetics: the stored item ID is what Glamourer equips and what worn-detection
 compares against.
 
+## Facewear
+
+Glasses, monocles and sunglasses are their own slot, called **Facewear** the way the game calls it.
+They are worn alongside head gear rather than instead of it, so a hat and a pair of spectacles are
+two wardrobe items and both can be on at once.
+
+Detection has to work for them, because nothing in a facewear mod's paths says it is one: the models
+sit in the equipment tree under the *head* suffix, so
+`chara/equipment/e5501/model/c0101e5501_met.mdl` is a pair of oval spectacles and
+`chara/equipment/e0110/model/c0101e0110_met.mdl` is a helm. The set number is the only difference,
+and the game's own facewear list is what the wardrobe asks — sets 5501 to 5565 today, and whatever a
+future patch adds without anything here needing to change. Before this, a glasses mod imported as a
+hat with no game item behind it, and wearing it took your actual hat off to equip a piece that was
+never there.
+
+Two things about facewear differ from gear, both because the game says so:
+
+- **It cannot be dyed.** The slot has no dye channel at all, so the pickers are replaced by a line
+  saying as much rather than letting you set a colour that goes nowhere.
+- **Its items are numbered separately.** Facewear comes from the game's `Glasses` list, not its item
+  list, so the same number means a different thing in each. Everything that stores one stores the
+  slot beside it.
+
+Wearing facewear needs a Glamourer with the bonus-item API — 1.3.0.0 and later. Everything else in
+the wardrobe works with an older one; only facewear stops, and it says so in the log rather than
+failing quietly.
+
 ## Setting the game item by hand
 
-The **Game item** dropdown can only offer items that share the mod's detected model, so it is no help
-when the right item shares no model with the mod at all — a piercing or a tattoo hung on an Emperor's
-New piece because it is invisible, or a mod whose model was detected wrongly.
+The **Game item** dropdown can only offer items that share the mod's detected model and recolour, so
+it is no help when the right item shares neither with the mod — a piercing or a tattoo hung on an
+Emperor's New piece because it is invisible, or a mod whose model or recolour was detected wrongly.
 
 **Set game item manually** covers that. It is a collapsed section on each import slot row and in the
 edit panel, searching every equippable item for that slot by name. **Clear game item** below it
@@ -168,6 +206,9 @@ edit panel it saves immediately, like the dropdown above it.
 
 If a mod is updated and its file paths change, open the item in the edit panel and click
 **Re-detect** to re-run the analysis.
+
+Items imported before the wardrobe read recolours have none recorded, and keep whatever game item was
+detected for them at the time. **Re-detect** is what fills it in.
 
 ## Variants
 
