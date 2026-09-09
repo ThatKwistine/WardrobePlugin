@@ -577,10 +577,11 @@ public unsafe class FrameCaptureService : IDisposable
 
     /// <summary>Which way a portrait-mode frame is turned to stand it upright.</summary>
     /// <remarks>
-    /// Settable because there are only two answers and the wrong one is obvious the moment a picture
-    /// is looked at. It is not worth a setting in the interface for that.
+    /// Clockwise, which is the way portrait mode lays its picture down. Fixed rather than settable:
+    /// there are only two answers, the game only ever gives one of them, and the wrong one is a
+    /// picture that is plainly upside down rather than something anyone would want to choose.
     /// </remarks>
-    public static RotateFlipType PortraitRotation { get; set; } = RotateFlipType.Rotate270FlipNone;
+    private const RotateFlipType PortraitRotation = RotateFlipType.Rotate90FlipNone;
 
     private static Bitmap? Failed(string note, out string? reason)
     {
