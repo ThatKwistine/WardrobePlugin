@@ -175,7 +175,6 @@ public class Configuration : IPluginConfiguration
     [Newtonsoft.Json.JsonProperty("Outfits")]
     public List<Outfit> LegacyOutfits { get; set; } = new();
 
-
     // ── Wardrobe items ────────────────────────────────────────────────────────
     [Newtonsoft.Json.JsonIgnore]
     public List<WardrobeItem> WardrobeItems
@@ -188,7 +187,6 @@ public class Configuration : IPluginConfiguration
     /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
     [Newtonsoft.Json.JsonProperty("WardrobeItems")]
     public List<WardrobeItem> LegacyWardrobeItems { get; set; } = new();
-
 
     /// <summary>Slot name (EquipSlot.ToString()) → currently worn WardrobeItem ID.</summary>
     [Newtonsoft.Json.JsonIgnore]
@@ -210,7 +208,6 @@ public class Configuration : IPluginConfiguration
         get => ActiveProfile.WornModsOnly;
         set => ActiveProfile.WornModsOnly = value;
     }
-
 
     // ── What was last worn ────────────────────────────────────────────────────
 
@@ -235,7 +232,6 @@ public class Configuration : IPluginConfiguration
     /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
     [Newtonsoft.Json.JsonProperty("LastWorn")]
     public WornSnapshot? LegacyLastWorn { get; set; }
-
 
     /// <summary>What to do with <see cref="LastWorn"/> when a character logs in.</summary>
     /// <remarks>
@@ -319,7 +315,6 @@ public class Configuration : IPluginConfiguration
     [Newtonsoft.Json.JsonProperty("ExpandedVariantGroups")]
     public HashSet<string> LegacyExpandedVariantGroups { get; set; } = new();
 
-
     /// <summary>How <c>Create variant of this item</c> names the copy it makes.</summary>
     /// <remarks>
     /// Defaults to the style variants have always used, so an existing wardrobe carries on naming
@@ -359,7 +354,6 @@ public class Configuration : IPluginConfiguration
     [Newtonsoft.Json.JsonProperty("BaseCharacters")]
     public List<BaseCharacter> LegacyBaseCharacters { get; set; } = new();
 
-
     /// <summary>
     /// The base character currently in force, or null when stripping takes everything.
     /// </summary>
@@ -379,7 +373,6 @@ public class Configuration : IPluginConfiguration
     /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
     [Newtonsoft.Json.JsonProperty("ActiveBaseCharacterId")]
     public Guid? LegacyActiveBaseCharacterId { get; set; }
-
 
     /// <summary>The active base character, or null when none is set or the saved one is gone.</summary>
     public BaseCharacter? ActiveBaseCharacter =>
@@ -450,7 +443,6 @@ public class Configuration : IPluginConfiguration
     [Newtonsoft.Json.JsonProperty("ImagesFolder")]
     public string LegacyImagesFolder { get; set; } = string.Empty;
 
-
     /// <summary>Folder where FFXIV saves screenshots, watched during screenshot sessions.</summary>
     public string ScreenshotsFolder { get; set; } = string.Empty;
 
@@ -508,7 +500,6 @@ public class Configuration : IPluginConfiguration
     /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
     [Newtonsoft.Json.JsonProperty("SlotCameraPresetLists")]
     public Dictionary<string, List<CameraPreset>> LegacySlotCameraPresetLists { get; set; } = new();
-
 
     /// <summary>
     /// The single preset per slot that presets used to be, kept only so it can be migrated.
@@ -784,46 +775,6 @@ public class Configuration : IPluginConfiguration
     /// <see cref="ScreenshotSessionService"/> — since that is the one that follows a redraw.
     /// </remarks>
     public float AutoScreenshotDelay { get; set; } = 2f;
-
-    /// <summary>
-    /// Press the game's screenshot key rather than calling its screenshot function directly.
-    /// </summary>
-    /// <remarks>
-    /// On at least one machine the direct call has never once taken a picture, while the key it is
-    /// meant to be equivalent to always does. Both were proved identical at the call — same object,
-    /// same callback, same parameter — so what differs is where in the frame the request is made,
-    /// which is not something a caller can choose. Pressing the key hands that back to the game.
-    /// <para>
-    /// Left as a setting rather than a replacement because the direct call is the cleaner mechanism
-    /// where it works: it needs no key bound and cannot be confused by a keyboard.
-    /// </para>
-    /// </remarks>
-    public bool UseScreenshotKey { get; set; } = true;
-
-    /// <summary>
-    /// Take pictures out of the frame the game has drawn, rather than asking the game for a screenshot.
-    /// </summary>
-    /// <remarks>
-    /// The better mechanism, and the default. It reads the back buffer directly, which needs no
-    /// screenshot function, no pressed key, no watched folder and no particular screenshot format —
-    /// and it was measured against the game's own screenshot of the same scene and found identical,
-    /// to a mean difference of 0.00 on a static patch.
-    /// <para>
-    /// The one visible difference is that anything applied to the frame after the game has drawn it —
-    /// a ReShade preset, most obviously — is not in the picture, because it has not happened yet at
-    /// the point the frame is read. Someone who wants their preset in their wardrobe wants the
-    /// screenshot key instead, which is why that route is kept rather than removed.
-    /// </para>
-    /// </remarks>
-    public bool UseFrameCapture { get; set; } = true;
-
-    /// <summary>The virtual-key code of the game's screenshot keybind. 44 is Print Screen.</summary>
-    /// <remarks>
-    /// The game's own default, and the only value most people will ever need. It is a setting because
-    /// the keybind is rebindable and a wrong one here is a session that presses a key that does
-    /// nothing — which looks exactly like the fault it is meant to work around.
-    /// </remarks>
-    public int ScreenshotKeyCode { get; set; } = 44;
 
     /// <summary>
     /// List Penumbra's mods newest first when importing, instead of alphabetically.

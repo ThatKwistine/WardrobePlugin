@@ -104,12 +104,8 @@ mean difference of 0.00 across a static patch of floor. The one thing it does no
 applied to the frame *after* the game has drawn it — a ReShade preset being the obvious case, because
 that runs later than the point the frame is read.
 
-If you want your preset in your wardrobe pictures, turn **Take pictures from the frame the game has
-drawn** off in Settings → Experimental → Screenshot diagnostics. The session then presses your
-screenshot key instead, and the game takes the picture exactly as it does for you.
-
-Either way, **screenshots you take yourself during a session are still picked up and filed** — that
-has not changed, and neither has manual mode.
+If you want your preset in your pictures, take those shots yourself: **screenshots you take during a
+session are still picked up and filed**, exactly as before, and manual mode is unchanged.
 
 It is the ordinary [session](#screenshot-sessions) in every other way — the same queue, the same
 stripping, the same base character, the same [extra angles](#several-pictures-per-item) — so it works
@@ -230,9 +226,9 @@ those you are watching a session from. Switching it off and back on keeps the mo
 setting it to **Always** and then using the toggle does not quietly move you onto **During
 sessions**.
 
-The guide is never in the resulting picture. The shot comes from the game's own screenshot function,
-which does not capture plugin windows — the same property that keeps the wardrobe's own window out
-of your screenshots. **Confirmed by testing**, not assumed.
+The guide is never in the resulting picture. The frame is read before any plugin window is drawn into
+it, which is the same property that keeps the wardrobe's own window out of your pictures. **Confirmed
+by testing**, not assumed.
 
 ## Portrait outfit previews
 

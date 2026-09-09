@@ -545,8 +545,9 @@ is being photographed has settled — raise it if pictures come out mid-redraw o
 The first shot of each item is given longer again on top of it, since that is the one that follows a
 redraw. It is manual mode's opposite, so turning one on turns the other off.
 
-It is experimental because it presses the game's own screenshot function, which is not an API and is
-not documented, and because nobody has yet run it over a wardrobe of several hundred pieces.
+It is experimental because nobody has yet run it over a wardrobe of several hundred pieces. It takes
+its pictures by reading the frame the game has drawn, so there is no screenshot function involved and
+nothing is pressed on your behalf.
 
 Three things have to be set up first, and none of them announce themselves when they are wrong:
 

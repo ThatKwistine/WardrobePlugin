@@ -95,7 +95,15 @@ public class ScreenshotSessionService : IDisposable
     /// anything about — so the opt-in is not offered either, a tick box that cannot work being worse
     /// than none.
     /// </remarks>
-    public bool AutoSupported => _shutter.Available;
+    /// <summary>
+    /// Whether fully automatic sessions can work here.
+    /// </summary>
+    /// <remarks>
+    /// Always, now that a session takes its own pictures out of the frame the game has drawn. It used
+    /// to depend on the game exposing its screenshot function, which turned out not to be usable from
+    /// a plugin at all — the request was accepted and the picture never arrived.
+    /// </remarks>
+    public bool AutoSupported => true;
 
     /// <summary>
     /// Whether fully automatic sessions are turned on in Experimental, and can be had at all.
@@ -228,7 +236,6 @@ public class ScreenshotSessionService : IDisposable
     private readonly IFramework      _framework;
     private readonly IPluginLog      _log;
     private readonly CameraService   _camera;
-    private readonly GameScreenshotService _shutter;
 
     /// <summary>One thing to photograph: either a wardrobe item or a whole outfit.</summary>
     private sealed record SessionTarget(WardrobeItem? Item, Outfit? Outfit);
@@ -288,14 +295,13 @@ public class ScreenshotSessionService : IDisposable
     private bool? _hatVisibleBefore;
 
     public ScreenshotSessionService(WardrobeService wardrobe, Configuration config,
-        IFramework framework, IPluginLog log, CameraService camera, GameScreenshotService shutter)
+        IFramework framework, IPluginLog log, CameraService camera)
     {
         _wardrobe  = wardrobe;
         _config    = config;
         _framework = framework;
         _log       = log;
         _camera    = camera;
-        _shutter   = shutter;
     }
 
     public bool FoldersReady =>
@@ -427,7 +433,7 @@ public class ScreenshotSessionService : IDisposable
         // Held for the length of the session rather than per shot: the frame is read in a draw
         // callback, and hiding the interface stops those coming — so a player who hides theirs to
         // frame a shot would otherwise stop the session without either of them noticing
-        Plugin.Frames.KeepDrawing = _config.UseFrameCapture;
+        Plugin.Frames.KeepDrawing = true;
 
         if (Auto)
         {
@@ -905,8 +911,6 @@ public class ScreenshotSessionService : IDisposable
     /// stopped answering: the flag never clears, so the extension never stops, and an unattended run
     /// waits on it forever without a word in the log. This is the point past which waiting longer is no
     /// longer telling anyone anything they do not already know.
-    /// </remarks>
-    private const double StuckShotGiveUpSeconds = 45;
 
     /// <summary>The screenshot formats a session will pick up out of the watched folder.</summary>
     private static readonly string[] WatchedShotTypes = { "*.png", "*.jpg", "*.jpeg", "*.bmp" };
@@ -1026,22 +1030,7 @@ public class ScreenshotSessionService : IDisposable
         if (problem != null) StateChanged?.Invoke();
     }
 
-    /// <summary>Whatever the game will currently say about its screenshot task.</summary>
-    public ShutterState ReadShutter() => _shutter.Read();
 
-    /// <summary>Whether the folder the game's own worker is holding is a folder that is there.</summary>
-    /// <remarks>
-    /// Reported rather than acted on. The game's screenshot folder is not the wardrobe's to set, but a
-    /// worker pointed somewhere that does not exist is a request that is accepted and never finishes —
-    /// which is indistinguishable, from this side, from a client that has simply stopped answering.
-    /// </remarks>
-    private static string SaveFolderExists(ShutterState state)
-    {
-        if (!state.Worker || state.SaveFolder.Length <= 1 || state.SaveFolder.StartsWith('('))
-            return "unknown";
-
-        return Directory.Exists(state.SaveFolder) ? "yes" : "NO";
-    }
 
     /// <summary>Pictures filed since this session began, for the line it ends on.</summary>
     private int _filedThisSession;
@@ -1087,18 +1076,6 @@ public class ScreenshotSessionService : IDisposable
             _log.Warning("[Wardrobe] Not in GPose — camera angles will not be applied and every " +
                          "picture will be taken from wherever the camera is standing.");
 
-        // The one piece of state a run cannot recover from and cannot see from its own log: a shutter
-        // that was already jammed before anything here asked it for anything
-        var shutter = _shutter.Read();
-        _log.Information($"[Wardrobe]   shutter        : allowed: {shutter.CanTake}, " +
-                         $"in flight: {shutter.Requested}, last result: {shutter.Result}, " +
-                         $"format: {shutter.Format}, worker: {(shutter.Worker ? "present" : "missing")}");
-        _log.Information($"[Wardrobe]   game saves to  : {shutter.SaveFolder}");
-
-        if (shutter.Requested)
-            _log.Warning("[Wardrobe] The game already had a screenshot in flight before this run " +
-                         "started. If it does not clear on its own the run will clear it, which is " +
-                         "also what gets your own screenshot key working again.");
     }
 
     /// <summary>Starts the countdown to the next automatic shot.</summary>
@@ -1128,27 +1105,7 @@ public class ScreenshotSessionService : IDisposable
     }
 
     /// <summary>Asks the game for a picture, and starts the clock on it arriving.</summary>
-    private bool FireShot()
-    {
-        if (_config.UseFrameCapture) return CaptureShot();
-
-        if (!_shutter.Take(out var refusal))
-        {
-            SetShutterProblem(refusal);
-            return false;
-        }
-
-        var now = DateTime.UtcNow;
-        _autoFired     = true;
-        _shotFiredAt   = now;
-        _autoTimeoutAt = now.AddSeconds(ShotTimeoutSeconds);
-        _blockedSince  = null;
-        SetShutterProblem(null);
-
-        _log.Information($"[Wardrobe] Session: took a screenshot of '{CurrentName}' ({ShotLabel})");
-        StateChanged?.Invoke();
-        return true;
-    }
+    private bool FireShot() => CaptureShot();
 
     /// <summary>
     /// Takes the picture out of the frame the game has drawn, rather than asking it for one.
@@ -1271,72 +1228,24 @@ public class ScreenshotSessionService : IDisposable
         {
             if (now < _autoTimeoutAt) return;
 
-            // Still being written. A slow disk is exactly what the timeout must not mistake for a
-            // failure, so it is extended rather than the shot being taken twice — but only up to the
-            // point where a shot that is still in flight has plainly stopped being in flight.
-            if (_shutter.Pending)
-            {
-                if ((now - _shotFiredAt).TotalSeconds < StuckShotGiveUpSeconds)
-                {
-                    _autoTimeoutAt = now.AddSeconds(ShotTimeoutSeconds);
-                    return;
-                }
-
-                var stuck = _shutter.Read();
-                _log.Error("[Wardrobe] Session: the game accepted the screenshot request " +
-                           $"{StuckShotGiveUpSeconds:0} seconds ago and has never finished it. " +
-                           "Pausing the run.");
-                _log.Error($"[Wardrobe] Session: shutter state — allowed: {stuck.CanTake}, " +
-                           $"in flight: {stuck.Requested} ({stuck.InFlightSeconds:0}s), " +
-                           $"last result: {stuck.Result}, format: {stuck.Format}, " +
-                           $"finished this session: {stuck.Completed}, " +
-                           $"worker: {(stuck.Worker ? "present" : "missing")}");
-                _log.Error($"[Wardrobe] Session: the game's own screenshot folder is {stuck.SaveFolder} " +
-                           $"(exists: {SaveFolderExists(stuck)})");
-
-                // A jammed flag refuses the user's own screenshot key too, and leaving it standing
-                // for them to restart the client over is not something to pause politely in front of
-                _shutter.Unjam($"the run gave up on it after {StuckShotGiveUpSeconds:0}s");
-
-                SetShutterProblem(
-                    "The game accepted the screenshot but never finished it. The stuck request has " +
-                    "been cleared, so your screenshot key works again — resume to try once more.");
-
-                _autoFired = false;
-                SetAutoPaused(true);
-                return;
-            }
-
+            // A capture answers within a frame or two, so past the timeout there is nothing still on
+            // its way. This is not the old wait on a folder: either the frame was read or it was not
             if (_autoRetries < MaxShotRetries)
             {
                 _autoRetries++;
                 _log.Warning($"[Wardrobe] Session: no picture arrived for '{CurrentName}' " +
-                             $"({ShotLabel}) — asking again ({_autoRetries} of {MaxShotRetries})");
+                             $"({ShotLabel}) — trying again ({_autoRetries} of {MaxShotRetries})");
                 _autoFired = false;
                 _autoAt    = now;
                 return;
             }
 
-            var missed = _shutter.Read();
-            _log.Warning($"[Wardrobe] Session: giving up on '{CurrentName}' ({ShotLabel}) — no " +
-                         "screenshot appeared in the watched folder. Check that Settings → " +
-                         "Images → FFXIV Screenshots Folder points at the folder the game " +
-                         "actually saves to.");
-            _log.Warning($"[Wardrobe] Session: shutter state — allowed: {missed.CanTake}, " +
-                         $"in flight: {missed.Requested}, last result: {missed.Result}, " +
-                         $"format: {missed.Format}");
-
-            // The one refusal that is not about the folder at all. Nothing here can open a DDS, so a
-            // game set to write them will fill the folder and file none of it, however right the path is
-            if (string.Equals(missed.Format, "Dds", StringComparison.OrdinalIgnoreCase))
-                _log.Warning("[Wardrobe] Session: the game is saving screenshots as DDS, which the " +
-                             "wardrobe cannot read. Set Character Configuration → screenshot format " +
-                             "to PNG or JPG.");
+            _log.Warning($"[Wardrobe] Session: giving up on '{CurrentName}' ({ShotLabel}) — the " +
+                         "frame could not be read.");
             _autoFired = false;
 
-            // Three of these in a row is not three unlucky shots, it is a session photographing a
-            // whole wardrobe into a folder nobody is watching — which it would otherwise do all the
-            // way to the end, leaving hundreds of screenshots on disk and no pictures assigned
+            // Several in a row is not bad luck, it is a run that will photograph a whole wardrobe
+            // and file none of it, all the way to the end, unless it is stopped
             if (++_missedInARow >= MaxMissesBeforePausing)
             {
                 _log.Warning("[Wardrobe] Session: nothing has been filed for " +
@@ -1357,21 +1266,16 @@ public class ScreenshotSessionService : IDisposable
 
         if (FireShot()) return;
 
-        // The game will not take one at the moment. Come back shortly rather than treating a passing
-        // refusal as a failure — but do not do it forever.
+        // The frame could not be read this time. Come back shortly rather than treating one
+        // refusal as a failure — but do not do it forever
         _blockedSince ??= now;
         if ((now - _blockedSince.Value).TotalSeconds >= BlockedGiveUpSeconds)
         {
-            var blocked = _shutter.Read();
-            _log.Warning("[Wardrobe] Session: the game has been refusing screenshots for " +
+            _log.Warning($"[Wardrobe] Session: the frame could not be read for " +
                          $"{BlockedGiveUpSeconds:0} seconds — pausing the automatic run.");
-            _log.Warning($"[Wardrobe] Session: shutter state — allowed: {blocked.CanTake}, " +
-                         $"in flight: {blocked.Requested} ({blocked.InFlightSeconds:0}s), " +
-                         $"last result: {blocked.Result}, format: {blocked.Format}, " +
-                         $"finished this session: {blocked.Completed}");
 
-            SetShutterProblem("The game has been refusing screenshots for " +
-                              $"{BlockedGiveUpSeconds:0} seconds, so the run has stopped here.");
+            SetShutterProblem($"The frame could not be read for {BlockedGiveUpSeconds:0} seconds, " +
+                              "so the run has stopped here.");
             SetAutoPaused(true);
             return;
         }

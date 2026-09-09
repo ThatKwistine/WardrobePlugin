@@ -6117,9 +6117,9 @@ public partial class PluginUi : Window, IDisposable
     /// <remarks>
     /// Shared by both session windows so they cannot drift apart, and worth sharing because there are
     /// now four different answers: a person is expected to press a key, a person may press it as often
-    /// as they like, a countdown is running, or the shot has been asked for and the picture is on its
-    /// way. Telling someone to press their screenshot key while the session is about to press it for
-    /// them is the one thing this must never do.
+    /// as they like, a countdown is running, or the picture has been asked for and is being read.
+    /// Telling someone to press their screenshot key while the session is about to take the picture
+    /// itself is the one thing this must never do.
     /// </remarks>
     /// <param name="withHint">Whether there is room under it for a line saying what to do.</param>
     private void DrawSessionWaitingLine(bool withHint)
@@ -6158,7 +6158,7 @@ public partial class PluginUi : Window, IDisposable
     }
 
     /// <summary>
-    /// Take the shot now, and hold the automatic run — the two controls a shutter of our own adds.
+    /// Take the picture now, and hold the automatic run — the two controls taking it ourselves adds.
     /// </summary>
     /// <remarks>
     /// Shoot Now is offered in every mode rather than only the automatic one: manual mode is about
@@ -6200,9 +6200,9 @@ public partial class PluginUi : Window, IDisposable
         ImGui.PopStyleColor(2);
 
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Take the screenshot this session is waiting for, now.\n\n" +
-                             "The game takes it, so it is the same picture your screenshot key\n" +
-                             "would have taken, cropped and filed the same way.");
+            ImGui.SetTooltip("Take the picture this session is waiting for, now.\n\n" +
+                             "Read straight out of the frame the game has drawn, then cropped and\n" +
+                             "filed the same way as any other.");
 
         DrawShutterProblem();
 
@@ -6228,20 +6228,10 @@ public partial class PluginUi : Window, IDisposable
     /// which kind of run is happening. One tick meaning both made the plain <b>Screenshot Session</b>
     /// button, which has to mean a session that is not automatic, switch the whole feature off.
     /// <para>
-    /// Hidden entirely when the game does not expose its screenshot task: a tick box that cannot do
-    /// anything is worse than none, since the failure would show up as a session counting down forever
-    /// against a shutter that never fires.
     /// </para>
     /// </remarks>
     private void DrawAutoEnableSetting()
     {
-        if (!_session.AutoSupported)
-        {
-            ImGui.TextDisabled("Unavailable: this build of the game does not expose the screenshot " +
-                               "function the wardrobe would press.");
-            return;
-        }
-
         var enabled = _session.AutoEnabled;
         if (ImGui.Checkbox("Fully automatic sessions", ref enabled))
             _session.AutoEnabled = enabled;
@@ -6251,13 +6241,12 @@ public partial class PluginUi : Window, IDisposable
                              "With this on, Super Screenshot Session appears on the Screenshots\n" +
                              "beside the plain one, and the session HUD gains a tick for\n" +
                              "switching a run between the two.\n\n" +
-                             "Experimental: it presses the game's own screenshot function, which is\n" +
-                             "not an API and has not been run over a large wardrobe yet.");
+                             "Experimental: it has not been run over a large wardrobe yet.");
 
         if (!enabled)
         {
             ImGui.TextDisabled("Off, every session waits for you to press your screenshot key — though " +
-                               "Shoot Now on the session HUD takes one without it.");
+                               "Shoot Now on the session HUD takes the picture without it.");
 
             ImGui.Spacing();
             DrawShutterDiagnostics();
@@ -6348,206 +6337,27 @@ public partial class PluginUi : Window, IDisposable
     }
 
     /// <summary>
-    /// What the game's screenshot task currently says about itself.
+    /// How the wardrobe takes its pictures, and a way to see one before trusting a whole run to it.
     /// </summary>
     /// <remarks>
-    /// Every line is the game's own state and none of it is the plugin's to change. It is here for the
-    /// one thing that cannot be diagnosed from this side: a session that takes no pictures on a machine
-    /// nobody here can reproduce on. A shot in flight that never clears is a stuck screenshot task; an
-    /// allowed that never turns true is a client refusing outright; a format that is not one a session
-    /// can read is a folder filling up with files it will never pick up. Three different faults that
-    /// all arrive as the same report, that nothing happens.
+    /// Short, now that there is only one way it happens. A session reads the frame the game has just
+    /// drawn — no screenshot function, no key pressed on anyone's behalf, no folder watched for the
+    /// picture to turn up in, and no dependence on what format the game is set to save.
     /// </remarks>
     private void DrawShutterDiagnostics()
     {
-        if (!ImGui.CollapsingHeader("Screenshot diagnostics")) return;
+        if (!ImGui.CollapsingHeader("How pictures are taken")) return;
 
-        var state = _session.ReadShutter();
-
-        ImGui.TextDisabled("What the game reports about its own screenshot function. Worth copying " +
-                           "into a bug report about a session that takes no pictures.");
+        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+        ImGui.TextDisabled("A session reads the picture out of the frame the game has just drawn. " +
+                           "Anything applied to the frame afterwards — a ReShade preset — is not in " +
+                           "it, because at that point it has not happened yet.");
         ImGui.Spacing();
-
-        if (!state.Available)
-        {
-            ImGui.TextColored(new Vector4(1f, 0.6f, 0.35f, 1f),
-                              "The game's screenshot function was not found.");
-            return;
-        }
-
-        ImGui.Text($"Screenshots allowed : {state.CanTake}");
-        ImGui.Text($"Shot in flight      : {state.Requested}" +
-                   (state.Requested ? $" (for {state.InFlightSeconds:0}s)" : string.Empty));
-        ImGui.Text($"Last result         : {GameScreenshotService.DescribeResult(state.Result)}");
-        ImGui.Text($"Saving as           : {state.Format}");
-        ImGui.Text($"Last shot at        : {(state.Timestamp == 0 ? "never" : state.Timestamp.ToString())}");
-        if (Plugin.Shutter.CompletionCounted)
-            ImGui.Text($"Finished for us     : {state.Completed}" +
-                       (GameScreenshotService.LastCompletionResult is { } code ? $" (last code {code})" : string.Empty));
-        ImGui.Text($"Worker thread       : {(state.Worker ? "present" : "missing")}");
-        ImGui.Text($"Game saves to       : {state.SaveFolder}");
-
-        // The game's own folder, not the watched one. A request that is accepted and never finishes
-        // is what a worker pointed at a folder that is not there looks like from this side
-        if (state.Worker && state.SaveFolder.Length > 1 && !state.SaveFolder.StartsWith('(')
-            && !Directory.Exists(state.SaveFolder))
-        {
-            ImGui.Spacing();
-            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
-            ImGui.TextColored(new Vector4(1f, 0.45f, 0.4f, 1f),
-                              "That folder does not exist. The game cannot write a screenshot to it, " +
-                              "which is enough on its own to explain a request that is accepted and " +
-                              "never finishes. Set it in the game's own settings.");
-            ImGui.PopTextWrapPos();
-        }
-
-        ImGui.Spacing();
-
-        // How a shot is asked for, which on some machines is the whole difference between a session
-        // that works and one that takes nothing
-        var byCapture = _config.UseFrameCapture;
-        if (ImGui.Checkbox("Take pictures from the frame the game has drawn", ref byCapture))
-        {
-            _config.UseFrameCapture = byCapture;
-            _config.Save();
-        }
-
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("The wardrobe reads the picture itself instead of asking the game for a\n" +
-                             "screenshot. Nothing to jam, nothing pressed on your behalf.\n" +
-                             "Anything applied after the game draws the frame - a ReShade preset -\n" +
-                             "will not be in the picture. Turn this off if you want yours.");
-
-        if (byCapture)
-        {
-            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
-            ImGui.TextDisabled("Items are read as a square and outfits as the full frame turned " +
-                               "upright, so only the part that gets kept is ever read.");
-            ImGui.PopTextWrapPos();
-        }
-
-        ImGui.Spacing();
-        ImGui.BeginDisabled(byCapture);
-
-        var byKey = _config.UseScreenshotKey;
-        if (ImGui.Checkbox("Take shots by pressing the game's screenshot key", ref byKey))
-        {
-            _config.UseScreenshotKey = byKey;
-            _config.Save();
-        }
-
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("On: the plugin presses your screenshot key, so the game takes the\n" +
-                             "picture exactly as it does for you.\nOff: the plugin calls the game's " +
-                             "screenshot function directly, which is\ncleaner but does not work on " +
-                             "every machine.");
-
-        ImGui.EndDisabled();
-
-        if (byKey && !byCapture)
-        {
-            var keyCode = _config.ScreenshotKeyCode;
-            ImGui.SetNextItemWidth(140f);
-            if (ImGui.InputInt("Screenshot key code", ref keyCode))
-            {
-                _config.ScreenshotKeyCode = Math.Clamp(keyCode, 0, 255);
-                _config.Save();
-            }
-
-            ImGui.SameLine();
-            ImGui.TextDisabled(Plugin.Keys.IsVirtualKeyValid(_config.ScreenshotKeyCode)
-                                   ? "(44 is Print Screen)"
-                                   : "the game does not track this key");
-
-            // The one way this setting can bite: it is not a preference, it is a key the plugin
-            // will really press in the game, once per shot, for the length of a session
-            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
-            ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
-                              "A session presses this key in the game, once per picture. It has to " +
-                              "be the key your screenshot keybind is on — set it to a key bound to " +
-                              "something else and a session will do that something else instead, " +
-                              "once for every shot it takes.");
-            ImGui.PopTextWrapPos();
-        }
-
-        ImGui.Spacing();
-
-        // The button that answers the only question the log cannot: whether asking for a picture is
-        // itself what breaks the shutter, with no session, no camera preset and no redraw in the way
-        var busy = Plugin.Shutter.Probing || state.Requested;
-        ImGui.BeginDisabled(busy);
-        if (ImGui.Button("Take a test screenshot"))
-            Plugin.Shutter.Probe();
-        ImGui.EndDisabled();
-
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Asks the game for one picture with nothing else running, then watches " +
-                             "what it does for twenty seconds and writes it all to the log.\nRun it " +
-                             "on a freshly started game, before any session.");
-
-        ImGui.SameLine();
-        ImGui.TextDisabled(Plugin.Shutter.Probing ? "watching..." : "(writes its findings to the log)");
-
-        // The one variable left between a request that takes a picture and one that hangs
-        var canReplay = Plugin.Shutter.CanReplayGameCall;
-        var replay    = Plugin.Shutter.ReplayGameCall;
-
-        ImGui.BeginDisabled(!canReplay);
-        if (ImGui.Checkbox("Make the game's exact call", ref replay))
-            Plugin.Shutter.ReplayGameCall = replay;
-        ImGui.EndDisabled();
-
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(canReplay
-                ? "Borrows the callback the game passes for its own screenshots, so the request is\n" +
-                  "identical to the one your screenshot key makes."
-                : "Press your own screenshot key once first, so there is a call to copy.");
-
-        if (!canReplay)
-            ImGui.TextDisabled("Press your screenshot key once to let the plugin see the game's own call.");
-
-        if (state.Requested)
-        {
-            ImGui.Spacing();
-            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
-            ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
-                              "A shot is in flight. If this never goes back to False, the game's " +
-                              "screenshot function is stuck, and your own screenshot key will not " +
-                              "work either until it is cleared.");
-            ImGui.PopTextWrapPos();
-
-            ImGui.Spacing();
-
-            // The button exists for the case a session cannot reach: a shutter jammed by something
-            // that was not a run, with no run started to notice it. It is one byte, and the same one
-            // restarting the client clears — which is what people were being told to do instead.
-            if (ImGui.Button("Clear the stuck request"))
-                Plugin.Shutter.Unjam("cleared by hand from the diagnostics panel");
-
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Tells the game no screenshot is pending. Does the same thing as " +
-                                 "restarting the game, without restarting it.\nOnly worth pressing " +
-                                 "if this has said True for more than a few seconds.");
-        }
+        ImGui.TextDisabled("Screenshots you take yourself during a session are still picked up and " +
+                           "filed, exactly as before.");
+        ImGui.PopTextWrapPos();
 
         DrawFrameCaptureTest();
-
-        if (string.Equals(state.Result, "NoDiskSpace", StringComparison.OrdinalIgnoreCase))
-        {
-            ImGui.Spacing();
-            ImGui.TextColored(new Vector4(1f, 0.45f, 0.4f, 1f),
-                              "The game reported it had no room on disk for the last screenshot.");
-        }
-
-        if (string.Equals(state.Format, "Dds", StringComparison.OrdinalIgnoreCase))
-        {
-            ImGui.Spacing();
-            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
-            ImGui.TextColored(new Vector4(1f, 0.45f, 0.4f, 1f),
-                              "The game is saving screenshots as DDS, which a session cannot read. " +
-                              "Set the screenshot format to PNG or JPG in the game's own settings.");
-            ImGui.PopTextWrapPos();
-        }
     }
 
     /// <summary>

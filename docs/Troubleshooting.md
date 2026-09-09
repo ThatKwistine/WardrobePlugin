@@ -149,59 +149,23 @@ pan alone rather than guessing at a centred value. Press **Update** on the prese
 
 ## A session takes no pictures, or Shoot Now does nothing
 
-Open **Settings → Experimental → Screenshot diagnostics**. It reads the game's own screenshot
-function and says which of several different faults this is:
+A session does not ask the game for a screenshot. It reads the picture out of the frame the game has
+just drawn, so there is no screenshot function to fail, no key pressed on your behalf, no folder
+watched for the picture to turn up in, and no dependence on what format the game is set to save.
 
-- **Screenshots allowed: False** that never turns true — the game is refusing screenshots outright.
-  A cutscene or a loading screen does this for a moment; anything longer is the client, not the
-  wardrobe.
-- **Shot in flight: True** that never goes back to False — the game accepted a request and never
-  finished it. While that flag stands the game refuses every later screenshot, the wardrobe's and
-  your own screenshot key's alike. A run clears it by itself after 45 seconds and says so in the log,
-  and a **Clear the stuck request** button under the readout does the same by hand without restarting
-  the game — but clearing it only buys the next shot, so a client doing this gets one picture per
-  attempt rather than a working run. **The usual cause is not the wardrobe at all — see below.**
-- **Worker thread: missing**, or a **Game saves to** path that is not on disk — the game's own
-  screenshot worker cannot write where it is pointed. That produces exactly the case above: the
-  request is accepted, the flag goes up, and nothing is ever written or finished. The folder is the
-  game's own setting, not the wardrobe's.
-- **Saving as: Dds** — the game is writing a format nothing here can open. Set the screenshot format
-  to PNG or JPG in the game's own settings. PNG, JPG and BMP are all picked up.
-- **Last result: NoDiskSpace** — the game's own words for a screenshot it could not write.
-- **Finished for us: 0** after a run has asked for several — the game is taking the requests and
-  never reporting a picture finished. That is the stuck case above rather than a folder problem.
+**Settings → Experimental → How pictures are taken** has a **Capture a test frame** button. Press it,
+close the plugin's windows while it counts down, and it writes one frame to a file and tells you the
+size and the format. If that works and a session still files nothing, the fault is in the session
+rather than in the picture-taking, and the log will say which item and angle it stopped on.
 
-If none of those apply, the folder is the next thing to check: **Settings → Screenshots** has to
-point at the folder the game actually saves to.
+If the test says the back buffer is in a format it does not convert, that is the one case it cannot
+handle: an HDR frame needs tone mapping before it can become an ordinary picture. Say so in a bug
+report along with the format it names.
 
-## An automatic session takes no pictures
+Screenshots you take yourself are still watched for and filed, so **Settings → Screenshots** still
+has to point at the folder the game actually saves to for those. The game must also be saving PNG,
+JPG or BMP — a DDS cannot be opened here.
 
-**Settings → Experimental → Screenshot diagnostics** has a tick box, **Take shots by pressing the
-game's screenshot key**. Leave it on. It is the default, and on some machines it is the only thing
-that works.
-
-With it on, the plugin presses your screenshot key at the game's window and the game takes the
-picture exactly as it does for you. With it off, the plugin calls the game's screenshot function
-directly — which is the cleaner mechanism, and on some machines never takes a picture at all: the
-request is accepted, **Shot in flight** goes to True and stays there, and nothing is written. The two
-requests have been compared side by side and are identical in every argument, so what differs is
-where in the frame the request is made, which a plugin cannot choose.
-
-If a session takes nothing with the key setting on:
-
-- **Check the key code matches your keybind.** 44 is Print Screen, the game's default. If you have
-  rebound your screenshot key, put its code in the box beside the tick. A code that matches nothing
-  is a press that silently does nothing.
-- **Press your own screenshot key** with **Shot in flight: False** and look in the game's screenshots
-  folder. If no file appears, the game itself cannot take a picture and nothing here can make it. A
-  program that records or streams your screen by hooking the game's frames can do this — ReShade,
-  GShade, Discord Clips, Parsec, OBS, NVIDIA ShadowPlay. The date on the newest file in your
-  screenshots folder tells you when it started.
-- **Take a test screenshot** in the diagnostics writes a full trace to the log, including whether the
-  request reached the game and whether a file appeared. That trace is the thing to put in a bug
-  report.
-
-The readout is worth copying into a bug report whichever of these it turns out to be.
 
 ## Mod names show as boxes or missing glyphs
 

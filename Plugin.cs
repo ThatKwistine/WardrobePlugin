@@ -24,10 +24,6 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] public static IDataManager     DataManager  { get; private set; } = null!;
     [PluginService] public static IFramework       Framework    { get; private set; } = null!;
     [PluginService] public static IGameConfig      GameConfig   { get; private set; } = null!;
-    [PluginService] public static IKeyState        Keys         { get; private set; } = null!;
-
-    /// <summary>Needed only by the shutter's diagnostic hook — see <see cref="GameScreenshotService"/>.</summary>
-    [PluginService] public static IGameInteropProvider Interop   { get; private set; } = null!;
 
     public static PenumbraIpc         Penumbra     { get; private set; } = null!;
     public static GlamourerIpc        Glamourer    { get; private set; } = null!;
@@ -37,8 +33,6 @@ public sealed class Plugin : IDalamudPlugin
     public static ItemLookupService   ItemLookup   { get; private set; } = null!;
     public static EmoteLookupService  Emotes       { get; private set; } = null!;
     public static GlamourPlateService GlamourPlates { get; private set; } = null!;
-    public static GameScreenshotService Shutter     { get; private set; } = null!;
-
     /// <summary>Reads the game's own back buffer. Experimental - see <see cref="FrameCaptureService"/>.</summary>
     public static FrameCaptureService   Frames      { get; private set; } = null!;
     public static TextureCompressionFlagService TextureFlags { get; private set; } = null!;
@@ -131,12 +125,11 @@ public sealed class Plugin : IDalamudPlugin
         // After ItemLookup, which it resolves item names through when it logs its slot mapping
         GlamourPlates      = new GlamourPlateService(Log);
 
-        Shutter            = new GameScreenshotService(Log, Framework, Interop, Keys, _config);
         Frames             = new FrameCaptureService(Log);
         TextureFlags       = new TextureCompressionFlagService(Penumbra, Framework, Log);
 
         _wardrobeService   = new WardrobeService(Penumbra, Glamourer, _config, Log, Framework);
-        _screenshotSession = new ScreenshotSessionService(_wardrobeService, _config, Framework, Log, Camera, Shutter);
+        _screenshotSession = new ScreenshotSessionService(_wardrobeService, _config, Framework, Log, Camera);
 
         // After the session service, which it asks whether a shoot is running: a session dresses the
         // character one item at a time, and none of those is a look anybody chose
@@ -404,8 +397,6 @@ public sealed class Plugin : IDalamudPlugin
         _profiles.Dispose();
         _screenshotSession.Dispose();
 
-        // After the session, so nothing can ask for a picture once the callback has been taken back
-        Shutter.Dispose();
         Frames.Dispose();
         _wardrobeService.Dispose();
         Camera.Dispose();
