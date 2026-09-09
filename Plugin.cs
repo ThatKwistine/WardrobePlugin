@@ -23,6 +23,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] public static ITextureProvider Textures     { get; private set; } = null!;
     [PluginService] public static IDataManager     DataManager  { get; private set; } = null!;
     [PluginService] public static IFramework       Framework    { get; private set; } = null!;
+    [PluginService] public static IGameConfig      GameConfig   { get; private set; } = null!;
 
     public static PenumbraIpc         Penumbra     { get; private set; } = null!;
     public static GlamourerIpc        Glamourer    { get; private set; } = null!;
@@ -32,7 +33,8 @@ public sealed class Plugin : IDalamudPlugin
     public static ItemLookupService   ItemLookup   { get; private set; } = null!;
     public static EmoteLookupService  Emotes       { get; private set; } = null!;
     public static GlamourPlateService GlamourPlates { get; private set; } = null!;
-    public static GameScreenshotService Shutter     { get; private set; } = null!;
+    /// <summary>Reads the game's own back buffer. Experimental - see <see cref="FrameCaptureService"/>.</summary>
+    public static FrameCaptureService   Frames      { get; private set; } = null!;
     public static TextureCompressionFlagService TextureFlags { get; private set; } = null!;
 
     private readonly Configuration            _config;
@@ -100,16 +102,21 @@ public sealed class Plugin : IDalamudPlugin
             if (_config.LastWorn == null) _config.LastWorn = LastWornFromWornItems();
 
             _config.WornItems.Clear();
+            _config.WornModsOnly.Clear();
             _config.Save();
         }
 
         Penumbra  = new PenumbraIpc(pi, Log, _config);
         Glamourer = new GlamourerIpc(pi, Log, Objects);
-        Camera    = new CameraService(Framework, Log);
+        Camera    = new CameraService(Framework, Log, GameConfig, ClientState);
 
-        _analysisService   = new ModAnalysisService(Log);
         _itemLookup        = new ItemLookupService(DataManager);
         ItemLookup         = _itemLookup;
+
+        // The lookup first, because the analyser borrows it: only the Glasses sheet can say whether
+        // an e{set}_met path is a hat or a pair of spectacles. Passed as a delegate so the analyser
+        // keeps no game-data dependency of its own.
+        _analysisService   = new ModAnalysisService(Log, _itemLookup.IsFacewearSet);
 
         // Builds its map on first use rather than here: only a wardrobe with animation items ever
         // asks it anything, and it is the panel that draws one that pays for it
@@ -118,11 +125,11 @@ public sealed class Plugin : IDalamudPlugin
         // After ItemLookup, which it resolves item names through when it logs its slot mapping
         GlamourPlates      = new GlamourPlateService(Log);
 
-        Shutter            = new GameScreenshotService(Log);
+        Frames             = new FrameCaptureService(Log);
         TextureFlags       = new TextureCompressionFlagService(Penumbra, Framework, Log);
 
         _wardrobeService   = new WardrobeService(Penumbra, Glamourer, _config, Log, Framework);
-        _screenshotSession = new ScreenshotSessionService(_wardrobeService, _config, Framework, Log, Camera, Shutter);
+        _screenshotSession = new ScreenshotSessionService(_wardrobeService, _config, Framework, Log, Camera);
 
         // After the session service, which it asks whether a shoot is running: a session dresses the
         // character one item at a time, and none of those is a look anybody chose
@@ -173,6 +180,9 @@ public sealed class Plugin : IDalamudPlugin
 
         pi.UiBuilder.DisableGposeUiHide = true;
 
+        // Before the windows, so an armed capture reads the frame the game drew rather than one
+        // with this plugin's own interface already painted over it
+        pi.UiBuilder.Draw        += TickFrameCapture;
         pi.UiBuilder.Draw        += _windowSystem.Draw;
         pi.UiBuilder.Draw        += _ui.DrawFileDialog;
         pi.UiBuilder.Draw        += _cropGuide.Draw;
@@ -290,6 +300,7 @@ public sealed class Plugin : IDalamudPlugin
                 if (item != null) _wardrobeService.UnwearItem(item, save: false, restoreBase: false);
             }
             _config.WornItems.Clear();
+            _config.WornModsOnly.Clear();
             _config.Save();
             return;
         }
@@ -361,10 +372,14 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OpenSettings() => _settings.IsOpen = true;
 
+    /// <summary>Gives the frame capture its one look at the back buffer, on the render thread.</summary>
+    private void TickFrameCapture() => Frames.Tick();
+
     public void Dispose()
     {
         Commands.RemoveHandler(CommandName);
         Commands.RemoveHandler(CommandAlias);
+        PluginInterface.UiBuilder.Draw        -= TickFrameCapture;
         PluginInterface.UiBuilder.Draw        -= _windowSystem.Draw;
         PluginInterface.UiBuilder.Draw        -= _ui.DrawFileDialog;
         PluginInterface.UiBuilder.Draw        -= _cropGuide.Draw;
@@ -381,6 +396,8 @@ public sealed class Plugin : IDalamudPlugin
         _lastWorn.Dispose();
         _profiles.Dispose();
         _screenshotSession.Dispose();
+
+        Frames.Dispose();
         _wardrobeService.Dispose();
         Camera.Dispose();
         Penumbra.Dispose();

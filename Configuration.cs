@@ -175,7 +175,6 @@ public class Configuration : IPluginConfiguration
     [Newtonsoft.Json.JsonProperty("Outfits")]
     public List<Outfit> LegacyOutfits { get; set; } = new();
 
-
     // ── Wardrobe items ────────────────────────────────────────────────────────
     [Newtonsoft.Json.JsonIgnore]
     public List<WardrobeItem> WardrobeItems
@@ -188,7 +187,6 @@ public class Configuration : IPluginConfiguration
     /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
     [Newtonsoft.Json.JsonProperty("WardrobeItems")]
     public List<WardrobeItem> LegacyWardrobeItems { get; set; } = new();
-
 
     /// <summary>Slot name (EquipSlot.ToString()) → currently worn WardrobeItem ID.</summary>
     [Newtonsoft.Json.JsonIgnore]
@@ -203,6 +201,13 @@ public class Configuration : IPluginConfiguration
     [Newtonsoft.Json.JsonProperty("WornItems")]
     public Dictionary<string, Guid> LegacyWornItems { get; set; } = new();
 
+    /// <inheritdoc cref="Models.WardrobeProfile.WornModsOnly"/>
+    [Newtonsoft.Json.JsonIgnore]
+    public List<Guid> WornModsOnly
+    {
+        get => ActiveProfile.WornModsOnly;
+        set => ActiveProfile.WornModsOnly = value;
+    }
 
     // ── What was last worn ────────────────────────────────────────────────────
 
@@ -227,7 +232,6 @@ public class Configuration : IPluginConfiguration
     /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
     [Newtonsoft.Json.JsonProperty("LastWorn")]
     public WornSnapshot? LegacyLastWorn { get; set; }
-
 
     /// <summary>What to do with <see cref="LastWorn"/> when a character logs in.</summary>
     /// <remarks>
@@ -311,7 +315,6 @@ public class Configuration : IPluginConfiguration
     [Newtonsoft.Json.JsonProperty("ExpandedVariantGroups")]
     public HashSet<string> LegacyExpandedVariantGroups { get; set; } = new();
 
-
     /// <summary>How <c>Create variant of this item</c> names the copy it makes.</summary>
     /// <remarks>
     /// Defaults to the style variants have always used, so an existing wardrobe carries on naming
@@ -351,7 +354,6 @@ public class Configuration : IPluginConfiguration
     [Newtonsoft.Json.JsonProperty("BaseCharacters")]
     public List<BaseCharacter> LegacyBaseCharacters { get; set; } = new();
 
-
     /// <summary>
     /// The base character currently in force, or null when stripping takes everything.
     /// </summary>
@@ -371,7 +373,6 @@ public class Configuration : IPluginConfiguration
     /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
     [Newtonsoft.Json.JsonProperty("ActiveBaseCharacterId")]
     public Guid? LegacyActiveBaseCharacterId { get; set; }
-
 
     /// <summary>The active base character, or null when none is set or the saved one is gone.</summary>
     public BaseCharacter? ActiveBaseCharacter =>
@@ -442,7 +443,6 @@ public class Configuration : IPluginConfiguration
     [Newtonsoft.Json.JsonProperty("ImagesFolder")]
     public string LegacyImagesFolder { get; set; } = string.Empty;
 
-
     /// <summary>Folder where FFXIV saves screenshots, watched during screenshot sessions.</summary>
     public string ScreenshotsFolder { get; set; } = string.Empty;
 
@@ -500,7 +500,6 @@ public class Configuration : IPluginConfiguration
     /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
     [Newtonsoft.Json.JsonProperty("SlotCameraPresetLists")]
     public Dictionary<string, List<CameraPreset>> LegacySlotCameraPresetLists { get; set; } = new();
-
 
     /// <summary>
     /// The single preset per slot that presets used to be, kept only so it can be migrated.
@@ -1104,6 +1103,17 @@ public class Configuration : IPluginConfiguration
     /// mod lists.
     /// </summary>
     public bool HideSupportMods { get; set; }
+
+    /// <summary>
+    /// Shade every other row of the bulk import list, so the controls on the right of a row can be
+    /// traced back to the mod name on the left of it.
+    /// </summary>
+    /// <remarks>
+    /// On by default. The list is as wide as the window and its four columns sit far apart, which
+    /// is exactly the case a banded background is for; anyone who would rather have the plain list
+    /// back can turn it off.
+    /// </remarks>
+    public bool StripeImportRows { get; set; } = true;
 
     // ── Backups ───────────────────────────────────────────────────────────────
 

@@ -11,7 +11,7 @@
     <!-- Must match AssemblyVersion in WardrobePlugin.json AND both version fields in
          pluginmaster.json, and must increase for Dalamud to offer an update. All three files
          are bumped together when releasing — see docs/Releasing.md. -->
-    <Version>1.6.0.0</Version>
+    <Version>1.6.1.0</Version>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
     <NoWarn>MSB3277;MSB3270</NoWarn>
@@ -47,6 +47,18 @@
     </Reference>
     <Reference Include="FFXIVClientStructs">
       <HintPath>$(DalamudLibPath)FFXIVClientStructs.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Only for ScreenShot.Addresses, which the shutter's diagnostic hook needs to find the
+         game's own screenshot function. Resolved addresses live in this assembly's types. -->
+    <Reference Include="InteropGenerator.Runtime">
+      <HintPath>$(DalamudLibPath)InteropGenerator.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- Direct3D types for reading the game's back buffer. Shipped with Dalamud, so this adds no
+         dependency of its own and cannot drift from the version the game is running against. -->
+    <Reference Include="TerraFX.Interop.Windows">
+      <HintPath>$(DalamudLibPath)TerraFX.Interop.Windows.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Lumina">

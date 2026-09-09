@@ -342,7 +342,16 @@ public class WardrobeService : IDisposable
 
     // ── Wardrobe items ────────────────────────────────────────────────────────
 
-    public bool WearItem(WardrobeItem item, OutfitDye? dye = null)
+    /// <param name="equipItem">
+    /// Whether Glamourer is told to equip the item's detected game item, as well as its mods being
+    /// enabled in Penumbra.
+    /// </param>
+    /// <remarks>
+    /// False is for a mod that re-skins gear somebody else is putting on — a vanilla upscale
+    /// attached to a glamour plate, where equipping would replace the plate's own piece with
+    /// whatever the mod was detected as. The mod half of wearing is identical either way.
+    /// </remarks>
+    public bool WearItem(WardrobeItem item, OutfitDye? dye = null, bool equipItem = true)
     {
         // Before the slot's previous occupant is read below: after a character swap that entry can
         // name an item belonging to the collection before this one, and taking it off would be a
@@ -385,7 +394,7 @@ public class WardrobeService : IDisposable
         var stain1 = dye?.Stain1 ?? 0;
         var stain2 = dye?.Stain2 ?? 0;
 
-        if (item.GlamourerItemId.HasValue)
+        if (item.GlamourerItemId.HasValue && equipItem)
         {
             _log.Debug($"[Wardrobe]   Calling Glamourer.SetItem (pre-enable) slot={item.Slot} itemId={item.GlamourerItemId.Value} name='{item.GlamourerItemName}'");
             if (!_glamourer.SetItem(item.Slot, item.GlamourerItemId.Value, stain1, stain2))
@@ -445,9 +454,19 @@ public class WardrobeService : IDisposable
         if (success)
             _config.WornItems[slotKey] = item.Id;
 
+        // Recorded before the item comes off rather than worked out then: by the time it does, the
+        // only evidence that nothing was equipped for it is gone. See WardrobeProfile.WornModsOnly.
+        if (equipItem) _config.WornModsOnly.Remove(item.Id);
+        else if (success && !_config.WornModsOnly.Contains(item.Id)) _config.WornModsOnly.Add(item.Id);
+
         // Secondary SetItem after all mods are enabled — catches cases where the
         // first pre-enable call was overridden by UnwearItem of the previous slot item.
-        if (item.GlamourerItemId.HasValue)
+        if (!equipItem)
+        {
+            _log.Debug($"[Wardrobe] '{item.Name}' applied as a mod only — nothing equipped, so the " +
+                       "piece already in the slot is what the redirection lands on");
+        }
+        else if (item.GlamourerItemId.HasValue)
         {
             _log.Debug($"[Wardrobe]   Calling Glamourer.SetItem (post-enable) slot={item.Slot} itemId={item.GlamourerItemId.Value}");
             if (!_glamourer.SetItem(item.Slot, item.GlamourerItemId.Value, stain1, stain2))
@@ -891,8 +910,12 @@ public class WardrobeService : IDisposable
         //
         // Worse, many such mods attach themselves to an Emperor's New item precisely because it is
         // invisible, so "emptying" the slot equips the very item the mod replaces.
+        // A mod applied without being equipped never filled the slot either, and emptying it would
+        // take off whatever is genuinely there — for a plate's upscale, the plate's own piece.
+        var modsOnly = _config.WornModsOnly.Remove(item.Id);
+
         var swappedItem = false;
-        if (item.Slot != EquipSlot.Unknown && !item.Slot.IsModOnly() && item.GlamourerItemId.HasValue)
+        if (!modsOnly && item.Slot != EquipSlot.Unknown && !item.Slot.IsModOnly() && item.GlamourerItemId.HasValue)
         {
             var emperorsId = ItemLookupService.FindEmperorsNewItem(item.Slot);
             if (emperorsId.HasValue)
@@ -2244,8 +2267,9 @@ public class WardrobeService : IDisposable
     {
         foreach (var item in ResolveOutfit(outfit))
         {
-            // Hair, emotes and mounts have no equipment piece to dye
-            if (item.Slot.IsModOnly()) continue;
+            // Hair, emotes and mounts have no equipment piece to dye, and facewear has a piece
+            // the game gives no dye channel
+            if (!item.Slot.SupportsDye()) continue;
 
             var dye = GetDye(outfit, item.Id);
             var s1  = channel == 1 ? stain : dye?.Stain1 ?? 0;
@@ -2275,7 +2299,7 @@ public class WardrobeService : IDisposable
 
         foreach (var item in ResolveOutfit(outfit))
         {
-            if (item.Slot.IsModOnly()) continue;
+            if (!item.Slot.SupportsDye()) continue;
 
             var dye  = GetDye(outfit, item.Id);
             var here = channel == 1 ? dye?.Stain1 ?? 0 : dye?.Stain2 ?? 0;
@@ -2431,7 +2455,9 @@ public class WardrobeService : IDisposable
             vanilla[slot.ToString()] = new VanillaPiece
             {
                 ItemId = piece.ItemId,
-                Name   = Plugin.ItemLookup.GetItemName(piece.ItemId),
+                // Slot-aware: a facewear id is a Glasses row and means something else entirely in
+                // the Item sheet, so the id alone would name the wrong thing
+                Name   = Plugin.ItemLookup.GetItemName(piece.ItemId, slot),
                 Stain1 = piece.Stain1,
                 Stain2 = piece.Stain2,
             };
@@ -2456,11 +2482,19 @@ public class WardrobeService : IDisposable
     /// rather than as it was saved, so adding a wardrobe item to a slot that used to hold a vanilla
     /// piece leaves the stored piece harmlessly unused rather than fighting the new item for the slot.
     /// </remarks>
-    private void WearVanillaItems(Outfit outfit)
+    /// <param name="itemsEquip">
+    /// Whether the outfit's own items took the slots they name. False on a plate applying its mods
+    /// only, where nothing was equipped and so no slot is spoken for — the plate's own piece is
+    /// exactly what an attached upscale is there to re-skin, and holding the slot back would leave
+    /// it empty.
+    /// </param>
+    private void WearVanillaItems(Outfit outfit, bool itemsEquip = true)
     {
         if (outfit.VanillaItems.Count == 0) return;
 
-        var covered = ResolveOutfit(outfit).Select(i => i.Slot).ToHashSet();
+        var covered = itemsEquip
+            ? ResolveOutfit(outfit).Select(i => i.Slot).ToHashSet()
+            : new HashSet<EquipSlot>();
 
         foreach (var (slotName, piece) in outfit.VanillaItems)
         {
@@ -2490,14 +2524,31 @@ public class WardrobeService : IDisposable
     /// options applied — which is the whole reason for handling outfits here rather than leaving
     /// it to a Glamourer design.
     /// </remarks>
-    public void WearOutfit(Outfit outfit, bool removeOthers)
+    /// <param name="clearSlots">
+    /// Whether the outfit's own <see cref="Outfit.ClearSlotsFirst"/> is honoured. True everywhere it
+    /// matters — an outfit is being arrived at, and an outfit that says it is the whole look empties
+    /// what it does not fill. False only for <see cref="ReapplyOutfit"/>, which is already in the look.
+    /// </param>
+    public void WearOutfit(Outfit outfit, bool removeOthers, bool clearSlots = true)
     {
         var items = ResolveOutfit(outfit);
         var missing = outfit.ItemIds.Count - items.Count;
         if (missing > 0)
             _log.Warning($"[Wardrobe] Outfit '{outfit.Name}': {missing} item(s) no longer exist and were skipped.");
 
-        if (removeOthers)
+        // Taken before anything is cleared, because it is a record of what is on the character right
+        // now — see the revert below, which is the only thing it is for.
+        var outgoingRows = AdvancedRowsOn(
+            _activeOutfitId is { } previousId ? _config.Outfits.Find(o => o.Id == previousId) : null,
+            _config.WornItems.Values);
+
+        // An outfit that clears its slots is saying it is the whole look rather than a layer, so the
+        // slots it has nothing of its own for are emptied instead of being left holding what the last
+        // outfit put there. Only those slots: the pieces about to go on are never taken off and put
+        // back, and the character is never briefly bare. It takes off every wardrobe item outside
+        // them, which is all the removeOthers pass below would have done.
+        if (clearSlots && outfit.ClearSlotsFirst) ClearUnusedSlots(outfit, items);
+        else if (removeOthers)
         {
             var keep = items.Select(i => i.Id).ToHashSet();
 
@@ -2521,17 +2572,25 @@ public class WardrobeService : IDisposable
             }
         }
 
+        RevertStaleAdvancedDyes(outfit, items, outgoingRows);
+
         // Before the items, so the design is the layer they go on over: an item in the outfit wins
         // the slot it occupies, and the design dresses everything the outfit has nothing for. The
         // other way round, the design's gear would replace the very pieces the outfit is made of.
         if (outfit.IsDesign) ApplyOutfitDesign(outfit);
 
+        // A plate's items are the mods that belong with it rather than pieces of it, so by default
+        // they are applied without being equipped: the plate owns the gear, and an upscale attached
+        // to it exists to re-skin the very pieces it is putting on. PlateItemsEquip says otherwise
+        // for a plate whose attachments really are worn alongside it.
+        var equipItems = !outfit.IsGlamourPlate || outfit.PlateItemsEquip;
+
         foreach (var item in items)
-            WearItem(item, GetDye(outfit, item.Id));
+            WearItem(item, GetDye(outfit, item.Id), equipItems);
 
         // After the items: a vanilla piece only ever fills a gap they left, and equipping it first
         // would put plain gear in a slot a mod is about to take anyway
-        WearVanillaItems(outfit);
+        WearVanillaItems(outfit, equipItems);
 
         // Last, so nothing after it can put a hat back on. A design carries its own hat and weapon
         // state, and applying one is exactly what would override an outfit that asked for the
@@ -2545,6 +2604,153 @@ public class WardrobeService : IDisposable
         WardrobeChanged?.Invoke();
         _log.Information($"[Wardrobe] Wore outfit '{outfit.Name}' ({items.Count} item(s), " +
                          $"{outfit.VanillaItems.Count} vanilla piece(s))");
+    }
+
+    /// <summary>
+    /// The advanced dye rows an outfit has put on the character, across everything it is wearing.
+    /// </summary>
+    /// <remarks>
+    /// Gathered into one map because the rows are keyed by slot and row, not by item: two pieces
+    /// never write the same key, so flattening them loses nothing and gives the one set that
+    /// describes the character as it stands.
+    /// </remarks>
+    private Dictionary<string, string> AdvancedRowsOn(Outfit? outfit, IEnumerable<Guid> wornIds)
+    {
+        var rows = new Dictionary<string, string>();
+        if (outfit == null) return rows;
+
+        foreach (var id in wornIds)
+            if (GetDye(outfit, id)?.Advanced is { Count: > 0 } advanced)
+                foreach (var (key, row) in advanced)
+                    rows[key] = row;
+
+        return rows;
+    }
+
+    /// <summary>
+    /// Puts back the advanced dye rows the outfit coming off left behind and the one going on has
+    /// nothing to say about.
+    /// </summary>
+    /// <remarks>
+    /// An advanced dye row belongs to a slot rather than to a piece, and nothing but an explicit
+    /// revert takes one off — which is why <see cref="UnwearItem"/> reverts on the way out. But
+    /// wearing an outfit deliberately does not take off what it is about to replace: neither
+    /// <see cref="ClearUnusedSlots"/> nor the removeOthers pass touches a slot the new outfit fills,
+    /// precisely so the character is never briefly bare. Those slots were the hole. Swapping from an
+    /// outfit with advanced dyes to one without left every row in place, and the new outfit's pieces
+    /// wore the old one's colours.
+    /// <para>
+    /// Only the rows the incoming outfit has no opinion on. One it is about to write itself is
+    /// overwritten a moment later anyway, and reverting it first would be two state round trips to
+    /// arrive at the same place, with a frame of the game's own colour in between.
+    /// </para>
+    /// <para>
+    /// Scoped to what the wardrobe applied, never to Glamourer's whole <c>Materials</c> block. Rows
+    /// somebody set by hand in Glamourer are theirs, and clearing those because an outfit was put on
+    /// would be the wardrobe helping itself to a part of the character it was never given.
+    /// </para>
+    /// </remarks>
+    private void RevertStaleAdvancedDyes(Outfit outfit, IReadOnlyList<WardrobeItem> items,
+                                         Dictionary<string, string> outgoingRows)
+    {
+        if (!_config.AdvancedDyesEnabled || outgoingRows.Count == 0) return;
+
+        var incoming = new HashSet<string>();
+        foreach (var item in items)
+            if (GetDye(outfit, item.Id)?.Advanced is { Count: > 0 } advanced)
+                incoming.UnionWith(advanced.Keys);
+
+        var stale = outgoingRows
+            .Where(kv => !incoming.Contains(kv.Key))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+        if (stale.Count == 0) return;
+
+        _glamourer.RevertAdvancedDyes(stale);
+        _log.Debug($"[Wardrobe] Outfit '{outfit.Name}': put back {stale.Count} advanced dye row(s) " +
+                   $"the previous outfit had left on the character");
+    }
+
+    /// <summary>
+    /// Empties the equipment slots this outfit has nothing of its own for, leaving the base
+    /// character's slots and everything the outfit is about to fill alone.
+    /// </summary>
+    /// <remarks>
+    /// What <see cref="Outfit.ClearSlotsFirst"/> does, and deliberately not a strip. Only the slots
+    /// nobody is about to claim are touched, so a piece the outfit is about to put on is never taken
+    /// off and put back on, and the character is never briefly bare on the way. A wardrobe item left
+    /// in one of those slots is taken off properly rather than merely hidden, so its Penumbra mods go
+    /// off with it.
+    /// <para>
+    /// Weapons are not touched at all. What you can hold is decided by the job you are on rather than
+    /// by the look, and emptying the hands of every outfit that happens to have no weapon in it would
+    /// be wrong far more often than right. An outfit that does have an opinion still gets its way: a
+    /// weapon in the outfit is equipped as any other piece is, and <see cref="Outfit.WeaponVisible"/>
+    /// puts it away where that is what the look wants.
+    /// </para>
+    /// <para>
+    /// Animations, VFX and mounts are left running, the same line <see cref="StripAll"/> draws: they
+    /// are not on the character, so an outfit has nothing to say about them. The base character is
+    /// left alone for the same reason it survives a strip — it is the floor, not part of what is
+    /// being cleared — and it is not re-applied afterwards, since nothing here displaces it.
+    /// </para>
+    /// </remarks>
+    private void ClearUnusedSlots(Outfit outfit, IReadOnlyList<WardrobeItem> items)
+    {
+        var baseChar = _config.ActiveBaseCharacter;
+        var kept     = KeptSlots(baseChar);
+        var keptIds  = baseChar?.ItemIds ?? new List<Guid>();
+
+        // Everything the outfit fills for itself: its own items, and the plain gear it keeps for the
+        // slots they do not cover. A design's pieces are deliberately not counted — the design is
+        // applied after this and writes over whatever was left in the slots it dresses.
+        var filled = items.Select(i => i.Slot).ToHashSet();
+        foreach (var slotName in outfit.VanillaItems.Keys)
+            if (Enum.TryParse<EquipSlot>(slotName, out var vanillaSlot)) filled.Add(vanillaSlot);
+
+        var needsRedraw = false;
+        var taken       = 0;
+
+        foreach (var (key, id) in _config.WornItems.ToList())
+        {
+            var item = _config.WardrobeItems.Find(x => x.Id == id);
+
+            // A key whose item has since been deleted can never be cleared by UnwearItem — the same
+            // orphan a strip sweeps up on its way past
+            if (item == null)
+            {
+                _config.WornItems.Remove(key);
+                continue;
+            }
+
+            if (item.Slot.IsModCategory() || item.Slot.IsWeapon()) continue;
+            if (filled.Contains(item.Slot)) continue;
+            if (keptIds.Contains(item.Id) || kept.Contains(item.Slot)) continue;
+
+            needsRedraw |= UnwearItem(item, save: false, redraw: false, restoreBase: false);
+            taken++;
+        }
+
+        // Then the slots themselves, so gear the wardrobe has no item for goes too — worn by hand,
+        // left behind by a plate, put on by a design. Customisation slots are skipped for the reason
+        // a strip skips them: there is no empty to set a character's hair to; weapons for the reason
+        // above.
+        foreach (var slot in EquipSlotEx.All)
+        {
+            if (slot.IsCustomization() || slot.IsWeapon()) continue;
+            if (filled.Contains(slot) || kept.Contains(slot)) continue;
+
+            var emperorsId = ItemLookupService.FindEmperorsNewItem(slot);
+            if (emperorsId.HasValue) _glamourer.SetItem(slot, emperorsId.Value);
+        }
+
+        // Once, and before the outfit goes on rather than after: a customisation mod switched off
+        // above has nothing else to make it disappear, and a redraw landing mid-dress is the timing
+        // that undoes what has just been applied.
+        if (needsRedraw) _penumbra.RedrawPlayer();
+
+        _log.Debug($"[Wardrobe] Outfit '{outfit.Name}': cleared the slots it does not fill " +
+                   $"({taken} item(s) taken off, {filled.Count} slot(s) left for the outfit)");
     }
 
     /// <summary>Applies an outfit's hat and weapon toggles, where it has an opinion about them.</summary>
@@ -2591,7 +2797,11 @@ public class WardrobeService : IDisposable
     public void ReapplyOutfit(Outfit outfit)
     {
         _log.Information($"[Wardrobe] Re-applying outfit '{outfit.Name}'");
-        WearOutfit(outfit, removeOthers: false);
+
+        // Its own clear-the-slots answer is passed over here for the same reason others are left on:
+        // that answer is about arriving in a look, and this is already in it. Emptying the slots it
+        // does not fill would take anything worn over it off, which is not what re-applying asks for.
+        WearOutfit(outfit, removeOthers: false, clearSlots: false);
     }
 
     /// <summary>Removes every item in an outfit that is currently worn.</summary>
@@ -2707,6 +2917,13 @@ public class WardrobeService : IDisposable
             WeaponVisible          = _glamourer.GetWeaponVisible(),
         };
 
+        // Said out loud rather than left to be inferred from a look that came back wrong. Either can
+        // be null — Glamourer answered, but not about that flag — and a null is not "showing": it is
+        // the restore leaving the toggle alone, which is why the two cases have to be told apart in
+        // the log as well as in the record.
+        _log.Debug($"[Wardrobe] Remembering how it was worn: headgear {Describe(look.HatVisible)}, " +
+                   $"weapon {Describe(look.WeaponVisible)}");
+
         CaptureLastWornDyes(look, active, wornIds, live);
 
         // Skips itself on a design card, by its own guard, and that is wanted here for the reason it
@@ -2723,6 +2940,10 @@ public class WardrobeService : IDisposable
             SavedAt   = DateTime.UtcNow,
         };
     }
+
+    /// <summary>How a hat or weapon toggle reads in a log line, "unknown" included.</summary>
+    private static string Describe(bool? visible) =>
+        visible switch { true => "showing", false => "hidden", null => "unknown (left alone on a restore)" };
 
     /// <summary>Records the colour each worn piece is actually showing.</summary>
     /// <remarks>
@@ -2794,14 +3015,63 @@ public class WardrobeService : IDisposable
     {
         var items = ResolveOutfit(snapshot.Look);
 
-        WearOutfit(snapshot.Look, removeOthers: false);
+        // The remembered look is a copy of what was on the character, not the outfit it came from, so
+        // the outfit's say over clearing its slots is not in it. Read off the live outfit rather than
+        // stored in the snapshot, so the answer honoured is the one it has now — and so that putting
+        // a look back on does the same thing pressing Wear on it would. Without this, a restore lands
+        // on top of whatever the game logged you in wearing and leaves a piece in every slot the look
+        // has nothing for, which is exactly what the outfit asked not to happen.
+        var source = snapshot.OutfitId is { } sourceId ? _config.Outfits.Find(o => o.Id == sourceId) : null;
+        snapshot.Look.ClearSlotsFirst = source?.ClearSlotsFirst ?? false;
+
+        // Clearing the slots is not enough on its own here. A remembered look also carries the plain
+        // gear that was filling the slots its items do not — captured on a timer, so a hat put on by
+        // hand, or the one the game logged you in wearing, is in there as surely as the look is — and
+        // that gear goes on after the clear and undoes it. For an outfit that says it is the whole
+        // look, those pieces are precisely what wearing it would have taken off, so the restore puts
+        // back only the ones the outfit itself claims a slot for.
+        var remembered = snapshot.Look.VanillaItems;
+
+        if (source is { ClearSlotsFirst: true })
+        {
+            var claimed = ResolveOutfit(source).Select(i => i.Slot.ToString()).ToHashSet();
+            foreach (var key in source.VanillaItems.Keys) claimed.Add(key);
+
+            snapshot.Look.VanillaItems = remembered
+                .Where(kv => claimed.Contains(kv.Key))
+                .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+            if (snapshot.Look.VanillaItems.Count < remembered.Count)
+                _log.Information($"[Wardrobe] '{source.Name}' clears the slots it does not fill, so " +
+                                 $"{remembered.Count - snapshot.Look.VanillaItems.Count} remembered " +
+                                 "piece(s) of plain gear were left off the restore.");
+        }
+
+        var applied = snapshot.Look.VanillaItems.Count;
+        var trimmed = applied < remembered.Count;
+
+        // The record itself keeps every piece it captured, whatever was put back on: it is a note of
+        // what was worn, not of what the wardrobe chose from it, and the outfit's answer can change
+        // between one restore and the next.
+        try
+        {
+            WearOutfit(snapshot.Look, removeOthers: false);
+        }
+        finally
+        {
+            snapshot.Look.VanillaItems = remembered;
+        }
+
+        // WearOutfit saved while the trimmed list was in place, so the copy on disk is the short one
+        // until something else happens to save. Put it right here rather than leaving that to chance.
+        if (trimmed) _config.Save();
 
         _activeOutfitId = snapshot.OutfitId is { } id && _config.Outfits.Any(o => o.Id == id)
             ? id
             : null;
 
         _log.Information($"[Wardrobe] Put back what was last worn: {items.Count} item(s), " +
-                         $"{snapshot.Look.VanillaItems.Count} vanilla piece(s)" +
+                         $"{applied} vanilla piece(s)" +
                          $"{(_activeOutfitId != null ? $", outfit '{snapshot.Look.Name}' marked as worn" : string.Empty)}");
 
         // WearOutfit has already raised WardrobeChanged, and the active outfit written above is read
@@ -2828,7 +3098,7 @@ public class WardrobeService : IDisposable
             items[piece.Slot.ToString()] = new VanillaPiece
             {
                 ItemId = piece.ItemId,
-                Name   = Plugin.ItemLookup.GetItemName(piece.ItemId),
+                Name   = Plugin.ItemLookup.GetItemName(piece.ItemId, piece.Slot),
                 Stain1 = piece.Stain1,
                 Stain2 = piece.Stain2,
             };
@@ -3681,10 +3951,48 @@ public class WardrobeService : IDisposable
                     break;
             }
 
-            await _framework.RunOnFrameworkThread(() => RevertToInGameLook());
+            await _framework.RunOnFrameworkThread(() =>
+            {
+                RevertToInGameLook();
+
+                // After the revert, never before it: the revert takes the wardrobe's clothes off and
+                // switches its mods back off with them, so mods enabled first would be turned
+                // straight off again. This is the whole point of attaching an upscale to a plate —
+                // the game is now showing the plate's own gear, and the mod re-skins it in place.
+                ApplyPlateMods(outfit);
+            });
         });
 
         return true;
+    }
+
+    /// <summary>
+    /// Enables the mods attached to a glamour plate, without equipping anything over it.
+    /// </summary>
+    /// <remarks>
+    /// The wardrobe's half of a plate. A plate is the game's own gear and the game knows nothing
+    /// about Penumbra, so a vanilla gear upscale — the mod that makes that gear fit the body you
+    /// actually use — has to be switched on by something, and this is it.
+    /// <para>
+    /// Goes through <see cref="WearItem"/> like anything else, so the mods are claimed, their
+    /// options applied, and the items recorded as worn: taking them off again is Unequip All, a
+    /// strip, or the item's own button, with no separate machinery to learn.
+    /// </para>
+    /// </remarks>
+    /// <returns>How many items were applied.</returns>
+    public int ApplyPlateMods(Outfit outfit)
+    {
+        if (!outfit.IsGlamourPlate) return 0;
+
+        var items = ResolveOutfit(outfit);
+        if (items.Count == 0) return 0;
+
+        foreach (var item in items)
+            WearItem(item, GetDye(outfit, item.Id), outfit.PlateItemsEquip);
+
+        _log.Information($"[Wardrobe] Plate '{outfit.Name}': applied {items.Count} attached mod(s)" +
+                         (outfit.PlateItemsEquip ? " and equipped their items" : ", equipping nothing"));
+        return items.Count;
     }
 
     /// <summary>
@@ -3777,8 +4085,9 @@ public class WardrobeService : IDisposable
 
         // Carried, unlike the design and plate links above: those are what a copy is deliberately cut
         // loose from, while a hood being off is part of the look the copy is starting from
-        HatVisible    = source.HatVisible,
-        WeaponVisible = source.WeaponVisible,
+        HatVisible      = source.HatVisible,
+        WeaponVisible   = source.WeaponVisible,
+        ClearSlotsFirst = source.ClearSlotsFirst,
     };
 
     /// <summary>

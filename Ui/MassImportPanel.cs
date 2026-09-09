@@ -63,6 +63,14 @@ public class MassImportPanel : Window, IDisposable
     /// </summary>
     private float _contentW = 800f;
 
+    /// <summary>
+    /// How many rows have been drawn this frame, so every other one can be shaded. Counts what is
+    /// on screen rather than the position in <see cref="_rows"/>: with a search or a filter active,
+    /// banding by list position drops bands wherever a row is hidden and stops reading as an
+    /// alternation at all.
+    /// </summary>
+    private int _stripeIndex;
+
     // Rebuilt once per frame while a search is active, so row visibility is a set lookup rather
     // than a scan of every other row for each row drawn.
     private readonly HashSet<string> _matched          = new(StringComparer.OrdinalIgnoreCase);
@@ -339,11 +347,13 @@ public class MassImportPanel : Window, IDisposable
                       + ImGui.GetStyle().ItemSpacing.Y * 2;
         if (ImGui.BeginChild("##massRows", new Vector2(-1, -footerH), true))
         {
-            _contentW = ImGui.GetContentRegionAvail().X;
+            _contentW    = ImGui.GetContentRegionAvail().X;
+            _stripeIndex = 0;
 
             foreach (var row in _rows.ToList()) // ToList: relationship edits mutate _rows mid-loop
             {
                 if (!Visible(row)) continue;
+                DrawRowStripe();
                 if (row.ParentDir != null) DrawChildRow(row);
                 else                       DrawParentRow(row);
             }
@@ -522,6 +532,36 @@ public class MassImportPanel : Window, IDisposable
     private bool Matches(Row row) =>
         row.Name.Contains(_search, StringComparison.OrdinalIgnoreCase) ||
         row.Dir.Contains(_search, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Shades the band the next row is about to occupy, alternating with the row before it, so the
+    /// controls at the right of a row can be traced back to the mod name at the left of it.
+    /// </summary>
+    /// <remarks>
+    /// Drawn before the row's widgets so it lands underneath them, and sized from the frame height
+    /// rather than measured after the fact: every row here is exactly one frame tall by design, and
+    /// reading the height back would mean splitting the draw list to get behind what was already
+    /// drawn. It spans the full width of the scroll region — a band that stopped at the last column
+    /// would leave the eye to bridge the gap that the band exists to close.
+    /// </remarks>
+    private void DrawRowStripe()
+    {
+        var shade = _stripeIndex++ % 2 == 1;
+        if (!shade || !_config.StripeImportRows) return;
+
+        var spacing = ImGui.GetStyle().ItemSpacing.Y;
+        var top     = ImGui.GetCursorScreenPos().Y - spacing * 0.5f;
+        var left    = ImGui.GetWindowPos().X;
+
+        // Short of the scrollbar, which is not part of the row and looks banded itself otherwise
+        var right = left + ImGui.GetWindowWidth()
+                  - (ImGui.GetScrollMaxY() > 0f ? ImGui.GetStyle().ScrollbarSize : 0f);
+
+        ImGui.GetWindowDrawList().AddRectFilled(
+            new Vector2(left,  top),
+            new Vector2(right, top + ImGui.GetFrameHeight() + spacing),
+            ImGui.GetColorU32(new Vector4(1f, 1f, 1f, 0.05f)));
+    }
 
     private void DrawParentRow(Row row)
     {
@@ -1026,7 +1066,8 @@ public class MassImportPanel : Window, IDisposable
             var children = ChildrenOf(row).ToList();
             foreach (var child in children) EnsureAnalysis(child);
 
-            var slots = BuildSlots(row, children, out var setIds, out var replaces, out var layers);
+            var slots = BuildSlots(row, children, out var setIds, out var baseIds,
+                                   out var replaces, out var layers);
             if (slots.Count == 0) { skipped++; continue; }
 
             var extraRefs = children
@@ -1053,11 +1094,12 @@ public class MassImportPanel : Window, IDisposable
 
                 ulong?  glamId    = null;
                 string? glamName  = null;
-                ushort? slotSetId = null;
+                ushort? slotSetId  = null;
+                ushort? slotBaseId = baseIds.TryGetValue(slot, out var b) ? b : null;
                 if (setIds.TryGetValue(slot, out var setId))
                 {
                     slotSetId = setId;
-                    var found = _itemLookup.FindBestItem(setId, slot);
+                    var found = _itemLookup.FindBestItem(setId, slot, slotBaseId ?? 0);
                     if (found.HasValue)
                     {
                         glamId   = found.Value.ItemId;
@@ -1074,6 +1116,7 @@ public class MassImportPanel : Window, IDisposable
                     GlamourerItemId   = glamId,
                     GlamourerItemName = glamName,
                     ModelSetId        = slotSetId,
+                    ModelBaseId       = slotBaseId,
                     CustomizeIdsByRace = ItemImportPanel.CoverageFor(analysis, slot),
                     HairIdByRace      = slot == EquipSlot.Hair
                         ? analysis.HairIdsByRace.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value)
@@ -1132,15 +1175,17 @@ public class MassImportPanel : Window, IDisposable
     /// never have produced.
     /// </summary>
     private List<EquipSlot> BuildSlots(Row row, List<Row> children,
-        out Dictionary<EquipSlot, ushort> setIds, out Dictionary<EquipSlot, string> replaces,
-        out Dictionary<EquipSlot, string> layers)
+        out Dictionary<EquipSlot, ushort> setIds, out Dictionary<EquipSlot, ushort> baseIds,
+        out Dictionary<EquipSlot, string> replaces, out Dictionary<EquipSlot, string> layers)
     {
         setIds   = new Dictionary<EquipSlot, ushort>();
+        baseIds  = new Dictionary<EquipSlot, ushort>();
         replaces = new Dictionary<EquipSlot, string>();
         layers   = new Dictionary<EquipSlot, string>();
 
         var slots = new HashSet<EquipSlot>(row.Analysis!.DetectedSlots);
         foreach (var (slot, id) in row.Analysis.SlotSetIds) setIds.TryAdd(slot, id);
+        foreach (var (slot, id) in row.Analysis.SlotBaseIds) baseIds.TryAdd(slot, id);
         foreach (var (slot, key) in row.Analysis.ReplaceKeys) replaces.TryAdd(slot, key);
         foreach (var slot in row.Analysis.DetectedSlots)
             if (row.Analysis.LayerFor(slot) is { } layer) layers.TryAdd(slot, layer);
@@ -1152,6 +1197,7 @@ public class MassImportPanel : Window, IDisposable
             // TryAdd throughout: the primary is the mod the item is really "about", so it wins
             // wherever both it and a supplement describe the same slot.
             foreach (var (slot, id) in child.Analysis.SlotSetIds) setIds.TryAdd(slot, id);
+            foreach (var (slot, id) in child.Analysis.SlotBaseIds) baseIds.TryAdd(slot, id);
             foreach (var (slot, key) in child.Analysis.ReplaceKeys) replaces.TryAdd(slot, key);
             foreach (var slot in child.Analysis.DetectedSlots)
                 if (child.Analysis.LayerFor(slot) is { } layer) layers.TryAdd(slot, layer);

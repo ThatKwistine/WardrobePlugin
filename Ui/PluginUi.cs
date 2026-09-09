@@ -321,6 +321,9 @@ public partial class PluginUi : Window, IDisposable
     // each frame in the outfits grid so the cards and the notice always agree.
     private string _plateSyncStatus = string.Empty;
     private string _plateApplyStatus = string.Empty;
+
+    /// <summary>Reported under the plate's own mods, which sit well above the apply button.</summary>
+    private string _plateModsStatus = string.Empty;
     private bool   _plateNoticeIgnored;
     private readonly HashSet<Guid> _platesOutOfSync = new();
 
@@ -643,6 +646,16 @@ public partial class PluginUi : Window, IDisposable
         }
 
         if (!_config.ClassicToolbar) DrawMenuBar();
+
+        // The item panel closes itself — from Save, from Cancel, from the X — so there is no one
+        // place to hold the card from on the way out, only this transition. Before rightOpen is
+        // read, so the hold is standing by on the same frame the columns widen again.
+        if (_panelWasOpen && !_panel.IsOpen && _lastEditItem is { } wasEditing)
+        {
+            _gridHold     = wasEditing;
+            _lastEditItem = null;
+        }
+        _panelWasOpen = _panel.IsOpen;
 
         var totalW  = ImGui.GetContentRegionAvail().X;
         var totalH  = ImGui.GetContentRegionAvail().Y;
@@ -1558,7 +1571,19 @@ public partial class PluginUi : Window, IDisposable
             ? "You were"
             : $"{snapshot.Character} was";
 
-        return $"{who} last wearing {what}.";
+        // A hidden hat or a put-away weapon is part of the look and invisible in a count of items, so
+        // it is said rather than left to be noticed afterwards. Only when the answer is "hidden": null
+        // means Glamourer could not be read for that flag and the restore leaves the toggle alone,
+        // which is nothing to announce, and showing is what everyone expects anyway.
+        var hidden = new List<string>();
+        if (snapshot.Look.HatVisible    is false) hidden.Add("headgear");
+        if (snapshot.Look.WeaponVisible is false) hidden.Add("weapon");
+
+        var alsoHidden = hidden.Count > 0
+            ? $" The {string.Join(" and ", hidden)} {(hidden.Count == 1 ? "was" : "were")} hidden."
+            : string.Empty;
+
+        return $"{who} last wearing {what}.{alsoHidden}";
     }
 
     /// <summary>
@@ -4128,6 +4153,125 @@ public partial class PluginUi : Window, IDisposable
     private int _gridStamp = -1;
 
     /// <summary>
+    /// Where each grid was looking last frame, so a change of column count can put it back.
+    /// </summary>
+    /// <remarks>
+    /// One per grid rather than one shared: the two draw into the same scrolling child but lay their
+    /// cards out on different widths and heights, so a position recorded by one means nothing to the
+    /// other.
+    /// </remarks>
+    private readonly GridScroll _gridScroll   = new();
+    private readonly GridScroll _outfitScroll = new();
+
+    /// <summary>
+    /// A card the next reflow should hold still, rather than holding the top of the view.
+    /// </summary>
+    /// <remarks>
+    /// Set when the panel that causes the reflow is opened on a particular card, and read on the
+    /// frame the columns actually change — which is the frame after for an opening panel, and the
+    /// same frame for a closing one. Either way it is resolved against the layout recorded before
+    /// the change, which is why it travels as an id and not a position.
+    /// </remarks>
+    private Guid? _gridHold;
+
+    /// <summary>Tracks <see cref="ItemImportPanel.IsOpen"/> so its closing can be noticed.</summary>
+    private bool _panelWasOpen;
+
+    /// <summary>The last item opened for editing, to hold still when its panel closes again.</summary>
+    private Guid? _lastEditItem;
+
+    /// <summary>
+    /// Enough of a card grid's scroll position to survive the cards being rearranged.
+    /// </summary>
+    /// <remarks>
+    /// The right-hand panel takes its width off the grid, and the grid fits whole cards, so opening
+    /// or closing anything over there changes how many cards sit on a row. Scroll is measured in
+    /// pixels, so the same offset then points at an entirely different part of the wardrobe — which
+    /// is what made editing three items in one place a hunt for them again after each one.
+    /// <para>
+    /// The fix is to record the position as a card rather than as a distance: which card the view is
+    /// resting on, and how high up the view it sits. Both survive the reflow, so the scroll can be
+    /// worked out again afterwards from the new column count.
+    /// </para>
+    /// </remarks>
+    private sealed class GridScroll
+    {
+        private int   _columns;
+        private float _rowHeight;
+        private float _scroll;
+
+        /// <summary>Notes the layout a frame drew with, ready for the next one that differs.</summary>
+        public void Record(int columns, float rowHeight, float scroll)
+        {
+            _columns   = columns;
+            _rowHeight = rowHeight;
+            _scroll    = scroll;
+        }
+
+        /// <summary>
+        /// The scroll that puts the view back where it was, or null if nothing has moved.
+        /// </summary>
+        /// <param name="hold">
+        /// Index of a card to keep at the height it is at, or -1 to keep the top-left card instead.
+        /// </param>
+        /// <remarks>
+        /// Both cases are the same sum: take where the card sits on screen under the old layout,
+        /// then find the scroll that puts it at that same height under the new one. Holding the
+        /// top-left card is only the case where that height happens to be the top edge.
+        /// </remarks>
+        public float? Reflow(int columns, float rowHeight, int hold)
+        {
+            if (_columns <= 0 || _rowHeight <= 0f || _columns == columns) return null;
+
+            if (hold < 0) hold = (int)(_scroll / _rowHeight) * _columns;
+
+            var screenY = hold / _columns * _rowHeight - _scroll;
+            return Math.Max(0f, hold / columns * rowHeight - screenY);
+        }
+    }
+
+    /// <summary>
+    /// Applies a grid's remembered position to the scroll, and records where it ends up.
+    /// </summary>
+    /// <remarks>
+    /// The scroll is set for the next frame rather than this one — ImGui applies a scroll target when
+    /// the window is next begun — so this frame is still drawn at the old offset. That is deliberate:
+    /// drawing the new rows against the old scroll would show a frame of the empty space above or
+    /// below them, and one frame at the old position is the less visible of the two.
+    /// <para>
+    /// It is also the tiny flick of movement visible as the cards settle. Covering it means sliding
+    /// the whole run of cards by the difference for that one frame, since the scroll cannot be made
+    /// to land any sooner — ImGui clamps a scroll target against the content height measured at the
+    /// end of the frame before, which on the frame the columns narrow is still the old shorter
+    /// layout, and <c>SetNextWindowScroll</c> is clamped by the same stale height. Left alone as not
+    /// worth the complication.
+    /// </para>
+    /// <para>
+    /// What is recorded is where the grid is heading, not where it is, so a second change arriving
+    /// before the first has landed still measures from the right place.
+    /// </para>
+    /// </remarks>
+    /// <returns>
+    /// The scroll this frame is actually being drawn at, which is what row arithmetic has to use —
+    /// not the one it is heading for.
+    /// </returns>
+    private static float ApplyGridScroll(GridScroll state, int columns, float rowHeight,
+                                         int rows, float viewH, int hold)
+    {
+        var drawn   = ImGui.GetScrollY();
+        var settled = drawn;
+
+        if (state.Reflow(columns, rowHeight, hold) is { } target)
+        {
+            settled = Math.Clamp(target, 0f, Math.Max(0f, rows * rowHeight - viewH));
+            ImGui.SetScrollY(settled);
+        }
+
+        state.Record(columns, rowHeight, settled);
+        return drawn;
+    }
+
+    /// <summary>
     /// Everything the grid's contents depend on, in one number that is cheap to compute.
     /// </summary>
     /// <remarks>
@@ -4273,8 +4417,15 @@ public partial class PluginUi : Window, IDisposable
         // every card regardless of scroll position is what made a 200-item wardrobe expensive.
         var rowHeight = CardHeight + ImGui.GetStyle().ItemSpacing.Y;
         var totalRows = (items.Count + columns - 1) / columns;
-        var scrollY   = ImGui.GetScrollY();
         var viewH     = ImGui.GetWindowHeight();
+
+        // Hold the card the panel was opened on, or the top of the view when the reflow was not
+        // started from a card. Resolved here rather than where it was asked for, because an id is
+        // the only part of a card's position that means the same thing either side of a reflow.
+        var hold = _gridHold is { } holdId ? items.FindIndex(i => i.Id == holdId) : -1;
+        _gridHold = null;
+
+        var scrollY = ApplyGridScroll(_gridScroll, columns, rowHeight, totalRows, viewH, hold);
 
         // One row of overscan each way, so a partially-scrolled row is never clipped mid-draw
         var firstRow = Math.Max(0, (int)(scrollY / rowHeight) - 1);
@@ -4480,8 +4631,10 @@ public partial class PluginUi : Window, IDisposable
         ImGui.PushStyleColor(ImGuiCol.Border,
             worn ? new Vector4(1f, 0.85f, 0.25f, 1f) : border);
 
+        // NoScrollWithMouse as well as NoScrollbar, for the reason given on the outfit card: the bar
+        // being hidden does not stop the wheel, and a card that ate it would stop the grid scrolling
         ImGui.BeginChild($"##card_{item.Id}", new Vector2(CardWidth, CardHeight),
-            true, ImGuiWindowFlags.NoScrollbar);
+            true, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
 
         DrawItemImage(item);
 
@@ -5964,9 +6117,9 @@ public partial class PluginUi : Window, IDisposable
     /// <remarks>
     /// Shared by both session windows so they cannot drift apart, and worth sharing because there are
     /// now four different answers: a person is expected to press a key, a person may press it as often
-    /// as they like, a countdown is running, or the shot has been asked for and the picture is on its
-    /// way. Telling someone to press their screenshot key while the session is about to press it for
-    /// them is the one thing this must never do.
+    /// as they like, a countdown is running, or the picture has been asked for and is being read.
+    /// Telling someone to press their screenshot key while the session is about to take the picture
+    /// itself is the one thing this must never do.
     /// </remarks>
     /// <param name="withHint">Whether there is room under it for a line saying what to do.</param>
     private void DrawSessionWaitingLine(bool withHint)
@@ -6005,7 +6158,7 @@ public partial class PluginUi : Window, IDisposable
     }
 
     /// <summary>
-    /// Take the shot now, and hold the automatic run — the two controls a shutter of our own adds.
+    /// Take the picture now, and hold the automatic run — the two controls taking it ourselves adds.
     /// </summary>
     /// <remarks>
     /// Shoot Now is offered in every mode rather than only the automatic one: manual mode is about
@@ -6047,9 +6200,9 @@ public partial class PluginUi : Window, IDisposable
         ImGui.PopStyleColor(2);
 
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Take the screenshot this session is waiting for, now.\n\n" +
-                             "The game takes it, so it is the same picture your screenshot key\n" +
-                             "would have taken, cropped and filed the same way.");
+            ImGui.SetTooltip("Take the picture this session is waiting for, now.\n\n" +
+                             "Read straight out of the frame the game has drawn, then cropped and\n" +
+                             "filed the same way as any other.");
 
         DrawShutterProblem();
 
@@ -6075,20 +6228,10 @@ public partial class PluginUi : Window, IDisposable
     /// which kind of run is happening. One tick meaning both made the plain <b>Screenshot Session</b>
     /// button, which has to mean a session that is not automatic, switch the whole feature off.
     /// <para>
-    /// Hidden entirely when the game does not expose its screenshot task: a tick box that cannot do
-    /// anything is worse than none, since the failure would show up as a session counting down forever
-    /// against a shutter that never fires.
     /// </para>
     /// </remarks>
     private void DrawAutoEnableSetting()
     {
-        if (!_session.AutoSupported)
-        {
-            ImGui.TextDisabled("Unavailable: this build of the game does not expose the screenshot " +
-                               "function the wardrobe would press.");
-            return;
-        }
-
         var enabled = _session.AutoEnabled;
         if (ImGui.Checkbox("Fully automatic sessions", ref enabled))
             _session.AutoEnabled = enabled;
@@ -6098,13 +6241,12 @@ public partial class PluginUi : Window, IDisposable
                              "With this on, Super Screenshot Session appears on the Screenshots\n" +
                              "beside the plain one, and the session HUD gains a tick for\n" +
                              "switching a run between the two.\n\n" +
-                             "Experimental: it presses the game's own screenshot function, which is\n" +
-                             "not an API and has not been run over a large wardrobe yet.");
+                             "Experimental: it has not been run over a large wardrobe yet.");
 
         if (!enabled)
         {
             ImGui.TextDisabled("Off, every session waits for you to press your screenshot key — though " +
-                               "Shoot Now on the session HUD takes one without it.");
+                               "Shoot Now on the session HUD takes the picture without it.");
 
             ImGui.Spacing();
             DrawShutterDiagnostics();
@@ -6195,65 +6337,134 @@ public partial class PluginUi : Window, IDisposable
     }
 
     /// <summary>
-    /// What the game's screenshot task currently says about itself.
+    /// How the wardrobe takes its pictures, and a way to see one before trusting a whole run to it.
     /// </summary>
     /// <remarks>
-    /// Every line is the game's own state and none of it is the plugin's to change. It is here for the
-    /// one thing that cannot be diagnosed from this side: a session that takes no pictures on a machine
-    /// nobody here can reproduce on. A shot in flight that never clears is a stuck screenshot task; an
-    /// allowed that never turns true is a client refusing outright; a format that is not one a session
-    /// can read is a folder filling up with files it will never pick up. Three different faults that
-    /// all arrive as the same report, that nothing happens.
+    /// Short, now that there is only one way it happens. A session reads the frame the game has just
+    /// drawn — no screenshot function, no key pressed on anyone's behalf, no folder watched for the
+    /// picture to turn up in, and no dependence on what format the game is set to save.
     /// </remarks>
     private void DrawShutterDiagnostics()
     {
-        if (!ImGui.CollapsingHeader("Screenshot diagnostics")) return;
+        if (!ImGui.CollapsingHeader("How pictures are taken")) return;
 
-        var state = _session.ReadShutter();
+        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+        ImGui.TextDisabled("A session reads the picture out of the frame the game has just drawn. " +
+                           "Anything applied to the frame afterwards — a ReShade preset — is not in " +
+                           "it, because at that point it has not happened yet.");
+        ImGui.Spacing();
+        ImGui.TextDisabled("Screenshots you take yourself during a session are still picked up and " +
+                           "filed, exactly as before.");
+        ImGui.PopTextWrapPos();
 
-        ImGui.TextDisabled("What the game reports about its own screenshot function. Worth copying " +
-                           "into a bug report about a session that takes no pictures.");
+        DrawFrameCaptureTest();
+    }
+
+    /// <summary>
+    /// The experiment that asks whether the wardrobe could take its own pictures.
+    /// </summary>
+    /// <remarks>
+    /// Everything the session does today rests on the game taking the picture — which it will only do
+    /// for a pressed key, because its screenshot function cannot be driven from a plugin at all.
+    /// Reading the frame the game has already drawn would need neither, and would take the folder
+    /// watching, the format checks and the synthetic keypress with it.
+    /// <para>
+    /// Two things have to be true first, and neither can be settled by argument: the colours have to
+    /// match the pictures already in the wardrobe, and no plugin window may end up in the frame. So
+    /// this writes one frame to a file to be looked at, and nothing else.
+    /// </para>
+    /// </remarks>
+    private void DrawFrameCaptureTest()
+    {
+        ImGui.Spacing();
+        ImGui.Separator();
         ImGui.Spacing();
 
-        if (!state.Available)
+        ImGui.TextDisabled("Experiment: let the wardrobe take the picture itself, from the frame the " +
+                           "game has already drawn.");
+        ImGui.Spacing();
+
+        var arming = Plugin.Frames.Arming;
+
+        ImGui.BeginDisabled(arming);
+        if (ImGui.Button(arming
+                             ? $"Capturing in {Plugin.Frames.ArmingSeconds:0.0}s..."
+                             : "Capture a test frame"))
         {
-            ImGui.TextColored(new Vector4(1f, 0.6f, 0.35f, 1f),
-                              "The game's screenshot function was not found.");
-            return;
+            var path = Path.Combine(Plugin.PluginInterface.ConfigDirectory.FullName,
+                                    $"frame-test-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+            Plugin.Frames.Arm(path);
         }
+        ImGui.EndDisabled();
 
-        ImGui.Text($"Screenshots allowed : {state.CanTake}");
-        ImGui.Text($"Shot in flight      : {state.Requested}");
-        ImGui.Text($"Last result         : {state.Result}");
-        ImGui.Text($"Saving as           : {state.Format}");
-        ImGui.Text($"Last shot at        : {(state.Timestamp == 0 ? "never" : state.Timestamp.ToString())}");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Waits about four seconds, then saves the frame the game is drawing.\n" +
+                             "Close this window and frame the shot while it counts down.");
 
-        if (state.Requested)
+        ImGui.SameLine();
+
+        var hideUi = Plugin.Frames.HideUi;
+        if (ImGui.Checkbox("Hide the game's interface", ref hideUi))
+            Plugin.Frames.HideUi = hideUi;
+
+        ImGui.SameLine();
+        if (ImGui.Button("Put the interface back"))
+            Plugin.Frames.RestoreUi();
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("A way out by hand, if a capture ever leaves the game without its\n" +
+                             "interface. Harmless to press when nothing is wrong.");
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("The game hides its own interface when it takes a screenshot, which is\n" +
+                             "why the pictures already in your wardrobe have none in them. Off, the\n" +
+                             "Group Pose panels will be in the captured frame.");
+
+        ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
+        ImGui.TextDisabled("It waits a few seconds so these windows can be closed first — whether " +
+                           "they appear in the frame is half of what the test is asking. Take a " +
+                           "normal screenshot of the same scene afterwards and compare the two.");
+        ImGui.PopTextWrapPos();
+
+        if (Plugin.Frames.Last is not { } last) return;
+
+        ImGui.Spacing();
+
+        if (last.Captured)
         {
-            ImGui.Spacing();
+            ImGui.TextColored(new Vector4(0.5f, 0.85f, 0.5f, 1f),
+                              $"Captured {last.Width}x{last.Height} ({last.Format})");
+            ImGui.TextDisabled(last.Path);
+
+            if (ImGui.Button("Show me the file"))
+                RevealInExplorer(last.Path);
+        }
+        else
+        {
             ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
-            ImGui.TextColored(new Vector4(1f, 0.75f, 0.3f, 1f),
-                              "A shot is in flight. If this never goes back to False, the game's " +
-                              "screenshot function is stuck, and your own screenshot key will not " +
-                              "work either until the game is restarted.");
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0.35f, 1f), last.Note);
+            if (last.Format != "-")
+                ImGui.TextDisabled($"Back buffer: {last.Width}x{last.Height} ({last.Format})");
             ImGui.PopTextWrapPos();
         }
+    }
 
-        if (string.Equals(state.Result, "NoDiskSpace", StringComparison.OrdinalIgnoreCase))
+    /// <summary>Opens Explorer with the file selected, the way the export folder button does.</summary>
+    private void RevealInExplorer(string path)
+    {
+        try
         {
-            ImGui.Spacing();
-            ImGui.TextColored(new Vector4(1f, 0.45f, 0.4f, 1f),
-                              "The game reported it had no room on disk for the last screenshot.");
+            var args = File.Exists(path) ? $"/select,\"{path}\"" : $"\"{path}\"";
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "explorer.exe",
+                Arguments       = args,
+                UseShellExecute = true,
+            });
         }
-
-        if (string.Equals(state.Format, "Dds", StringComparison.OrdinalIgnoreCase))
+        catch (Exception ex)
         {
-            ImGui.Spacing();
-            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X);
-            ImGui.TextColored(new Vector4(1f, 0.45f, 0.4f, 1f),
-                              "The game is saving screenshots as DDS, which a session cannot read. " +
-                              "Set the screenshot format to PNG or JPG in the game's own settings.");
-            ImGui.PopTextWrapPos();
+            _log.Warning($"[Wardrobe] Could not open the captured frame's folder - {ex.Message}");
         }
     }
 
@@ -6988,10 +7199,11 @@ public partial class PluginUi : Window, IDisposable
         if (outfits.Any(o => o.Tags.Any(TagTree.IsStyle)))
             cardH += ImGui.GetTextLineHeightWithSpacing();
 
-        // Same rule for the plate cards' apply button: paid for across the grid so the rows still
-        // line up, rather than per card, which would leave the plates standing taller than the rest
+        // A plate card carries two rows the others do not: the badge line naming the plate, and the
+        // apply button under the wear row. Both paid for across the grid so the rows still line up,
+        // rather than per card, which would leave the plates standing taller than the rest.
         if (outfits.Any(o => o.IsGlamourPlate))
-            cardH += ImGui.GetFrameHeightWithSpacing();
+            cardH += ImGui.GetFrameHeightWithSpacing() + ImGui.GetTextLineHeightWithSpacing();
 
         // A design card carries a badge line naming the design, and the same rule applies to it: paid
         // for once across the grid, or the button row would be pushed off the bottom of those cards
@@ -7002,6 +7214,14 @@ public partial class PluginUi : Window, IDisposable
         var columns = Math.Max(1, (int)((avail + CardPad) / (cardW + CardPad)));
         var col     = 0;
         Outfit? toDelete = null;
+
+        // The same reflow the item grid guards against: the outfit editor is a right-hand panel too,
+        // so opening one takes width off this grid and rearranges every card behind it.
+        var hold = _gridHold is { } holdId ? outfits.FindIndex(o => o.Id == holdId) : -1;
+        _gridHold = null;
+
+        ApplyGridScroll(_outfitScroll, columns, cardH + ImGui.GetStyle().ItemSpacing.Y,
+                        (outfits.Count + columns - 1) / columns, ImGui.GetWindowHeight(), hold);
 
         foreach (var outfit in outfits)
         {
@@ -7404,8 +7624,11 @@ public partial class PluginUi : Window, IDisposable
         ImGui.PushStyleColor(ImGuiCol.Border,
             worn ? new Vector4(1f, 0.85f, 0.25f, 1f) : border);
 
+        // NoScrollWithMouse as well as NoScrollbar: hiding the bar does not stop the wheel, and a card
+        // whose contents overrun it would quietly swallow the scroll meant for the grid behind it. With
+        // this the wheel always reaches the grid, and a card that overruns clips as it is meant to.
         ImGui.BeginChild($"##outfit_{outfit.Id}", new Vector2(cardW, cardH),
-            true, ImGuiWindowFlags.NoScrollbar);
+            true, ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
 
         DrawOutfitImage(outfit, cardW - CardPad * 2);
 
@@ -7485,7 +7708,11 @@ public partial class PluginUi : Window, IDisposable
         // an unread design is not a design with nothing in it.
         var counts = $"{items.Count} items" + (missing > 0 ? $" · {missing} missing" : string.Empty);
         ImGui.TextUnformatted(
-            outfit.IsGlamourPlate            ? $"{outfit.VanillaItems.Count} pieces"
+            // A plate counts both halves too, once it has any: the game's pieces, and the mods the
+            // wardrobe switches on with them
+            outfit.IsGlamourPlate && items.Count > 0
+                                             ? $"{outfit.VanillaItems.Count} pieces · {counts}"
+            : outfit.IsGlamourPlate          ? $"{outfit.VanillaItems.Count} pieces"
             : design is { AppliesEquipment: true } d ? $"{d.Pieces.Count} pieces · {counts}"
             : design is { AppliesEquipment: false }  ? $"looks only · {counts}"
                                                     : counts);
@@ -7534,8 +7761,19 @@ public partial class PluginUi : Window, IDisposable
                 _wardrobe.WearOutfit(outfit, removeOthers: false);
             ImGui.PopStyleColor(2);
             if (ImGui.IsItemHovered())
-                ImGui.SetTooltip(outfit.IsGlamourPlate
-                    ? "Shows this plate's gear through Glamourer, leaving anything else you have on in place.\n\n" +
+            {
+                // What happens to everything else is the one part of this that the outfit's own
+                // clear-the-slots answer changes, so it is said once at the front rather than woven
+                // into three descriptions that would each then have to be written twice
+                var others = outfit.ClearSlotsFirst
+                    ? "Empties the slots this outfit has nothing of its own for, so none of them\n" +
+                      "is left holding what the last outfit put there. Weapons and your base\n" +
+                      "character are left alone.\n\n"
+                    : string.Empty;
+
+                ImGui.SetTooltip(others + (outfit.IsGlamourPlate
+                    ? "Shows this plate's gear through Glamourer" +
+                      (outfit.ClearSlotsFirst ? ".\n\n" : ", leaving anything else you have on in place.\n\n") +
                       "This is not the game applying the plate: your real glamour and equipment are\n" +
                       "untouched and only you see the change. In exchange it works anywhere — no\n" +
                       "summoning bell, no gearset — including gpose."
@@ -7543,7 +7781,10 @@ public partial class PluginUi : Window, IDisposable
                     ? $"Applies the design '{outfit.DesignName}', then any items attached to it.\n\n" +
                       "The design goes on first, so an attached item always wins the slot it\n" +
                       "occupies and the design dresses everything else."
-                    : "Wear these items, leaving anything else you have on in place.");
+                    : outfit.ClearSlotsFirst
+                    ? "Wear these items."
+                    : "Wear these items, leaving anything else you have on in place."));
+            }
         }
 
         ImGui.SameLine();
@@ -7723,6 +7964,42 @@ public partial class PluginUi : Window, IDisposable
             ImGui.TextDisabled("Leaves both as you have them.");
     }
 
+    /// <summary>Whether wearing this outfit empties the slots it has nothing of its own for.</summary>
+    /// <remarks>
+    /// A plain tick box rather than the three-state pickers beside it, because there is no third
+    /// answer to give here. Off is what wearing an outfit has always done — dress over whatever is
+    /// on, and leave a slot this outfit has nothing for exactly as it was found — and it stays the
+    /// default, so no outfit that already exists changes what it does.
+    /// </remarks>
+    private void DrawOutfitClearSlots(Outfit outfit)
+    {
+        ImGui.TextDisabled("Wearing this outfit");
+        ImGui.Spacing();
+
+        var clear = outfit.ClearSlotsFirst;
+        if (ImGui.Checkbox("Take everything else off first##outfitclear", ref clear))
+        {
+            outfit.ClearSlotsFirst = clear;
+            _config.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("For a look that is the whole outfit rather than something worn over one.\n\n" +
+                             "Wear empties the slots this outfit has nothing of its own for, so none\n" +
+                             "of them is left holding whatever the last outfit put there. Only those\n" +
+                             "slots — this is not a strip, so the pieces it is about to put on are\n" +
+                             "never taken off first and you never flash bare in between.\n\n" +
+                             "Weapons are left alone: what you can hold is your job's business, not\n" +
+                             "the look's. A weapon in the outfit is still equipped, and Headgear and\n" +
+                             "weapon below is still how a look puts one away.\n\n" +
+                             "Your base character keeps its slots and its items, as it does through a\n" +
+                             "strip. Emotes, VFX and mounts keep running — this is about clothes.");
+
+        Hint(clear
+            ? "Empties the slots it has nothing for, and dresses the rest."
+            : "Goes on over what you are wearing, leaving slots it has nothing for alone.");
+    }
+
     /// <summary>A leave-alone / show / hide picker over a nullable bool.</summary>
     /// <remarks>
     /// Null first and selected by default, so the neutral answer is the one a glance lands on and the
@@ -7857,6 +8134,23 @@ public partial class PluginUi : Window, IDisposable
         ImGui.Spacing();
 
         DrawOutfitVanillaItems(outfit);
+
+        // The wardrobe's own half of a plate, and the one part of it that is not read-only: the game
+        // owns the gear, and Penumbra is the wardrobe's business.
+        if (outfit.IsGlamourPlate)
+        {
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+
+            DrawPlateMods(outfit, items);
+        }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        DrawOutfitClearSlots(outfit);
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -8382,10 +8676,13 @@ public partial class PluginUi : Window, IDisposable
             ImGui.SetCursorPos(new Vector2(top.X, top.Y + rowThumb + 6));
 
             // Dyes are a property of an equipped game item, so anything without one — hair, an
-            // animation, a mount — has nothing to dye
-            if (item.Slot.IsModOnly())
+            // animation, a mount — has nothing to dye. Facewear has an item and still no dye: the
+            // game gives the slot no channel, so the pickers would write somewhere nothing reads.
+            if (!item.Slot.SupportsDye())
             {
-                ImGui.TextDisabled($"    {item.Slot.DisplayName()} mods cannot be dyed.");
+                ImGui.TextDisabled(item.Slot.IsFacewear()
+                    ? "    Facewear cannot be dyed."
+                    : $"    {item.Slot.DisplayName()} mods cannot be dyed.");
             }
             else
             {
@@ -8503,7 +8800,7 @@ public partial class PluginUi : Window, IDisposable
     private void DrawOutfitDyeAll(Outfit outfit, List<WardrobeItem> items)
     {
         // With nothing dyeable in the outfit there is nothing for these to act on
-        if (!items.Any(i => !i.Slot.IsModOnly())) return;
+        if (!items.Any(i => i.Slot.SupportsDye())) return;
 
         DrawInheritDesignDyes(outfit);
 
@@ -9119,6 +9416,13 @@ public partial class PluginUi : Window, IDisposable
     private void OpenItemEditor(WardrobeItem item)
     {
         _imageCache.Remove(item.Id);
+
+        // The panel is about to take its width off the grid, which rearranges every card behind it.
+        // Both halves of holding this one still are set here: the id the reflow anchors on, and the
+        // id to anchor on again when the panel is closed and the width comes back.
+        _gridHold     = item.Id;
+        _lastEditItem = item.Id;
+
         _panel.OpenEdit(item);
     }
 
@@ -9283,9 +9587,115 @@ public partial class PluginUi : Window, IDisposable
     }
 
     /// <summary>Adds an existing wardrobe item to the outfit, searchable by name.</summary>
-    private void DrawAddToOutfit(Outfit outfit)
+    /// <summary>
+    /// The mods attached to a glamour plate: what to enable when the plate's gear goes on.
+    /// </summary>
+    /// <remarks>
+    /// A plate is the game's own gear, and the game has never heard of Penumbra. A vanilla gear
+    /// upscale — the mod that makes that gear fit the body you actually use — therefore has to be
+    /// switched on by something, and before this there was nowhere to say so: the plate's contents
+    /// are read-only because they belong to the game, and the read-only-ness had swallowed the one
+    /// part that does belong to the wardrobe.
+    /// <para>
+    /// The same attaching a design card offers, for the same reason and through the same fields.
+    /// What differs is that nothing is equipped by default — see
+    /// <see cref="Models.Outfit.PlateItemsEquip"/>.
+    /// </para>
+    /// </remarks>
+    private void DrawPlateMods(Outfit outfit, List<WardrobeItem> items)
     {
-        ImGui.TextUnformatted("Add to outfit");
+        var missing = outfit.ItemIds.Count - items.Count;
+
+        ImGui.TextUnformatted($"Mods worn with this plate  ({items.Count})");
+        ImGui.TextWrapped("The plate is the game's gear and the game knows nothing about Penumbra. " +
+                          "Attach the mods that belong with it — a vanilla gear upscale, a retexture " +
+                          "of a piece in it — and they go on whenever this plate does, whether you " +
+                          "wear it here or apply it in game.");
+
+        if (missing > 0)
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f),
+                $"{missing} attached item(s) no longer exist.");
+
+        ImGui.Spacing();
+
+        Guid? removeId = null;
+        const float rowThumb = 40f;
+
+        foreach (var item in items)
+        {
+            ImGui.PushID($"platemod_{item.Id}");
+
+            var top = ImGui.GetCursorPos();
+            DrawOutfitRowThumb(item, rowThumb);
+
+            ImGui.SetCursorPos(new Vector2(top.X + rowThumb + 8, top.Y + 2));
+            ImGui.TextUnformatted(item.Name);
+
+            ImGui.SetCursorPos(new Vector2(top.X + rowThumb + 8, top.Y + 20));
+            ImGui.TextDisabled(_wardrobe.IsItemWorn(item)
+                ? $"{item.Slot.DisplayName()} · on"
+                : item.Slot.DisplayName());
+
+            ImGui.SameLine();
+            if (DeleteButton("×", "Take this mod off the plate.\nThe item itself is kept."))
+                removeId = item.Id;
+
+            ImGui.SetCursorPos(new Vector2(top.X, top.Y + rowThumb + 4));
+            ImGui.PopID();
+        }
+
+        if (removeId is { } id)
+        {
+            outfit.ItemIds.Remove(id);
+            outfit.Dyes.Remove(id.ToString());
+            _config.Save();
+        }
+
+        if (items.Count > 0)
+        {
+            ImGui.Spacing();
+
+            var equip = outfit.PlateItemsEquip;
+            if (ImGui.Checkbox("Also equip these items##plateequip", ref equip))
+            {
+                outfit.PlateItemsEquip = equip;
+                _config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Off, only the mods are switched on and the plate's own pieces stay\n" +
+                                 "exactly as the game put them on — which is what an upscale wants,\n" +
+                                 "since it is re-skinning those very pieces.\n\n" +
+                                 "On, each item's own game item is equipped as well, taking the slot\n" +
+                                 "from the plate. For attachments that are pieces in their own right\n" +
+                                 "rather than a new skin for the plate's.");
+
+            ImGui.Spacing();
+            if (ImGui.Button("Switch These Mods On Now", new Vector2(-1, 0)))
+            {
+                var applied = _wardrobe.ApplyPlateMods(outfit);
+                _plateModsStatus = applied > 0
+                    ? $"Switched on {applied} mod(s) for '{outfit.Name}'."
+                    : "Nothing attached to switch on.";
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("For a plate you applied in game earlier: puts its mods back on\n" +
+                                 "without touching your glamour.\n\n" +
+                                 "Applying the plate from here does this for you.");
+
+            if (!string.IsNullOrEmpty(_plateModsStatus))
+            {
+                ImGui.Spacing();
+                ImGui.TextWrapped(_plateModsStatus);
+            }
+        }
+
+        ImGui.Spacing();
+        DrawAddToOutfit(outfit, "Attach a mod");
+    }
+
+    private void DrawAddToOutfit(Outfit outfit, string heading = "Add to outfit")
+    {
+        ImGui.TextUnformatted(heading);
         ImGui.Spacing();
 
         var candidates = _config.WardrobeItems
@@ -9327,11 +9737,19 @@ public partial class PluginUi : Window, IDisposable
         }
 
         if (candidates.Count == 0 && string.IsNullOrWhiteSpace(_addToOutfitSearch))
-            ImGui.TextDisabled("Every wardrobe item is already in this outfit.");
+            ImGui.TextDisabled(outfit.IsGlamourPlate
+                ? "Every wardrobe item is already attached to this plate."
+                : "Every wardrobe item is already in this outfit.");
     }
 
     private void CloseOutfitEdit()
     {
+        // The panel closing gives its width back to the grid, so hold the card it was opened on in
+        // the same way opening it did. Read on whichever frame the columns actually change, which
+        // is after this one either way — the panel is drawn after the grid, and a close from the
+        // delete path has already had this frame's hold cleared out from under it.
+        if (_editingOutfit != null) _gridHold = _editingOutfit.Id;
+
         _editingOutfit     = null;
         _editOutfitName    = string.Empty;
         _editOutfitImage   = string.Empty;
@@ -9344,6 +9762,7 @@ public partial class PluginUi : Window, IDisposable
 
     private void OpenOutfitEdit(Outfit outfit)
     {
+        _gridHold          = outfit.Id;
         _editingOutfit     = outfit;
         _editOutfitName    = outfit.Name;
         _editOutfitImage   = outfit.ImagePath ?? string.Empty;
@@ -9353,6 +9772,7 @@ public partial class PluginUi : Window, IDisposable
         // plate's button reads as something that just happened to that one
         _plateApplyStatus  = string.Empty;
         _plateSyncStatus   = string.Empty;
+        _plateModsStatus   = string.Empty;
     }
 
     /// <summary>Small square thumbnail for one item inside the outfit edit list.</summary>
@@ -10105,6 +10525,22 @@ public partial class PluginUi : Window, IDisposable
                              "instead of showing them greyed and italic.\n\n" +
                              "With both options on, the lists show only mods the\n" +
                              "wardrobe does not reference at all.");
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("How the bulk import list reads.");
+        ImGui.Spacing();
+
+        var stripes = _config.StripeImportRows;
+        if (ImGui.Checkbox("Shade every other row when bulk importing", ref stripes))
+        {
+            _config.StripeImportRows = stripes;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Bands the bulk import list light and dark, a row at a time, so\n" +
+                             "the options, tags and supplement controls at the right of a row\n" +
+                             "are easy to trace back to the mod name at the left of it.\n\n" +
+                             "Off, the list is drawn on a plain background.");
     }
 
     private void DrawWearingSettings()

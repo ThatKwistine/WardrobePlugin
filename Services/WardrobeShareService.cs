@@ -217,8 +217,9 @@ public class WardrobeShareService
             SourceId      = outfit.Id,
             Name          = outfit.Name,
             Tags          = new List<string>(outfit.Tags),
-            HatVisible    = outfit.HatVisible,
-            WeaponVisible = outfit.WeaponVisible,
+            HatVisible      = outfit.HatVisible,
+            WeaponVisible   = outfit.WeaponVisible,
+            ClearSlotsFirst = outfit.ClearSlotsFirst,
             Origin        = outfit.IsGlamourPlate ? SharedOutfitOrigin.GlamourPlate
                           : outfit.IsDesign       ? SharedOutfitOrigin.DesignCard
                           :                         SharedOutfitOrigin.Normal,
@@ -332,6 +333,7 @@ public class WardrobeShareService
             GlamourerItemId   = item.GlamourerItemId,
             GlamourerItemName = item.GlamourerItemName,
             ModelSetId        = item.ModelSetId,
+            ModelBaseId       = item.ModelBaseId,
             HairIdByRace      = new Dictionary<string, ushort>(item.HairIdByRace),
             Replaces          = item.Replaces,
             Layer             = item.Layer,
@@ -655,6 +657,7 @@ public class WardrobeShareService
             GlamourerItemId   = shared.GlamourerItemId,
             GlamourerItemName = shared.GlamourerItemName,
             ModelSetId        = shared.ModelSetId,
+            ModelBaseId       = shared.ModelBaseId,
             HairIdByRace      = new Dictionary<string, ushort>(shared.HairIdByRace),
             Replaces          = shared.Replaces,
             Layer             = shared.Layer,
@@ -724,8 +727,9 @@ public class WardrobeShareService
         {
             Name          = shared.Name,
             Tags          = new List<string>(shared.Tags),
-            HatVisible    = shared.HatVisible,
-            WeaponVisible = shared.WeaponVisible,
+            HatVisible      = shared.HatVisible,
+            WeaponVisible   = shared.WeaponVisible,
+            ClearSlotsFirst = shared.ClearSlotsFirst,
             DateAdded     = DateTime.UtcNow,
         };
 

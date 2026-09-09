@@ -112,6 +112,7 @@ public class WardrobeProfileService
         if (_config.ActiveProfileId == profile.Id) return;
 
         _config.ActiveProfile.WornItems.Clear();
+        _config.ActiveProfile.WornModsOnly.Clear();
         _config.ActiveProfileId = profile.Id;
         _config.Save();
 

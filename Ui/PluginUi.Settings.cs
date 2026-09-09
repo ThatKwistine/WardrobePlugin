@@ -58,7 +58,8 @@ public partial class PluginUi
             {
                 new SettingsSection("Collection", "penumbra collection character active default",
                     DrawCollectionSettings),
-                new SettingsSection("Importing", "import hide support already imported mods",
+                new SettingsSection("Importing",
+                    "import hide support already imported mods stripe shade band alternating rows bulk",
                     DrawImportSettings),
                 new SettingsSection("Other Mod Types", "animation vfx mount minion emote category",
                     DrawModCategorySettings),

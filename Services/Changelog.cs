@@ -41,6 +41,86 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 6, 1, 0), "9 September 2026", new List<ChangelogSection>
+        {
+            new("What's new", new List<ChangelogNote>
+            {
+                new("The wardrobe takes session pictures itself.",
+                    "A session no longer asks the game for a screenshot. It reads the picture out of " +
+                    "the frame the game has just drawn, so there is no screenshot function to call, " +
+                    "no key pressed at the window, no folder watched for a file to appear in, and no " +
+                    "screenshot format to get right.\n\n" +
+                    "It is the same picture: measured against a screenshot the game took of the same " +
+                    "scene, the difference is nothing.\n\n" +
+                    "This is what makes automatic sessions work at all on a machine where the game " +
+                    "accepted a screenshot request, wrote nothing, and left its own screenshot key " +
+                    "dead until the client was restarted. Nothing asks for one any more, so nothing " +
+                    "can jam.\n\n" +
+                    "Screenshots you take by hand are still watched for and filed exactly as before, " +
+                    "and manual mode is unchanged. A picture the wardrobe captures has no ReShade " +
+                    "preset in it — ReShade runs later in the frame than the point this reads — so a " +
+                    "shot you want yours in is one to take yourself."),
+
+                new("Facewear is a slot of its own.",
+                    "Glasses, monocles and sunglasses now import as Facewear rather than as a hat. " +
+                    "They live in the equipment tree under the head suffix, so a glasses mod used to " +
+                    "come in as head gear with no game item behind it, and wearing it took your hat " +
+                    "off to equip a piece that was never there.\n\n" +
+                    "It wears alongside head gear, has its own icon in both icon sets, and takes a " +
+                    "Facewear.png in a custom icon folder or pack like any other slot. It cannot be " +
+                    "dyed, because the game gives the slot no dye channel.\n\n" +
+                    "Wearing facewear needs a Glamourer new enough to have the bonus item API. " +
+                    "If yours is older, facewear is the only thing that stops working, and the log " +
+                    "says so rather than failing quietly."),
+
+                new("Mods can be attached to a glamour plate.",
+                    "A plate is the game's own gear and the game has never heard of Penumbra, so a " +
+                    "vanilla gear upscale had nothing to switch it on. Attach it to the plate " +
+                    "instead — Mods worn with this plate, in the plate's edit panel — and it " +
+                    "goes on whenever the plate does, whether you wear it here or apply it in game.\n\n" +
+                    "Nothing is equipped: only the mods are switched on, and the plate's own pieces " +
+                    "stay as the game put them on, which is what an upscale wants since it is " +
+                    "re-skinning those very pieces. Also equip these items turns that off. " +
+                    "Attaching a mod is not editing the plate, so a resync never disturbs it."),
+
+                new("Apply Base is on the toolbar and the Character menu.",
+                    "It puts your base character back on over whatever you are wearing — its " +
+                    "design's customisations, then any of its items you do not already have on — " +
+                    "and takes nothing off. The same button is still in the base character's own " +
+                    "panel; this is it where you can reach it, beside the three that undress you."),
+            }),
+
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("A mod for a recoloured piece of gear is detected as that recolour.",
+                    "One model set carries every recolour of a piece, patch after patch: e0110 is " +
+                    "the Hellhound armour, the Grey Hound and the Shadowhound, each with its own " +
+                    "materials under the one model. Detection matched the set alone and took the " +
+                    "oldest item wearing it, so a mod for the newest recolour named the piece it was " +
+                    "recoloured from — and wearing that item loaded materials the mod does not " +
+                    "replace, leaving the piece unmodded with nothing on screen saying why.\n\n" +
+                    "The recolour is now read out of the mod's own material folder. 11,067 of the " +
+                    "game's 20,238 equippable non-weapon items sit behind one, so this is most of " +
+                    "the gear added since a set was first used.\n\n" +
+                    "A mod that ships only a model or only textures narrows nothing and offers the " +
+                    "whole family as before, which is right: those files are shared by every " +
+                    "recolour of the set."),
+            }),
+
+            new("Worth doing once", new List<ChangelogNote>
+            {
+                new("Press Re-detect on gear whose mod is for a recolour.",
+                    "Items already in your wardrobe keep the game item they were given at the time. " +
+                    "Open one, press Re-detect, and it picks up the recolour. The sign that an item " +
+                    "needs it is a piece that comes out looking unmodded when you wear it."),
+
+                new("Move a glasses mod to Facewear by hand.",
+                    "Anything imported before this is sitting in the Head slot. Open it, press " +
+                    "Re-detect, and it tells you which slot its files are really for — set Slot " +
+                    "to Facewear, press Re-detect again, and it finds the right pair."),
+            }),
+        }),
+
         new(new Version(1, 6, 0, 0), "2 September 2026", new List<ChangelogSection>
         {
             new("What's new", new List<ChangelogNote>

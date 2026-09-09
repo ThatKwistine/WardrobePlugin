@@ -18,6 +18,20 @@ public enum EquipSlot
     MainHand  = 11,
     OffHand   = 12,
 
+    /// <summary>
+    /// Facewear — glasses, monocles, sunglasses. Equipment, but not an equipment slot.
+    /// </summary>
+    /// <remarks>
+    /// The game keeps facewear apart from gear at every level. Its items are the <c>Glasses</c>
+    /// sheet rather than <c>Item</c>, so their row ids run from 1 and mean nothing to the item
+    /// lookup; Glamourer equips them through a bonus slot of their own rather than through
+    /// <c>SetItem</c>; and the models sit in the equipment tree under the <em>head</em> suffix —
+    /// <c>chara/equipment/e5501/model/c0101e5501_met.mdl</c> — which is why a facewear mod used to
+    /// import as a hat with no game item behind it. Sets 5501-5565 belong to facewear and to
+    /// nothing else: no head item in the game shares one.
+    /// </remarks>
+    Facewear  = 13,
+
     // Character customisation, not equipment. These replace parts of the character model itself
     // (chara/human/...) rather than a game item, so nothing is equipped in Glamourer for them —
     // enabling the Penumbra mod is the whole effect.
@@ -71,6 +85,7 @@ public static class EquipSlotEx
         EquipSlot.RingLeft  => "Ring (L)",
         EquipSlot.MainHand  => "Main Hand",
         EquipSlot.OffHand   => "Off Hand",
+        EquipSlot.Facewear  => "Facewear",
         EquipSlot.Hair      => "Hair",
         EquipSlot.Face      => "Face",
         EquipSlot.Tail      => "Tail",
@@ -100,6 +115,11 @@ public static class EquipSlotEx
 
         EquipSlot.Other     => "Textures shared by every character — piercings, tattoos, face paints.",
 
+        // Its models live under the head suffix in the equipment tree, so the obvious guess is that
+        // it is a hat. It is worn beside one, and Glamourer holds it in a slot of its own.
+        EquipSlot.Facewear  => "Glasses, monocles and sunglasses — the game's facewear slot.\n" +
+                               "Worn alongside head gear rather than instead of it.",
+
         // The name reads narrower than the category is, and a wardrobe full of idle and walk mods
         // filed under something called "Emote" was why it got renamed
         EquipSlot.Animation => "Any animation mod, not just emotes — idles, poses,\n" +
@@ -115,6 +135,23 @@ public static class EquipSlotEx
     public static bool IsCustomization(this EquipSlot s) => s is
         EquipSlot.Hair or EquipSlot.Face or EquipSlot.Tail or EquipSlot.VieraEars or EquipSlot.Skin
         or EquipSlot.Other;
+
+    /// <summary>
+    /// Whether two items in this slot can be worn at once by sitting on different layers — a
+    /// sculpt and the texture painted over it.
+    /// </summary>
+    /// <remarks>
+    /// Every customisation slot but hair. The character has exactly one hairstyle, and two hair
+    /// mods on at the same time is not a look anyone can wear: one of them is simply the mod for a
+    /// hairstyle you are not currently on, sitting enabled and invisible. Faces, tails, ears and
+    /// skin are different — a shape mod and a texture over it are both showing at once, which is
+    /// the whole point of layering.
+    /// <para>
+    /// Read by <see cref="WardrobeItem.WornKey"/>, which is what decides whether wearing one item
+    /// takes another off.
+    /// </para>
+    /// </remarks>
+    public static bool SupportsLayers(this EquipSlot s) => s.IsCustomization() && s != EquipSlot.Hair;
 
     /// <summary>
     /// True for mods that are not worn on the character — animations, VFX, mounts and minions.
@@ -135,19 +172,58 @@ public static class EquipSlotEx
     public static bool IsModOnly(this EquipSlot s) => s.IsCustomization() || s.IsModCategory();
 
     /// <summary>
+    /// True for facewear, which is equipment the game holds outside the equipment slots.
+    /// </summary>
+    /// <remarks>
+    /// Its items come from the <c>Glasses</c> sheet, whose row ids start at 1 and collide with
+    /// every low <c>Item</c> row, so an id is only meaningful beside the slot it was stored for.
+    /// Anything resolving a stored id to a name has to ask this first — see
+    /// <see cref="Services.ItemLookupService.GetItemName(ulong, EquipSlot)"/>.
+    /// </remarks>
+    public static bool IsFacewear(this EquipSlot s) => s == EquipSlot.Facewear;
+
+    /// <summary>
+    /// Whether an item in this slot has dye channels to set.
+    /// </summary>
+    /// <remarks>
+    /// Dye belongs to an equipped game item, so a mod-only slot has nothing to dye — and neither
+    /// has facewear, which is an item the game gives no dye channel at all: the <c>Glasses</c>
+    /// sheet carries no stain, and Glamourer's bonus slot takes none. Offering the pickers anyway
+    /// would let someone set a dye that is silently dropped on the way to the character.
+    /// </remarks>
+    public static bool SupportsDye(this EquipSlot s) => !s.IsModOnly() && !s.IsFacewear();
+
+    /// <summary>True for the two hands.</summary>
+    /// <remarks>
+    /// What they hold is decided by the job rather than by the look, which is why they are left out
+    /// of anything that empties the slots a look has no opinion about — see
+    /// <c>WardrobeService.ClearUnusedSlots</c>. A weapon an outfit does name is worn like any other
+    /// piece, and <see cref="Outfit.WeaponVisible"/> is how a look puts one away.
+    /// </remarks>
+    public static bool IsWeapon(this EquipSlot s) => s is EquipSlot.MainHand or EquipSlot.OffHand;
+
+    /// <summary>
     /// Whether an item in this slot redraws the character on apply unless told otherwise.
     /// </summary>
     /// <remarks>
     /// Enabling a Penumbra mod does not reload what is already drawn on the character, so a mod that
     /// replaces part of the model — hair, a face, a shared texture — can go on without showing up
     /// until something else forces a reload. Gear has no such trouble: swapping the Glamourer item
-    /// reloads the piece by itself. Mod categories are not on the character at all, so redrawing it
-    /// for an animation or a mount is a stutter that buys nothing.
+    /// reloads the piece by itself.
     /// <para>
-    /// The default only — <see cref="WardrobeItem.ForceRedraw"/> overrides it per item.
+    /// Animations are the mod category that behaves like customisation rather than like a mount. A
+    /// <c>.pap</c> is bound to the character's skeleton and is already loaded by the time the mod is
+    /// switched on, so the redirection lands on nothing and the old animation goes on playing until
+    /// the character is rebuilt. VFX and mounts really are separate from the character and gain
+    /// nothing from a redraw, which is why they are still left out.
+    /// </para>
+    /// <para>
+    /// The default only — <see cref="WardrobeItem.ForceRedraw"/> overrides it per item, so an
+    /// animation an owner has explicitly ticked off stays off.
     /// </para>
     /// </remarks>
-    public static bool RedrawsByDefault(this EquipSlot s) => s.IsCustomization();
+    public static bool RedrawsByDefault(this EquipSlot s) =>
+        s.IsCustomization() || s == EquipSlot.Animation;
 
     /// <summary>
     /// Wording for the buttons that turn an item on and off. Gear is equipped, customisation is
@@ -166,6 +242,7 @@ public static class EquipSlotEx
         EquipSlot.Ears, EquipSlot.Neck, EquipSlot.Wrists,
         EquipSlot.RingRight, EquipSlot.RingLeft,
         EquipSlot.MainHand, EquipSlot.OffHand,
+        EquipSlot.Facewear,
         EquipSlot.Hair, EquipSlot.Face, EquipSlot.Tail, EquipSlot.VieraEars, EquipSlot.Skin,
     };
 

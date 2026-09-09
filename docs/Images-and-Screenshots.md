@@ -83,14 +83,29 @@ Use a [selection](#a-session-over-just-the-items-you-pick) to re-shoot items tha
 
 ## Fully automatic sessions
 
-> **Experimental.** It presses the game's own screenshot function, which is not an API, and it has
-> not yet been run over a large wardrobe. The tick is in Settings → **Experimental**, at the bottom
-> of the panel, and off until you turn it on. Watch the first few shots before leaving it to run.
+> **Experimental.** It has not yet been run over a large wardrobe. The tick is in Settings →
+> **Experimental**, at the bottom of the panel, and off until you turn it on. Watch the first few
+> shots before leaving it to run.
 
 **Fully automatic sessions**, in Settings → Experimental and as a tick on the session HUD, is manual
-mode's opposite: the session takes the screenshots itself. Each item is worn, the camera moves to the
-angle its slot asks for, the shot is taken, cropped and filed, and it moves on to the next. There is
-nothing to press. Point it at a wardrobe of a few hundred pieces and go and do something else.
+mode's opposite: the session takes the pictures itself. Each item is worn, the camera moves to the
+angle its slot asks for, the picture is taken, cropped and filed, and it moves on to the next. There
+is nothing to press. Point it at a wardrobe of a few hundred pieces and go and do something else.
+
+### How the picture is taken
+
+The wardrobe reads the frame the game has just drawn, rather than asking the game for a screenshot.
+Nothing is pressed on your behalf, no folder is watched, the game's screenshot format does not
+matter, and only the part of the frame that survives the crop is read at all — a square for an item,
+and the whole frame turned upright for an outfit shot in portrait mode.
+
+It was measured against a screenshot the game took of the same scene and came out identical, to a
+mean difference of 0.00 across a static patch of floor. The one thing it does not include is anything
+applied to the frame *after* the game has drawn it — a ReShade preset being the obvious case, because
+that runs later than the point the frame is read.
+
+If you want your preset in your pictures, take those shots yourself: **screenshots you take during a
+session are still picked up and filed**, exactly as before, and manual mode is unchanged.
 
 It is the ordinary [session](#screenshot-sessions) in every other way — the same queue, the same
 stripping, the same base character, the same [extra angles](#several-pictures-per-item) — so it works
@@ -211,9 +226,9 @@ those you are watching a session from. Switching it off and back on keeps the mo
 setting it to **Always** and then using the toggle does not quietly move you onto **During
 sessions**.
 
-The guide is never in the resulting picture. The shot comes from the game's own screenshot function,
-which does not capture plugin windows — the same property that keeps the wardrobe's own window out
-of your screenshots. **Confirmed by testing**, not assumed.
+The guide is never in the resulting picture. The frame is read before any plugin window is drawn into
+it, which is the same property that keeps the wardrobe's own window out of your pictures. **Confirmed
+by testing**, not assumed.
 
 ## Portrait outfit previews
 

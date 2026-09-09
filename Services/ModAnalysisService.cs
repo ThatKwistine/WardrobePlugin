@@ -167,6 +167,22 @@ public record ModAnalysisResult(
     /// <summary>Equipment set IDs extracted from the mod file paths, keyed by slot.</summary>
     IReadOnlyDictionary<EquipSlot, ushort> SlotSetIds,
     /// <summary>
+    /// The second half of each slot's model id: a weapon's <c>b</c> number, or gear's material
+    /// variant. Named for the weapon half, which is the only one it held to begin with.
+    /// </summary>
+    /// <remarks>
+    /// A weapon's set ID names a whole job's armoury, not a weapon: every Gunbreaker arm in the game
+    /// is <c>w2501</c>. It takes both halves to say which one, so this is the other half, and without
+    /// it the lookup can only offer the lowest-numbered item of the family.
+    /// <para>
+    /// Gear is reused the same way, a variant at a time — <c>e0110</c> is the Hellhound armour, the
+    /// Grey Hound and the Shadowhound — so the variant is carried here too. The two never collide:
+    /// a slot is either a weapon or it is not. Absent for a mod whose files shipped no material,
+    /// which names no variant and asks the lookup for the set alone.
+    /// </para>
+    /// </remarks>
+    IReadOnlyDictionary<EquipSlot, ushort> SlotBaseIds,
+    /// <summary>
     /// Hairstyle numbers keyed by model race code (0101, 1801, …). Hairstyle numbering differs
     /// per race, so the right one depends on who is wearing it.
     /// </summary>
@@ -209,13 +225,18 @@ public record ModAnalysisResult(
     /// The layer an item for this slot should be given, or null when the question does not arise.
     /// </summary>
     /// <remarks>
-    /// Null for everything but customisation, which is the only place two mods can be on one slot
-    /// doing different jobs — and null too for a customisation slot this analysis never saw, so a
-    /// hand-made item with no mod behind it is left blank rather than guessed at. Blank means the
-    /// item takes the whole slot, which is what every item did before layers existed.
+    /// Null for everything but the customisation slots that layer, which are the only place two
+    /// mods can be on one slot doing different jobs — and null too for a slot this analysis never
+    /// saw, so a hand-made item with no mod behind it is left blank rather than guessed at. Blank
+    /// means the item takes the whole slot, which is what every item did before layers existed.
+    /// <para>
+    /// Hair is deliberately excluded — see <see cref="EquipSlotEx.SupportsLayers"/>. Giving a hair
+    /// item a layer only ever split it away from the hair items that had none, letting two
+    /// hairstyles read as worn at the same time.
+    /// </para>
     /// </remarks>
     public string? LayerFor(EquipSlot slot) =>
-        !slot.IsCustomization() || !DetectedSlots.Contains(slot)
+        !slot.SupportsLayers() || !DetectedSlots.Contains(slot)
             ? null
             : ModelSlots.Contains(slot) ? SculptLayer : TextureLayer;
 }
@@ -243,7 +264,45 @@ public class ModAnalysisService
     /// </remarks>
     private readonly HashSet<EquipSlot> _modelSlots = new();
 
-    public ModAnalysisService(IPluginLog? log = null) => _log = log;
+    /// <summary>The <c>b</c> half of a weapon's model id, seen this Analyze call.</summary>
+    /// <remarks>
+    /// Kept beside the set ids rather than in them because only weapons have one, and an instance
+    /// field for the same reason <see cref="_modelSlots"/> is: it would otherwise be a fifth
+    /// dictionary threaded through <c>ClassifyPath</c> and <c>AddGroup</c> for one branch's sake.
+    /// </remarks>
+    private readonly Dictionary<EquipSlot, Detected> _weaponBaseIds = new();
+
+    /// <summary>
+    /// The material variant of the gear a path names, keyed by the slot and set it belongs to.
+    /// </summary>
+    /// <remarks>
+    /// Keyed by set as well as slot so a variant can never be paired with a set it did not come
+    /// from. A mod touching two sets in one slot keeps the first as its set id, and a variant read
+    /// off the other one is dropped rather than combined into a piece of gear that does not exist.
+    /// <para>
+    /// First answer wins, with no preference for models: a model has no variant to give. A mod
+    /// replacing several variants of one set is showing the same look on all of them, so any of
+    /// them names it and the first is at least stable.
+    /// </para>
+    /// </remarks>
+    private readonly Dictionary<(EquipSlot Slot, ushort Set), ushort> _gearVariants = new();
+
+    /// <summary>
+    /// Whether an equipment set number belongs to facewear, or null when nothing can answer.
+    /// </summary>
+    /// <remarks>
+    /// A delegate rather than the lookup service itself, so this class keeps its one dependency —
+    /// a log it does not need either — and can still be constructed and driven with no game data
+    /// behind it. Null answers "not facewear" for every set, which is exactly how this behaved
+    /// before facewear was a slot.
+    /// </remarks>
+    private readonly Func<ushort, bool>? _isFacewearSet;
+
+    public ModAnalysisService(IPluginLog? log = null, Func<ushort, bool>? isFacewearSet = null)
+    {
+        _log           = log;
+        _isFacewearSet = isFacewearSet;
+    }
 
     /// <summary>An id found in a path, and whether the path that gave it was a model.</summary>
     /// <remarks>
@@ -271,6 +330,28 @@ public class ModAnalysisService
     private static Dictionary<TKey, ushort> Ids<TKey>(Dictionary<TKey, Detected> map) where TKey : notnull =>
         map.ToDictionary(kv => kv.Key, kv => kv.Value.Id);
 
+    /// <summary>
+    /// The second half of each slot's model id — a weapon's <c>b</c> number, or gear's variant.
+    /// </summary>
+    /// <remarks>
+    /// Variants are resolved against the set that survived for the slot, so the pair always
+    /// describes one piece of gear. Weapons keep their <c>b</c> number: the two never meet, since a
+    /// weapon path is classified before either of the gear patterns can see it.
+    /// </remarks>
+    private Dictionary<EquipSlot, ushort> Secondaries(Dictionary<EquipSlot, Detected> setIds)
+    {
+        var ids = Ids(_weaponBaseIds);
+
+        foreach (var (slot, set) in setIds)
+        {
+            if (ids.ContainsKey(slot)) continue;
+            if (_gearVariants.TryGetValue((slot, set.Id), out var variant))
+                ids[slot] = variant;
+        }
+
+        return ids;
+    }
+
     /// <summary>Freezes the coverage gathered this call into the result's read-only shape.</summary>
     private IReadOnlyDictionary<EquipSlot, IReadOnlyDictionary<int, IReadOnlyList<ushort>>> Coverage() =>
         _coverage.ToDictionary(
@@ -278,6 +359,24 @@ public class ModAnalysisService
             slot => (IReadOnlyDictionary<int, IReadOnlyList<ushort>>)slot.Value.ToDictionary(
                 race => race.Key,
                 race => (IReadOnlyList<ushort>)race.Value.ToList()));
+
+    /// <summary>
+    /// Records the material variant a gear path names, against the set the same path gave.
+    /// </summary>
+    /// <remarks>
+    /// Taken from the path that produced the set id rather than from any path, so the two halves
+    /// come off one piece of gear. Variant 0 is refused: no equippable item in the game has one, so
+    /// a path claiming it is naming a folder the Item sheet cannot answer for, and the set alone is
+    /// the better question.
+    /// </remarks>
+    private void RecordVariant(EquipSlot slot, ushort setId, string gamePath)
+    {
+        var m = GearVariantPattern.Match(gamePath);
+        if (!m.Success) return;
+        if (!ushort.TryParse(m.Groups[1].Value, out var variant) || variant == 0) return;
+
+        _gearVariants.TryAdd((slot, setId), variant);
+    }
 
     /// <summary>Whether a game path points at a model rather than a material or texture.</summary>
     private static bool IsModelPath(string gamePath) =>
@@ -300,8 +399,40 @@ public class ModAnalysisService
         new(@"chara/accessory/a(\d+)/(?:model|material|texture)/[^""]*?c\d+a\d+_(ear|nek|wrs|rir|ril)[_.]",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
+    // chara/{equipment|accessory}/{e|a}{SetId}/material/v{Variant}/… — the second half of a piece of
+    // gear's identity, and what tells three items apart that share one model.
+    //
+    // A set is reused for every recolour of it, patch after patch: e0110 is the Hellhound armour at
+    // variant 1, the Grey Hound at 2 and the Shadowhound at 3, and each variant is a folder of
+    // materials under the one model. Matching the set alone found all three and took the lowest row
+    // id, so a mod for the newest of them came out as the oldest — and wearing that item loaded
+    // material/v0001, which the mod does not replace, leaving the piece unmodded on screen.
+    //
+    // The material folder is the only place the variant appears. Texture names carry a vNN_ prefix
+    // that looks like the same number and is not: e6269's variant 2 material reads the same v01_
+    // textures variant 1 does, differing only in the colour table inside the .mtrl. Reading the
+    // prefix would have pinned shared textures to variant 1 and narrowed away the two items that
+    // also use them, so only the folder is read, and a mod that shipped no material narrows nothing.
+    private static readonly Regex GearVariantPattern =
+        new(@"chara/(?:equipment|accessory)/[ea]\d+/material/v(\d+)/",
+            RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
     private static readonly Regex WeaponPattern =
         new(@"chara/weapon/w(\d+)/", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    // chara/weapon/w{Set}/obj/body/b{Base}/… — the second half of a weapon's identity.
+    //
+    // A weapon is not named by its set alone. w2501 is every Gunbreaker arm in the game, 155 of
+    // them, and which one a mod replaces is the b number: w2501b0016 is the Revolver, w2501b0002
+    // the Deepgold Gunblade. Matching on the set by itself found the whole job's weapon list and
+    // took the lowest row id off the front of it, which is why every gunblade mod in a wardrobe
+    // came out as "Revolver" — see ItemLookupService.FindItems.
+    //
+    // Separate from the pattern above rather than folded into it, so a weapon path in some shape
+    // this does not expect still registers the slot exactly as it always did, and only loses the
+    // narrowing.
+    private static readonly Regex WeaponBasePattern =
+        new(@"chara/weapon/w\d+/obj/body/b(\d+)/", RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     // chara/human/c{race}/obj/{hair|face|tail|zear|body}/...  — character customisation, not equipment.
     // Group 1 = the body-part folder, which is what identifies the kind of mod.
@@ -407,6 +538,8 @@ public class ModAnalysisService
         _customTextures = 0;
         _modelSlots.Clear();
         _coverage.Clear();
+        _weaponBaseIds.Clear();
+        _gearVariants.Clear();
         var slots   = new HashSet<EquipSlot>();
         var setIds  = new Dictionary<EquipSlot, Detected>();
         var hairIds = new Dictionary<int, Detected>();
@@ -414,8 +547,8 @@ public class ModAnalysisService
         var groups  = new List<ModOptionGroup>();
 
         if (!Directory.Exists(modFolderPath))
-            return new ModAnalysisResult(slots, groups, Ids(setIds), Ids(hairIds), replace,
-                new HashSet<EquipSlot>(_modelSlots), Coverage());
+            return new ModAnalysisResult(slots, groups, Ids(setIds), Secondaries(setIds), Ids(hairIds),
+                replace, new HashSet<EquipSlot>(_modelSlots), Coverage());
 
         var meta = ReadMeta(Path.Combine(modFolderPath, "meta.json"));
 
@@ -486,8 +619,8 @@ public class ModAnalysisService
                               $"custom textures — taking it for a skin.");
         }
 
-        return new ModAnalysisResult(slots, groups, Ids(setIds), Ids(hairIds), replace,
-                new HashSet<EquipSlot>(_modelSlots), Coverage());
+        return new ModAnalysisResult(slots, groups, Ids(setIds), Secondaries(setIds), Ids(hairIds),
+                replace, new HashSet<EquipSlot>(_modelSlots), Coverage());
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -713,9 +846,25 @@ public class ModAnalysisService
                 "sho" => EquipSlot.Feet,
                 _     => EquipSlot.Unknown,
             };
+
+            // Parsed first so the id is definitely assigned by the time facewear is asked about it
+            var parsed = ushort.TryParse(m.Groups[1].Value, out var id) && slot != EquipSlot.Unknown;
+
+            // Facewear wears the head's suffix — chara/equipment/e5501/model/c0101e5501_met.mdl is
+            // a pair of spectacles, not a hat — so the set number is the only thing that separates
+            // the two, and only the Glasses sheet knows which numbers those are. Before this, a
+            // glasses mod imported as a hat with no game item behind it: the lookup searched head
+            // gear for a set no head item has, found nothing, and wearing the item stripped the
+            // character's actual hat to put on a piece that was never there.
+            if (parsed && slot == EquipSlot.Head && _isFacewearSet?.Invoke(id) == true)
+                slot = EquipSlot.Facewear;
+
             slots.Add(slot);
-            if (slot != EquipSlot.Unknown && ushort.TryParse(m.Groups[1].Value, out var id))
+            if (parsed)
+            {
                 Record(setIds, slot, id, IsModelPath(gamePath));
+                RecordVariant(slot, id, gamePath);
+            }
             return;
         }
 
@@ -733,7 +882,10 @@ public class ModAnalysisService
             };
             slots.Add(slot);
             if (slot != EquipSlot.Unknown && ushort.TryParse(m.Groups[1].Value, out var id))
+            {
                 Record(setIds, slot, id, IsModelPath(gamePath));
+                RecordVariant(slot, id, gamePath);
+            }
             return;
         }
 
@@ -742,7 +894,18 @@ public class ModAnalysisService
         {
             slots.Add(EquipSlot.MainHand);
             if (ushort.TryParse(m.Groups[1].Value, out var id))
-                Record(setIds, EquipSlot.MainHand, id, IsModelPath(gamePath));
+            {
+                var fromModel = IsModelPath(gamePath);
+                Record(setIds, EquipSlot.MainHand, id, fromModel);
+
+                // Recorded from the same path and under the same rule as the set above, so the two
+                // halves come off one weapon rather than being paired across two of them. They can
+                // only part company if the first model path the mod ships has no obj/body in it,
+                // which is not a layout the game uses.
+                var b = WeaponBasePattern.Match(gamePath);
+                if (b.Success && ushort.TryParse(b.Groups[1].Value, out var baseId))
+                    Record(_weaponBaseIds, EquipSlot.MainHand, baseId, fromModel);
+            }
             return;
         }
 

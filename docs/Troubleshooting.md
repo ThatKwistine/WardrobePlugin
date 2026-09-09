@@ -92,7 +92,7 @@ character model can go on correctly and only appear the next time something redr
 why redrawing by hand in Penumbra "fixes" it.
 
 **Redraw on apply**, in the item's edit panel, does that redraw for you. It is on by default for
-customisation slots, so check it has not been turned off for that item.
+customisation slots and for animations, so check it has not been turned off for that item.
 
 If it is on and the mod still does not appear, the mod is probably built for a different face,
 hairstyle or race than your character has. A face paint made for Face 1 shows nothing on Face 5.
@@ -149,25 +149,23 @@ pan alone rather than guessing at a centred value. Press **Update** on the prese
 
 ## A session takes no pictures, or Shoot Now does nothing
 
-Open **Settings → Experimental → Screenshot diagnostics**. It reads the game's own screenshot
-function and says which of several different faults this is:
+A session does not ask the game for a screenshot. It reads the picture out of the frame the game has
+just drawn, so there is no screenshot function to fail, no key pressed on your behalf, no folder
+watched for the picture to turn up in, and no dependence on what format the game is set to save.
 
-- **Screenshots allowed: False** that never turns true — the game is refusing screenshots outright.
-  A cutscene or a loading screen does this for a moment; anything longer is the client, not the
-  wardrobe.
-- **Shot in flight: True** that never goes back to False — the game accepted the request and never
-  finished it. Its screenshot function is stuck, and your own screenshot key will not work either
-  until the game is restarted. An automatic run notices this after 45 seconds and pauses rather than
-  waiting on it forever.
-- **Saving as: Dds** — the game is writing a format nothing here can open. Set the screenshot format
-  to PNG or JPG in the game's own settings. PNG, JPG and BMP are all picked up.
-- **Last result: NoDiskSpace** — the game's own words for a screenshot it could not write.
+**Settings → Experimental → How pictures are taken** has a **Capture a test frame** button. Press it,
+close the plugin's windows while it counts down, and it writes one frame to a file and tells you the
+size and the format. If that works and a session still files nothing, the fault is in the session
+rather than in the picture-taking, and the log will say which item and angle it stopped on.
 
-If none of those apply, the folder is the next thing to check: **Settings → Screenshots** has to
-point at the folder the game actually saves to.
+If the test says the back buffer is in a format it does not convert, that is the one case it cannot
+handle: an HDR frame needs tone mapping before it can become an ordinary picture. Say so in a bug
+report along with the format it names.
 
-Whatever it says, the reasons are all the game's rather than the wardrobe's, so the readout is worth
-copying into a bug report.
+Screenshots you take yourself are still watched for and filed, so **Settings → Screenshots** still
+has to point at the folder the game actually saves to for those. The game must also be saving PNG,
+JPG or BMP — a DDS cannot be opened here.
+
 
 ## Mod names show as boxes or missing glyphs
 

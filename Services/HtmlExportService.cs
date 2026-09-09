@@ -181,7 +181,9 @@ public sealed class HtmlExportService
             if (!string.IsNullOrWhiteSpace(item.DesignName))
                 card.Fields.Add(new PageField { Label = "Design", Value = item.DesignName });
 
-            if (!string.IsNullOrWhiteSpace(item.Layer))
+            // Slot-checked, not just blank-checked: a hair item carrying a layer from before hair
+            // stopped having them would otherwise print one the wardrobe no longer reads.
+            if (!string.IsNullOrWhiteSpace(item.Layer) && item.Slot.SupportsLayers())
                 card.Fields.Add(new PageField { Label = "Layer", Value = item.Layer! });
 
             if (!string.IsNullOrWhiteSpace(item.Replaces))

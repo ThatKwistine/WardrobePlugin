@@ -8,7 +8,7 @@ Wear a look you like, type a name, and **Save current look** records every item 
 
 | Button | Effect |
 |---|---|
-| **Wear** | Wears the outfit's items, leaving anything else you have on in place |
+| **Wear** | Wears the outfit's items, leaving anything else you have on in place — unless the outfit [clears its slots first](#wearing-over-or-instead-of) |
 | **Only this** | Wears them and removes everything else the wardrobe has on |
 | **Update** | Replaces **Only this** while the outfit is on; saves what you are wearing now |
 | **Remove** | Takes the outfit's items back off |
@@ -69,6 +69,37 @@ Every item in the outfit is listed as a row with a small thumbnail, its name and
   other removal — see [Deleting things](Items-and-Mods.md#deleting-things).
 
 An **Add to outfit** picker at the bottom adds any wardrobe item not already in it, searchable by name.
+
+## Wearing over, or instead of
+
+**Wearing this outfit → Take everything else off first**, in the edit panel, decides which of the two
+an outfit is.
+
+Off — the default, and what wearing an outfit has always done — the outfit dresses over whatever you
+have on. A slot it has nothing of its own for keeps whatever is in it, which is what makes wearing a
+pair of earrings or a single coat over a look work at all.
+
+On, **Wear** empties the slots this outfit has nothing of its own for, so none of them is left
+holding what the last outfit put there. It is the answer for a look that is the whole outfit:
+without it, wearing a short top over a look with a long coat leaves the coat on, because the new
+outfit never claimed that slot.
+
+Only those slots. This is not a strip: the pieces the outfit is about to put on are never taken off
+first, so nothing is removed and re-equipped for the sake of it and you never flash bare in between.
+A wardrobe item cleared out of a slot is taken off properly, mods and all, rather than merely hidden.
+
+**Weapons are never cleared.** What you can hold is decided by the job you are on rather than by the
+look, so emptying the hands of every outfit that happens to have no weapon in it would be wrong far
+more often than right. An outfit that does have an opinion still gets it: a weapon saved into the
+outfit is equipped like any other piece, and **Headgear and weapon** is how a look puts one away.
+
+Your [base character](Wearing-Items.md#base-character) keeps its slots and its items, as it does
+through a strip, and emotes, VFX and mounts keep running — this is about clothes.
+
+It is set per outfit rather than once for all of them, because whether a look is complete or a layer
+is a fact about that look. **Re-apply** ignores it: that puts back an outfit you are already wearing,
+and clearing on the way would take off anything you had layered over it, which is not what re-applying
+is for.
 
 ## Duplicating an outfit
 
@@ -253,6 +284,9 @@ the two do not race.
 Animations, VFX and mounts are left running. A plate has nothing to say about them, and a dance
 stopping because you changed your shirt would be a surprise.
 
+Any [mods attached to the plate](#mods-worn-with-a-plate) go on *after* that revert, which is the
+only order that works — switched on first, the revert would take them straight back off again.
+
 **Show In-Game Look**, next to the apply button, does the same thing on its own, and the Character menu's
 **In-Game Look** button does it from anywhere — useful for answering "what do I actually look like
 to everyone else?" without taking every item off by hand. See
@@ -293,8 +327,32 @@ A plate's contents belong to the game, so the wardrobe shows them and nothing mo
 adding, removing, dyeing or **Update from what I'm wearing** on a plate — edit the plate in-game and
 resync.
 
-What *is* yours: the **name**, the **preview image** and the **tags**. Rename `Glamour Plate 3` to
-`Ballroom`, photograph it, tag it — all of it survives every resync untouched.
+What *is* yours: the **name**, the **preview image**, the **tags**, and the **mods worn with it**
+below. All of it survives every resync untouched.
+
+### Mods worn with a plate
+
+A plate is the game's own gear, and the game has never heard of Penumbra. A vanilla gear upscale —
+the mod that makes that gear fit the body you actually use — therefore has to be switched on by
+something, and **Mods worn with this plate** in the plate's edit panel is where you say which.
+
+Attach any wardrobe item. Its mods then go on whenever the plate does, both ways of wearing it
+included: the Glamourer preview, and **Apply In Game**, where they are switched on after the revert
+that clears the wardrobe out of the way — so what you end up looking at is the game's own glamour
+with your upscales on it.
+
+**Nothing is equipped.** Only the mods are switched on, and the plate's pieces stay exactly as the
+game put them on. That is what an upscale wants, since it is re-skinning those very pieces: equipping
+the item the mod happened to be detected as would replace the plate's piece with it, and after an
+in-game apply it would put a Glamourer override back over the plate you just applied.
+
+**Also equip these items** turns that off, for attachments that are pieces in their own right worn
+alongside the plate rather than a new skin for its own. Taking a mod off again is ordinary: the items
+show as worn, and **Unequip All**, a strip, or the item's own button takes them off. **Switch These
+Mods On Now** is there for a plate you applied in game earlier and want the mods back on without
+touching your glamour.
+
+Attaching a mod is not editing the plate, so a resync never disturbs it.
 
 **Duplicate As Editable Outfit** is the way out. It copies the plate's pieces into an ordinary outfit
 you can edit freely and build wardrobe items on top of, and resyncing the plate will never touch the

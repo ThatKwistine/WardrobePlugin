@@ -84,6 +84,7 @@ public partial class PluginUi
         DrawUnequipAllItem();
         DrawStripItem();
         DrawInGameLookItem();
+        DrawApplyBaseItem();
 
         ImGui.Separator();
 
@@ -199,6 +200,40 @@ public partial class PluginUi
 
         ForgetWorn(animations);
         _scanStatus = string.Empty;
+    }
+
+    /// <summary>
+    /// Puts the active base character back on over whatever is being worn.
+    /// </summary>
+    /// <remarks>
+    /// The three entries above it take clothes off; this is the way back, and it was reachable only
+    /// from the base character's own panel. Nothing here is new behaviour — it calls exactly what
+    /// that panel's button calls.
+    /// <para>
+    /// Greyed rather than hidden when no base is set, so the entry does not appear and disappear
+    /// from the menu depending on state, and its tooltip says what to do about it.
+    /// </para>
+    /// </remarks>
+    private void DrawApplyBaseItem()
+    {
+        var active  = _config.ActiveBaseCharacter;
+        var clicked = ImGui.MenuItem("Apply Base", string.Empty, false, active != null);
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(active is { } baseChar
+                ? $"Put '{baseChar.Name}' on over what you are wearing:\n" +
+                  "its design's customisations, then any of its items you\n" +
+                  "are not already wearing.\n\n" +
+                  "Nothing is taken off — this only adds the base back."
+                : "No base character is active. Set one under Base Character\n" +
+                  "to have your face, hair and skin put back with one click.");
+
+        if (!clicked || active == null) return;
+
+        var applied = _wardrobe.ApplyBase(active);
+        _scanStatus = applied > 0
+            ? $"Put '{active.Name}' back on — {applied} item(s) applied."
+            : $"'{active.Name}' was already on.";
     }
 
     private void DrawStripItem()

@@ -74,6 +74,23 @@ public class WardrobeItem : IImageOwner
     public ushort? ModelSetId { get; set; }
 
     /// <summary>
+    /// The second half of the model id, detected alongside <see cref="ModelSetId"/>: a weapon's
+    /// <c>b</c> number, or the material variant of a piece of gear.
+    /// </summary>
+    /// <remarks>
+    /// A weapon's set ID names a whole job's armoury — <c>w2501</c> is all 155 Gunbreaker arms — so
+    /// it takes this as well to say which weapon the mod replaces. Gear reuses a set the same way,
+    /// a variant at a time: <c>e0110</c> is the Hellhound armour at variant 1, the Grey Hound at 2
+    /// and the Shadowhound at 3, each with its own materials under the one model.
+    /// <para>
+    /// One field for both because a slot is either a weapon or it is not, so the two can never
+    /// disagree. Null on items imported before it was recorded, and on mods whose files ship no
+    /// material to read a variant from — both of which a Re-detect fills in where it can.
+    /// </para>
+    /// </remarks>
+    public ushort? ModelBaseId { get; set; }
+
+    /// <summary>
     /// Hairstyle numbers this mod replaces, keyed by model race code ("0101", "1801", …).
     /// </summary>
     /// <remarks>
@@ -358,6 +375,7 @@ public class WardrobeItem : IImageOwner
         GlamourerItemId        = GlamourerItemId,
         GlamourerItemName      = GlamourerItemName,
         ModelSetId             = ModelSetId,
+        ModelBaseId            = ModelBaseId,
         HairIdByRace           = new Dictionary<string, ushort>(HairIdByRace),
         CustomizeIdsByRace     = CustomizeIdsByRace.ToDictionary(kv => kv.Key,
                                                                  kv => new List<ushort>(kv.Value)),
@@ -385,16 +403,24 @@ public class WardrobeItem : IImageOwner
     /// falling back to the item's own id when that is unknown so the item is simply independent
     /// rather than colliding with every other item in its category.
     /// <para>
-    /// Customisation sits between the two: exclusive by default, but a slot can carry more than one
-    /// kind of mod at once — a sculpt and the texture painted on it — so a <see cref="Layer"/> may
-    /// narrow the key to that kind. Blank leaves the item on the bare slot name, exclusive as
-    /// before, which is why an item that has never been given a layer behaves exactly as it did.
+    /// Most customisation slots sit between the two: exclusive by default, but a slot can carry
+    /// more than one kind of mod at once — a sculpt and the texture painted on it — so a
+    /// <see cref="Layer"/> may narrow the key to that kind. Blank leaves the item on the bare slot
+    /// name, exclusive as before, which is why an item that has never been given a layer behaves
+    /// exactly as it did.
+    /// </para>
+    /// <para>
+    /// Hair is the exception, and takes the bare slot name whatever its layer says: a character
+    /// has one hairstyle, so a second hair mod is never a second thing you are wearing. Layered
+    /// hair keys were a real bug — an item imported before layers existed sat on <c>Hair</c> while
+    /// a newer one sat on <c>Hair:sculpt</c>, and neither could displace the other, so the grid
+    /// showed two hairstyles worn at once. See <see cref="EquipSlotEx.SupportsLayers"/>.
     /// </para>
     /// A method rather than a property so it is not written into the saved config.
     /// </remarks>
     public string WornKey() => Slot.IsModCategory()
         ? $"{Slot}:{(string.IsNullOrWhiteSpace(Replaces) ? Id.ToString() : Replaces.Trim())}"
-        : Slot.IsCustomization() && !string.IsNullOrWhiteSpace(Layer)
+        : Slot.SupportsLayers() && !string.IsNullOrWhiteSpace(Layer)
             ? $"{Slot}:{Layer.Trim()}"
             : Slot.ToString();
 }

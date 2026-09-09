@@ -11,29 +11,39 @@ public unsafe class CameraService : IDisposable
     /// <summary>Frames to keep re-applying a preset. ~0.5s at 60fps.</summary>
     private const int DefaultSustainFrames = 30;
 
-    private readonly IFramework _framework;
-    private readonly IPluginLog _log;
+    private readonly IFramework   _framework;
+    private readonly IPluginLog   _log;
+    private readonly IGameConfig  _gameConfig;
+    private readonly IClientState _clientState;
 
     private CameraPreset? _sustaining;
     private int           _framesLeft;
     private bool          _subscribed;
 
-    public CameraService(IFramework framework, IPluginLog log)
+    public CameraService(IFramework framework, IPluginLog log, IGameConfig gameConfig,
+                         IClientState clientState)
     {
-        _framework = framework;
-        _log       = log;
+        _framework   = framework;
+        _log         = log;
+        _gameConfig  = gameConfig;
+        _clientState = clientState;
 
         // Its own hook rather than the sustain's, which only runs while a preset is being held on.
-        // Measuring the range means watching the player pan by hand, which is precisely when
-        // nothing of ours is driving the camera.
-        _framework.Update += OnMeasureUpdate;
+        // Both things watched here happen when nothing of ours is driving the camera: measuring the
+        // pan range means watching the player pan by hand, and the borrowed tilt has to be handed
+        // back when the pose ends, which is not a moment a sustain is running either.
+        _framework.Update += OnWatchUpdate;
     }
 
     /// <summary>Whether the pan range is being watched. Off, the hook below costs one bool test.</summary>
     public bool MeasuringPanRange { get; set; }
 
-    private void OnMeasureUpdate(IFramework _)
+    private void OnWatchUpdate(IFramework _)
     {
+        // Before the measuring check, because giving the tilt back is not conditional on anything
+        // the user has switched on
+        if (_borrowedTilt != null && !InGpose) ReturnTilt("the pose ended");
+
         if (!MeasuringPanRange || !InGpose) return;
 
         var mgr = CameraManager.Instance();
@@ -333,6 +343,134 @@ public unsafe class CameraService : IDisposable
         _rangeDirV     = cam->DirV;
     }
 
+    // ── The camera tilt, which is the player's setting and not ours ───────────
+
+    /// <summary>
+    /// The player's own camera tilt, held while a preset has a different one in force.
+    /// </summary>
+    /// <remarks>
+    /// Null means nothing is borrowed and the setting on the character is the player's own.
+    /// </remarks>
+    private float? _borrowedTilt;
+
+    /// <summary>Whether the warning about falling back to the raw field has been said once.</summary>
+    private bool _tiltFallbackLogged;
+
+    /// <summary>The player's own tilt while a preset's is in force, for the diagnostics to show.</summary>
+    public float? BorrowedTilt => _borrowedTilt;
+
+    /// <summary>
+    /// The UiControl option the camera tilt lives in — the Ctrl+Up/Down "Camera Tilt" control.
+    /// </summary>
+    /// <remarks>
+    /// Not camera state. It is a saved setting, kept per character in that character's
+    /// <c>CONTROL0.DAT</c>, which is why a preset that changes it and walks away leaves the player
+    /// with a camera that is still tilted the next time they log in — and why a preset composed on
+    /// one character frames low on another whose tilt differs.
+    /// </remarks>
+    private const string TiltOption = "TiltOffset";
+
+    /// <summary>Reads the character's camera tilt from the game's own settings.</summary>
+    private bool TryReadTilt(out float value)
+    {
+        value = 0f;
+        if (!_clientState.IsLoggedIn) return false;
+
+        try
+        {
+            return _gameConfig.UiControl.TryGetFloat(TiltOption, out value);
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, "[Wardrobe] Camera: could not read the character's camera tilt setting.");
+            return false;
+        }
+    }
+
+    /// <summary>Writes the character's camera tilt through the game rather than into the struct.</summary>
+    /// <remarks>
+    /// Writing <c>Camera+0x1E4</c> directly does change the camera, but the game holds the setting
+    /// elsewhere and saves that copy — so a struct write is both undone at the game's convenience
+    /// and, worse, sometimes persisted to disk as though the player had chosen it. Going through the
+    /// game's own setter means one place holds the value, and putting it back is a write of the same
+    /// kind rather than a hope that nothing noticed.
+    /// </remarks>
+    private bool WriteTilt(float value)
+    {
+        try
+        {
+            _gameConfig.UiControl.Set(TiltOption, value);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _log.Warning(ex, $"[Wardrobe] Camera: could not set the camera tilt to {value:F5}.");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Puts a preset's tilt in force, remembering the player's own the first time it is displaced.
+    /// </summary>
+    /// <remarks>
+    /// Only the first call of a pose captures: every frame of a sustain comes through here, and a
+    /// capture on any but the first would record the value this service had just written and hand
+    /// that back as though it were the player's.
+    /// </remarks>
+    private void BorrowTilt(float value, Camera* cam)
+    {
+        if (!TryReadTilt(out var current))
+        {
+            // The setting could not be read, so there is nothing to give back later and no way to
+            // know whether this is a change at all. Write the field the way it was written before
+            // any of this, which is worse — it can be saved to disk as the player's own — but is at
+            // least the tilt the preset asked for rather than silently no tilt at all
+            cam->TiltOffset = value;
+
+            if (!_tiltFallbackLogged)
+            {
+                _tiltFallbackLogged = true;
+                _log.Warning("[Wardrobe] Camera: the camera tilt setting could not be read, so the " +
+                             "preset's tilt was written straight to the camera and cannot be given " +
+                             "back afterwards. Check Character Configuration if a camera stays " +
+                             "tilted after a session.");
+            }
+
+            return;
+        }
+
+        if (_borrowedTilt == null && Math.Abs(current - value) > 1e-6f)
+        {
+            _borrowedTilt = current;
+            _log.Debug($"[Wardrobe] Camera: borrowing the camera tilt — yours is {current:F5}, " +
+                       $"the preset wants {value:F5}. It goes back when the pose ends.");
+        }
+
+        // Every frame of the sustain reaches this, and the setter is the game's rather than a field
+        // write, so only touch it when it would actually change something
+        if (Math.Abs(current - value) > 1e-6f) WriteTilt(value);
+    }
+
+    /// <summary>
+    /// Gives the player their own camera tilt back. Does nothing when none was borrowed.
+    /// </summary>
+    /// <remarks>
+    /// Called when the pose ends and again when the plugin unloads, because the setting outlives
+    /// both: it is written to the character's control settings on disk, so a tilt left behind is not
+    /// a camera that rights itself on the next login but one that does not.
+    /// </remarks>
+    public void ReturnTilt(string why)
+    {
+        if (_borrowedTilt is not { } mine) return;
+
+        // Only forgotten once it is actually back. A write that failed leaves the player's own value
+        // held here, so the next attempt — the pose after this one, or the unload — still has it
+        if (!WriteTilt(mine)) return;
+
+        _borrowedTilt = null;
+        _log.Debug($"[Wardrobe] Camera: camera tilt put back to {mine:F5} — {why}.");
+    }
+
     private bool WriteToCamera(CameraPreset preset)
     {
         // Outside GPose this is the gameplay camera, not a separate one, and a preset written into it
@@ -359,7 +497,7 @@ public unsafe class CameraService : IDisposable
             : preset.DirH;
 
         cam->DirV           = Math.Clamp(preset.DirV, cam->DirVMin, cam->DirVMax);
-        cam->TiltOffset     = preset.TiltOffset;
+        BorrowTilt(preset.TiltOffset, cam);
         *GPoseFoV(cam)      = preset.GPoseFoVOffset;
 
         // Anything the player had queued when the preset was applied would otherwise be spent the
@@ -418,7 +556,8 @@ public unsafe class CameraService : IDisposable
         _log.Information($"[Wardrobe]   Pan        0x160 = {*PanH(cam),12:F5}   (Pan Camera, A/D)");
         _log.Information($"[Wardrobe]   Tilt       0x164 = {*PanV(cam),12:F5}   (Tilt Camera, W/S)");
         _log.Information($"[Wardrobe]   Twist      0x170 = {*Twist(cam),12:F5}   (Twist Camera, Q/E — NOT saved by presets)");
-        _log.Information($"[Wardrobe]   TiltOffset 0x1E4 = {cam->TiltOffset,12:F5}   (Character Configuration camera angle, a saved setting)");
+        _log.Information($"[Wardrobe]   TiltOffset 0x1E4 = {cam->TiltOffset,12:F5}   (Character Configuration camera angle, a saved setting)" +
+                         (_borrowedTilt is { } mine ? $" — borrowed; yours is {mine:F5}" : string.Empty));
     }
 
     /// <summary>Writes what a preset actually stored, next to the camera it was taken from.</summary>
@@ -531,13 +670,22 @@ public unsafe class CameraService : IDisposable
         _dumpBaseline = null;
     }
 
+    /// <summary>Stops the sustain's hook. The watch hook above outlives it — see Dispose.</summary>
     private void Unsubscribe()
     {
         if (!_subscribed) return;
         _framework.Update -= OnFrameworkUpdate;
-        _framework.Update -= OnMeasureUpdate;
         _subscribed = false;
     }
 
-    public void Dispose() => Unsubscribe();
+    /// <remarks>
+    /// The tilt goes back first. It is a saved setting on the player's character, so an unload with
+    /// one still borrowed would leave it changed with nothing left running to notice.
+    /// </remarks>
+    public void Dispose()
+    {
+        ReturnTilt("the plugin unloaded");
+        Unsubscribe();
+        _framework.Update -= OnWatchUpdate;
+    }
 }

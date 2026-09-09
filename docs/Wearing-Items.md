@@ -91,6 +91,12 @@ rather than a strip, and it is the way to take a base off without changing any s
 **Unequip All** and **In-Game Look** both take a **Ctrl**-held press to leave the base off for that
 press only.
 
+**Apply Base** is the way back from any of them, on the toolbar and the **Character** menu. It puts
+the active base character on over whatever you are wearing — its design's customisations, then any of
+its items you do not already have on — and takes nothing off. The same button lives in the base
+character's own panel; this is it where you can reach it. With no base set the menu entry is greyed
+and the toolbar button is not drawn at all.
+
 ## In-Game Look
 
 The three take-off entries on the **Character** menu do different things:
@@ -100,6 +106,8 @@ The three take-off entries on the **Character** menu do different things:
 | **Unequip All** | The wardrobe's items off, base character included. |
 | **Strip** | Every equipment slot emptied, stripped down to your base character. |
 | **In-Game Look** | Whatever the game actually has on you — your real gear and glamour. |
+
+**Apply Base** sits beside them and is the only one that adds rather than takes away.
 
 **In-Game Look** takes the wardrobe's items off *and* clears Glamourer, so nothing is overriding the
 character any more. What you see is what everyone else has been seeing all along, including any
@@ -173,8 +181,17 @@ A few things worth knowing:
   alt does not overwrite what your main was wearing, but wearing something on the alt does.
 - **Taking everything off is remembered as taking everything off.** Strip before you log out and
   there is nothing to put back on next time, which is the point.
-- **It is worn over what you have on**, exactly as pressing Wear on an outfit is. Nothing is
-  stripped first.
+- **A hidden hat or a put-away weapon is remembered as hidden.** Both are read out of Glamourer when
+  the record is written, and put back the same way, so a hood that hid the hair does not come back as
+  a hat. The offer says so — *the headgear was hidden* — rather than leaving you to notice. If
+  Glamourer cannot be read for one of them the record says nothing about it, and the restore leaves
+  that toggle exactly as it finds it; the plugin log names which of the two it was.
+- **It goes on exactly as pressing Wear on the outfit would**, including that outfit's answer to
+  [Take everything else off first](Outfits.md#wearing-over-or-instead-of). Normally that means it is
+  worn over what you have on and nothing is cleared. If the look came from an outfit that clears the
+  slots it has nothing for, the restore clears them too — and leaves off the plain gear the record
+  picked up for those slots, since that gear is what wearing the outfit would have taken off. The
+  record itself still keeps it; the outfit's answer can change between one login and the next.
 - **Screenshot sessions are ignored.** A session dresses your character one item at a time, and none
   of those is a look you chose.
 

@@ -34,6 +34,20 @@ public class GlamourerIpc : IDisposable
     // stains must be List<byte> (not byte[]) — byte[] serializes as base64 which Glamourer can't deserialize
     private readonly ICallGateSubscriber<int, byte, ulong, List<byte>, uint, ulong, int> _setItem;
 
+    // SetBonusItem(objectIndex, slot, bonusItemId, key, applyFlags) → GlamourerApiEc
+    //
+    // Facewear's equivalent of SetItem, and the only way to put a pair of glasses on: the bonus
+    // slots are not in the equipment enum SetItem takes. The id is a Glasses sheet row, and 0 is
+    // that slot's own "wear nothing" rather than an invisible item — see SetItem below.
+    //
+    // Signature read off Glamourer.Api 1.6.1.7 rather than guessed: ApiBonusSlot and ApiEquipSlot
+    // are both byte-backed, ApplyFlag is a ulong, GlamourerApiEc an int. The label carries no .V
+    // suffix, unlike SetItem.V3 and SetBonusItemName.V2 beside it.
+    private readonly ICallGateSubscriber<int, byte, ulong, uint, ulong, int> _setBonusItem;
+
+    /// <summary>Glamourer's <c>ApiBonusSlot.Glasses</c>. The only bonus slot the game has.</summary>
+    private const byte BonusSlotGlasses = 1;
+
     // SetMetaState(objectIndex, types, newValue, key, flags) → GlamourerApiEc
     // types is a MetaFlag bitfield: Wetness=0x01, HatState=0x02, VisorState=0x04, WeaponState=0x08
     private readonly ICallGateSubscriber<int, ulong, bool, uint, ulong, int> _setMetaState;
@@ -91,6 +105,7 @@ public class GlamourerIpc : IDisposable
         _applyState     = pi.GetIpcSubscriber<object, int, uint, ulong, int>("Glamourer.ApplyState");
         _revertState    = pi.GetIpcSubscriber<int, uint, ulong, int>("Glamourer.RevertState");
         _setItem        = pi.GetIpcSubscriber<int, byte, ulong, List<byte>, uint, ulong, int>("Glamourer.SetItem.V3");
+        _setBonusItem   = pi.GetIpcSubscriber<int, byte, ulong, uint, ulong, int>("Glamourer.SetBonusItem");
         _setMetaState   = pi.GetIpcSubscriber<int, ulong, bool, uint, ulong, int>("Glamourer.SetMetaState");
         _getDesignList  = pi.GetIpcSubscriber<Dictionary<Guid, string>>("Glamourer.GetDesignList.V2");
         _applyDesign    = pi.GetIpcSubscriber<Guid, int, uint, ulong, int>("Glamourer.ApplyDesign");
@@ -182,6 +197,9 @@ public class GlamourerIpc : IDisposable
                     entry["Stain"]?.Value<byte>()  ?? 0,
                     entry["Stain2"]?.Value<byte>() ?? 0);
             }
+
+            if (FindBonusItemId(state) is { } facewear && facewear != 0)
+                result[EquipSlot.Facewear] = (facewear, 0, 0);
         }
         catch (Exception ex)
         {
@@ -240,6 +258,60 @@ public class GlamourerIpc : IDisposable
                          $"{string.Join(", ", customize.Properties().Select(p => p.Name))}");
         return null;
     }
+
+    /// <summary>Spellings a bonus block might be under, best first.</summary>
+    private static readonly string[] BonusBlockKeys = { "Bonus", "BonusItems", "BonusItem" };
+
+    /// <summary>Spellings the glasses entry inside it might be under.</summary>
+    private static readonly string[] GlassesKeys = { "Glasses", "GlassesId", "BonusId" };
+
+    /// <summary>
+    /// The facewear id in a Glamourer state, or null when the state does not carry one.
+    /// </summary>
+    /// <remarks>
+    /// Written against strings read out of Glamourer 1.6.1.7's assembly — <c>Bonus</c>,
+    /// <c>Glasses</c>, <c>GlassesId</c>, <c>BonusId</c> — rather than against a documented layout,
+    /// because the state JSON has none. That is the same footing the hat and weapon flags above are
+    /// on, and it is handled the same way: several spellings are tried, both the wrapped
+    /// <c>{ "ItemId": n }</c> shape and a bare number are accepted, and a miss logs the keys that
+    /// were actually there, once, so one run in game says what the real shape is.
+    /// <para>
+    /// Only ever read. Wearing facewear goes through <see cref="SetBonusItem"/>, whose signature is
+    /// verified, so a wrong guess here costs the worn badge and the last-worn record for facewear
+    /// and nothing else.
+    /// </para>
+    /// </remarks>
+    private ulong? FindBonusItemId(JObject state)
+    {
+        foreach (var blockKey in BonusBlockKeys)
+        {
+            if (state[blockKey] is not JObject block) continue;
+
+            foreach (var key in GlassesKeys)
+            {
+                if (block[key] is not { } token) continue;
+                return ReadBonusId(token);
+            }
+        }
+
+        // Some layouts may hang the slot straight off the state rather than off a block of its own
+        foreach (var key in GlassesKeys)
+            if (state[key] is { } token)
+                return ReadBonusId(token);
+
+        if (_loggedCustomizeMisses.Add("bonus item"))
+            _log.Debug("[Wardrobe] No bonus item block in Glamourer state. Keys present: " +
+                       $"{string.Join(", ", state.Properties().Select(p => p.Name))}");
+        return null;
+    }
+
+    /// <summary>Reads a bonus id out of either the wrapped or the bare shape.</summary>
+    private static ulong? ReadBonusId(JToken token) => token switch
+    {
+        JObject wrapped => wrapped["ItemId"]?.Value<ulong>() ?? wrapped["Value"]?.Value<ulong>(),
+        { Type: JTokenType.Integer } => token.Value<ulong>(),
+        _ => null,
+    };
 
     /// <summary>An integer out of a Glamourer Customize block, or null when it is not there.</summary>
     private int? CustomizeInt(JObject customize, string[] keys, string what) =>
@@ -1120,8 +1192,15 @@ public class GlamourerIpc : IDisposable
     /// </summary>
     /// <param name="stain1">Primary dye channel, 0 for undyed.</param>
     /// <param name="stain2">Secondary dye channel, 0 for undyed.</param>
+    /// <remarks>
+    /// Facewear is handed to <see cref="SetBonusItem"/> instead. Every caller that dresses a slot
+    /// comes through here, so the fork lives here rather than in each of them, and the dyes are
+    /// dropped on the way: facewear takes no dye channel of its own.
+    /// </remarks>
     public bool SetItem(EquipSlot slot, ulong itemId, byte stain1 = 0, byte stain2 = 0)
     {
+        if (slot.IsFacewear()) return SetBonusItem(itemId);
+
         if (_objects.LocalPlayer == null)
         {
             _log.Warning("[Wardrobe] Glamourer SetItem: local player is null");
@@ -1151,6 +1230,48 @@ public class GlamourerIpc : IDisposable
     }
 
     /// <summary>
+    /// Put a pair of facewear on the local player, or take one off with id 0.
+    /// </summary>
+    /// <remarks>
+    /// The id is a row of the game's <c>Glasses</c> sheet, not an <c>Item</c> row — see
+    /// <see cref="Models.EquipSlot.Facewear"/> for why those are different numbering spaces.
+    /// <para>
+    /// A Glamourer too old to have registered the call throws on invoke rather than returning an
+    /// error code, which is caught here and reported once: facewear is the only thing that stops
+    /// working, and everything else the wardrobe does goes on as before.
+    /// </para>
+    /// </remarks>
+    public bool SetBonusItem(ulong facewearId)
+    {
+        if (_objects.LocalPlayer == null)
+        {
+            _log.Warning("[Wardrobe] Glamourer SetBonusItem: local player is null");
+            return false;
+        }
+
+        try
+        {
+            var ec = _setBonusItem.InvokeFunc(PlayerIndex, BonusSlotGlasses, facewearId, 0u, 0uL);
+            _log.Debug($"[Wardrobe] Glamourer SetBonusItem facewearId={facewearId} → ec={ec}");
+            return ec == 0;
+        }
+        catch (Exception ex)
+        {
+            if (!_loggedBonusFailure)
+            {
+                _loggedBonusFailure = true;
+                _log.Warning(ex, "[Wardrobe] Glamourer SetBonusItem threw — facewear needs a " +
+                                 "Glamourer with the bonus item API registered. Verified present " +
+                                 "in 1.6.1.7; which older version added it is not known here.");
+            }
+            return false;
+        }
+    }
+
+    /// <summary>Set once, so a Glamourer without the bonus API does not fill the log.</summary>
+    private bool _loggedBonusFailure;
+
+    /// <summary>
     /// Show or hide the weapon model on the local player via Glamourer's WeaponState meta flag.
     /// Pass false to hide, true to restore.
     /// </summary>
@@ -1162,9 +1283,11 @@ public class GlamourerIpc : IDisposable
     /// <remarks>
     /// Needed so the plugin can put weapon visibility back the way the user had it, rather than
     /// assuming it was visible — plenty of people keep weapons hidden permanently.
-    /// The state layout is undocumented and turned out not to be top-level, so rather than guess a
-    /// path this searches for a property named after the weapon anywhere in the object, accepting
-    /// either a bare bool or Glamourer's nested { "Show": bool } shape.
+    /// The known path is tried first, as the hat's is: <c>Equipment.Weapon.Show</c>, beside the hat's
+    /// own flag in what <c>DesignBase.SerializeEquipment</c> writes. The search behind it is how this
+    /// was written before that layout was confirmed, and is kept for the same reason the hat keeps
+    /// one — it accepts either a bare bool or the nested { "Show": bool } shape, anywhere in the
+    /// object, so a move within the state does not silently turn the answer into "unknown".
     /// </remarks>
     public bool? GetWeaponVisible()
     {
@@ -1173,6 +1296,9 @@ public class GlamourerIpc : IDisposable
         {
             var (ec, state) = _getState.InvokeFunc(PlayerIndex, 0u);
             if (ec != 0 || state == null) return null;
+
+            if (state["Equipment"]?["Weapon"]?["Show"] is { Type: JTokenType.Boolean } shown)
+                return shown.Value<bool>();
 
             var found = FindWeaponVisibility(state);
             if (found.HasValue) return found;
@@ -1364,6 +1490,10 @@ public class GlamourerIpc : IDisposable
     /// </remarks>
     public bool SetSlotToNothing(EquipSlot slot)
     {
+        // The bonus slot has a real empty of its own, so facewear has only one kind of empty and
+        // this is it — no sentinel to compute, and nothing invisible left sitting in the slot.
+        if (slot.IsFacewear()) return SetBonusItem(0);
+
         if (slot is EquipSlot.MainHand or EquipSlot.OffHand)
         {
             _log.Debug($"[Wardrobe] SetSlotToNothing: {slot} is a weapon slot — not supported");

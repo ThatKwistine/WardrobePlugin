@@ -52,6 +52,22 @@ public class WardrobeProfile
     /// </remarks>
     public Dictionary<string, Guid> WornItems { get; set; } = new();
 
+    /// <summary>
+    /// Worn items whose mods were switched on without their game item being equipped.
+    /// </summary>
+    /// <remarks>
+    /// A mod attached to a glamour plate is applied this way: the plate puts the gear on and the mod
+    /// only re-skins it, so nothing was equipped for the item. Taking it off has to know that, or it
+    /// would empty a slot it never filled and strip the plate's own piece off the character — the
+    /// same failure the <c>GlamourerItemId</c> check in <c>UnwearItem</c> exists to prevent for mods
+    /// that never had an item at all.
+    /// <para>
+    /// Kept beside <see cref="WornItems"/> and cleared with it, and it does not have to be right for
+    /// anything to work: an id missing from here only means the slot is reverted as it always was.
+    /// </para>
+    /// </remarks>
+    public List<Guid> WornModsOnly { get; set; } = new();
+
     /// <summary>The look this character was last seen in. See <see cref="Services.LastWornService"/>.</summary>
     public WornSnapshot? LastWorn { get; set; }
 

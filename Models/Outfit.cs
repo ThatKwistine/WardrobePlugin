@@ -76,6 +76,11 @@ public class Outfit : IImageOwner
     public List<string> ExtraImages { get; set; } = new();
 
     /// <summary>Wardrobe item IDs in this outfit. Items deleted since are skipped when worn.</summary>
+    /// <remarks>
+    /// On a glamour plate these are the mods that belong with it rather than pieces of it: the plate
+    /// owns the gear and the wardrobe owns Penumbra, so this is where a vanilla gear upscale is
+    /// attached. See <see cref="PlateItemsEquip"/> for why they are applied without being equipped.
+    /// </remarks>
     public List<Guid> ItemIds { get; set; } = new();
 
     /// <summary>
@@ -112,6 +117,23 @@ public class Outfit : IImageOwner
     /// edited in-game, so the wardrobe shows them read-only and keeps them in step by resyncing.
     /// </remarks>
     public int? GlamourPlateId { get; set; }
+
+    /// <summary>
+    /// Equip a plate's attached items as well as enabling their mods.
+    /// </summary>
+    /// <remarks>
+    /// False, because the reason to attach a mod to a plate is nearly always a vanilla gear upscale:
+    /// a mod that re-skins the very pieces the plate is already putting on. Equipping its detected
+    /// item would replace the plate's own piece with whatever the mod happened to be detected as,
+    /// which is the one thing an upscale must not do — and after an in-game apply it would put a
+    /// Glamourer override back over the plate the revert had just cleared to show.
+    /// <para>
+    /// Turn it on for a plate whose attached items really are pieces in their own right, worn
+    /// alongside the plate rather than over it. Only read for plate outfits; an ordinary outfit
+    /// equips its items and always has.
+    /// </para>
+    /// </remarks>
+    public bool PlateItemsEquip { get; set; }
 
     /// <summary>When the contents were last read from the game, for the resync controls to show.</summary>
     /// <remarks>
@@ -197,6 +219,22 @@ public class Outfit : IImageOwner
     /// <inheritdoc cref="HatVisible" path="/remarks"/>
     public bool? WeaponVisible { get; set; }
 
+    /// <summary>Empty the slots this outfit has nothing for, rather than dressing over what is worn.</summary>
+    /// <remarks>
+    /// False, which is what wearing an outfit has always done: its own pieces go on and every slot it
+    /// has nothing for is left as it was found, so one outfit can be worn over another on purpose.
+    /// That is the wrong answer for a look that is meant to be the whole outfit — worn over something
+    /// with a coat in it, the coat is still there, in a slot the new outfit never claimed.
+    /// <para>
+    /// True empties exactly those unclaimed slots on the way in — not a strip, which would take off
+    /// the pieces the outfit is about to put back on and leave the character bare in between. The
+    /// base character keeps its slots, and emotes, VFX and mounts keep running. Per outfit rather than
+    /// one setting for all of them, because whether a look is complete or a layer is a fact about that
+    /// look — a full outfit wants this on, a pair of earrings saved as an outfit does not.
+    /// </para>
+    /// </remarks>
+    public bool ClearSlotsFirst { get; set; }
+
     /// <inheritdoc cref="WardrobeItem.SharedFromId"/>
     public Guid? SharedFromId { get; set; }
 
@@ -234,6 +272,7 @@ public class Outfit : IImageOwner
             DesignAppliesHairstyle = DesignAppliesHairstyle,
             HatVisible             = HatVisible,
             WeaponVisible          = WeaponVisible,
+            ClearSlotsFirst        = ClearSlotsFirst,
             SharedFromId           = SharedFromId,
             CopiedFromId           = Id,
             Hidden                 = Hidden,
