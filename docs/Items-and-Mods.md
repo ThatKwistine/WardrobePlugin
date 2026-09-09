@@ -184,9 +184,9 @@ Two things about facewear differ from gear, both because the game says so:
   list, so the same number means a different thing in each. Everything that stores one stores the
   slot beside it.
 
-Wearing facewear needs a Glamourer with the bonus-item API — 1.3.0.0 and later. Everything else in
-the wardrobe works with an older one; only facewear stops, and it says so in the log rather than
-failing quietly.
+Wearing facewear needs a Glamourer with the bonus-item API. It is there in 1.6.1.7; how far back it
+goes has not been checked. Everything else in the wardrobe works with an older one — only facewear
+stops, and it says so in the log rather than failing quietly.
 
 ## Setting the game item by hand
 

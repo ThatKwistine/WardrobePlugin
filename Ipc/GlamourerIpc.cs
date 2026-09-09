@@ -1261,7 +1261,8 @@ public class GlamourerIpc : IDisposable
             {
                 _loggedBonusFailure = true;
                 _log.Warning(ex, "[Wardrobe] Glamourer SetBonusItem threw — facewear needs a " +
-                                 "Glamourer with the bonus item API (1.3.0.0 and later)");
+                                 "Glamourer with the bonus item API registered. Verified present " +
+                                 "in 1.6.1.7; which older version added it is not known here.");
             }
             return false;
         }
