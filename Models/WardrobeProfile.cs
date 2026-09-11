@@ -69,7 +69,18 @@ public class WardrobeProfile
     public List<Guid> WornModsOnly { get; set; } = new();
 
     /// <summary>The look this character was last seen in. See <see cref="Services.LastWornService"/>.</summary>
+    /// <remarks>
+    /// Held here so every reader sees it through the profile, but kept out of the config file: it is
+    /// rewritten every half minute the look changes, and writing it meant writing the whole wardrobe
+    /// out with it — several megabytes on the game's thread, felt as a stutter every thirty seconds.
+    /// It lives in a file of its own, read and written by <see cref="Configuration.LoadLastWorn"/>
+    /// and <see cref="Configuration.SaveLastWorn"/>. Still read from the config when present, so a
+    /// record written before the split is carried over rather than lost.
+    /// </remarks>
     public WornSnapshot? LastWorn { get; set; }
+
+    /// <summary>Newtonsoft's opt-out for <see cref="LastWorn"/>: loaded if present, never written.</summary>
+    public bool ShouldSerializeLastWorn() => false;
 
     public List<BaseCharacter> BaseCharacters       { get; set; } = new();
     public Guid?               ActiveBaseCharacterId { get; set; }

@@ -775,6 +775,7 @@ public partial class PluginUi
                         "The mods and the pictures on disk are untouched."))
                 {
                     _config.Profiles.Remove(profile);
+                    Configuration.DeleteLastWornFile(profile);
                     if (active) _config.ActiveProfileId = _config.Profiles[0].Id;
                     _config.Save();
 

@@ -99,7 +99,11 @@ public sealed class Plugin : IDalamudPlugin
             // the first load after the last-worn record arrived, or after a crash that took the game
             // down between a wear and the next capture — from then on LastWornService keeps a fuller
             // record than this, made while Glamourer was still there to be read.
-            if (_config.LastWorn == null) _config.LastWorn = LastWornFromWornItems();
+            if (_config.LastWorn == null)
+            {
+                _config.LastWorn = LastWornFromWornItems();
+                _config.SaveLastWorn();
+            }
 
             _config.WornItems.Clear();
             _config.WornModsOnly.Clear();

@@ -71,7 +71,7 @@ authoritative reference for these labels and signatures — check it before assu
 | `Penumbra.TrySetModSettings.V5` | Set a **Multi**-select option group (full list at once) |
 | `Penumbra.GetModDirectory` | Get the Penumbra mods root folder path |
 | `Penumbra.RedrawObject.V5` | Force a redraw of the local player |
-| `Penumbra.GameObjectRedrawn.V3` | Event fired after a redraw completes |
+| `Penumbra.GameObjectRedrawn` | Event fired after a redraw completes |
 
 > **Single vs Multi is not interchangeable.** `TrySetModSetting.V5` sets a group *to* the option you
 > pass — on a Multi group that **replaces** the whole selection rather than adding to it. Looping it

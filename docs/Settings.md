@@ -254,6 +254,11 @@ Underneath is what is remembered right now, with **Put It Back On Now** — the 
 `/wardrobe restore` does — and **Forget It**, which throws the record away without changing anything
 about your character.
 
+The record is kept in a small file of its own, one per wardrobe, under
+`%AppData%\XIVLauncher\pluginConfigs\WardrobePlugin\LastWorn\`, rather than in the config. It is
+rewritten every half minute the look changes, and it is not part of the hourly backup: it describes
+the moment, not the wardrobe, and is made again half a minute after the next login.
+
 ---
 
 ## Base character

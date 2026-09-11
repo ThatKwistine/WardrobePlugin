@@ -77,17 +77,12 @@ public class WardrobeService : IDisposable
     /// <see cref="BaseCharacter.KeepDesignApplied"/> the design is a standing instruction rather
     /// than something applied at moments, which is what makes a design-only base — no wardrobe
     /// items at all — hold on its own.
-    /// <para>
-    /// Restricted to the player, unlike the item re-apply it sits above. That one is old enough to
-    /// be left as it is; a new path that fires a Glamourer apply for every passer-by redrawing in a
-    /// crowded zone would be doing real work for no one.
-    /// </para>
     /// </remarks>
-    private void ReapplyBaseDesign(int objectIndex)
+    /// <returns>Whether a design was applied.</returns>
+    private bool ReapplyBaseDesign()
     {
-        if (objectIndex != PlayerObjectIndex) return;
         if (_config.ActiveBaseCharacter is not { KeepDesignApplied: true, DesignId: { } designId } baseChar)
-            return;
+            return false;
 
         var applied = ApplyDesign(designId, baseChar.DesignAppliesEquipment,
             baseChar.DesignAppliesHairstyle, $"Base character '{baseChar.Name}'");
@@ -97,6 +92,7 @@ public class WardrobeService : IDisposable
         else
             _log.Warning($"[Wardrobe] Base character '{baseChar.Name}': could not put design " +
                          $"'{baseChar.DesignName}' back after a redraw — it may have been deleted in Glamourer.");
+        return applied;
     }
 
     /// <summary>Puts back the designs worn customisation items ask for, after a redraw.</summary>
@@ -109,35 +105,66 @@ public class WardrobeService : IDisposable
     /// face and a skin each naming a different one, and nobody wears their character two ways at once.
     /// </para>
     /// </remarks>
-    private void ReapplyItemDesigns(int objectIndex)
+    /// <returns>Whether any design was applied.</returns>
+    private bool ReapplyItemDesigns()
     {
-        if (objectIndex != PlayerObjectIndex) return;
-
+        var applied = false;
         foreach (var id in _config.WornItems.Values.ToList())
         {
             var item = _config.WardrobeItems.Find(x => x.Id == id);
-            if (item is { DesignId: not null }) ApplyItemDesign(item);
+            if (item is { DesignId: not null }) applied |= ApplyItemDesign(item);
         }
+        return applied;
     }
 
     /// <summary>The local player's game object index, which is what Penumbra reports a redraw of.</summary>
     private const int PlayerObjectIndex = 0;
 
+    /// <summary>How soon after putting a design back on a redraw this will put one back again.</summary>
+    /// <remarks>
+    /// A design with Glamourer's own "force redraw" ticked redraws the character every time it is
+    /// applied, whether or not anything changed — and that redraw lands straight back in
+    /// <see cref="OnPlayerRedrawn"/>, which would apply the design again, forever. The redraw a
+    /// design asks for arrives within a frame or two of the apply, so a short window after one
+    /// catches it; a redraw that genuinely comes later, from a mod toggle or a zone change, is
+    /// outside it and puts the design back as normal.
+    /// </remarks>
+    private static readonly TimeSpan DesignReapplyCooldown = TimeSpan.FromSeconds(2);
+
+    private DateTime _lastDesignReapply = DateTime.MinValue;
+
     /// <summary>
-    /// Re-applies Glamourer items after any Penumbra redraw that might have reset visual state.
+    /// Re-applies Glamourer items after a Penumbra redraw of the player that might have reset
+    /// visual state.
     /// </summary>
+    /// <remarks>
+    /// The player only: Penumbra reports every object it redraws, and a Glamourer call for each
+    /// passer-by rebuilding in a crowded zone would be work done for no one — none of what is
+    /// put back here is on them anyway.
+    /// </remarks>
     private void OnPlayerRedrawn(int objectIndex)
     {
-        // Before the worn items below, so an item still wins the slot it is in — the base design is
-        // the look underneath, exactly as it is in ApplyBase
-        ReapplyBaseDesign(objectIndex);
+        if (objectIndex != PlayerObjectIndex) return;
 
-        // And after it, for the same reason it goes after the base design in ApplyBase: a worn
-        // sculpt's design is the more specific answer. Needed at all because wearing a customisation
-        // item asks for a redraw by default, so the design applied during the wear lands a frame or
-        // two before the base design goes back on over the top of it — the same trap the outfit's hat
-        // and weapon toggles fell into, and fixed the same way.
-        ReapplyItemDesigns(objectIndex);
+        if (DateTime.UtcNow - _lastDesignReapply >= DesignReapplyCooldown)
+        {
+            // Before the worn items below, so an item still wins the slot it is in — the base design
+            // is the look underneath, exactly as it is in ApplyBase
+            var appliedDesign = ReapplyBaseDesign();
+
+            // And after it, for the same reason it goes after the base design in ApplyBase: a worn
+            // sculpt's design is the more specific answer. Needed at all because wearing a
+            // customisation item asks for a redraw by default, so the design applied during the wear
+            // lands a frame or two before the base design goes back on over the top of it — the same
+            // trap the outfit's hat and weapon toggles fell into, and fixed the same way.
+            appliedDesign |= ReapplyItemDesigns();
+
+            if (appliedDesign) _lastDesignReapply = DateTime.UtcNow;
+        }
+        else
+        {
+            _log.Debug("[Wardrobe] Redraw within the design cooldown; designs left as they are");
+        }
 
         // Wanted twice below: for the dyes the worn items carry, and for the outfit's own say over
         // the hat and the weapon, which is put back at the end whether it has any items or not
@@ -659,13 +686,14 @@ public class WardrobeService : IDisposable
     /// working item off the character to punish a broken link.
     /// </para>
     /// </remarks>
-    private void ApplyItemDesign(WardrobeItem item)
+    /// <returns>Whether the design was applied.</returns>
+    private bool ApplyItemDesign(WardrobeItem item)
     {
         // Only where the field is offered. An item moved to a gear slot keeps whatever design was
         // picked for it — that was a deliberate choice, not a detected value, so it is left alone
         // rather than thrown away — but it stays dormant until the item is customisation again.
-        if (!item.Slot.IsCustomization()) return;
-        if (item.DesignId is not { } designId) return;
+        if (!item.Slot.IsCustomization()) return false;
+        if (item.DesignId is not { } designId) return false;
 
         var applied = ApplyDesign(designId, item.DesignAppliesEquipment,
             item.DesignAppliesHairstyle, item.Name);
@@ -681,6 +709,7 @@ public class WardrobeService : IDisposable
         else
             _log.Warning($"[Wardrobe] '{item.Name}': could not apply design '{item.DesignName}' — " +
                          $"it may have been deleted in Glamourer.");
+        return applied;
     }
 
     /// <summary>

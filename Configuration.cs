@@ -224,8 +224,91 @@ public class Configuration : IPluginConfiguration
     [Newtonsoft.Json.JsonIgnore]
     public WornSnapshot? LastWorn
     {
-        get => ActiveProfile.LastWorn;
-        set => ActiveProfile.LastWorn = value;
+        get { LoadLastWorn(ActiveProfile); return ActiveProfile.LastWorn; }
+        set { LoadLastWorn(ActiveProfile); ActiveProfile.LastWorn = value; }
+    }
+
+    // ── The last-worn file ────────────────────────────────────────────────────
+    //
+    // One small file per wardrobe rather than a field in this one. The record changes every time
+    // the look does and is written down half a minute later, and when it was part of the config
+    // that meant serialising the whole wardrobe — megabytes, on the game's thread — to persist a
+    // few hundred bytes. See WardrobeProfile.LastWorn.
+
+    /// <summary>Wardrobes whose last-worn file has been read this session.</summary>
+    [Newtonsoft.Json.JsonIgnore]
+    private readonly HashSet<Guid> _lastWornLoaded = new();
+
+    private static string LastWornFolder =>
+        Path.Combine(Plugin.PluginInterface.ConfigDirectory.FullName, "LastWorn");
+
+    private static string LastWornPath(WardrobeProfile profile) =>
+        Path.Combine(LastWornFolder, $"{profile.Id}.json");
+
+    /// <summary>
+    /// Reads a wardrobe's last-worn file the first time that wardrobe is asked about it.
+    /// </summary>
+    /// <remarks>
+    /// The file wins over whatever the config carried, because the config stopped being written to
+    /// the moment the file existed — anything still in it is older by construction. A config with a
+    /// record and no file is the one upgrade case, and there the record stands until the next
+    /// capture writes the file. A file that cannot be read is treated as absent for the same reason
+    /// a failed capture is: the previous answer is older but true.
+    /// </remarks>
+    public void LoadLastWorn(WardrobeProfile profile)
+    {
+        if (!_lastWornLoaded.Add(profile.Id)) return;
+
+        var path = LastWornPath(profile);
+        if (!File.Exists(path)) return;
+
+        try
+        {
+            var loaded = Newtonsoft.Json.JsonConvert.DeserializeObject<WornSnapshot>(File.ReadAllText(path));
+            if (loaded != null) profile.LastWorn = loaded;
+        }
+        catch (Exception)
+        {
+            // Left as whatever the config had, which for a config written after the split is nothing
+        }
+    }
+
+    /// <summary>Writes the active wardrobe's last-worn record to its own file, or removes the file when there is none.</summary>
+    /// <remarks>Small enough to stay on the calling thread: a snapshot is an outfit's worth of ids and dyes.</remarks>
+    public void SaveLastWorn()
+    {
+        var profile = ActiveProfile;
+        LoadLastWorn(profile);
+
+        try
+        {
+            var path = LastWornPath(profile);
+            if (profile.LastWorn is { } snapshot)
+            {
+                Directory.CreateDirectory(LastWornFolder);
+                File.WriteAllText(path,
+                    Newtonsoft.Json.JsonConvert.SerializeObject(snapshot, Newtonsoft.Json.Formatting.Indented));
+            }
+            else if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception)
+        {
+            // Nothing here is on the critical path; the next capture tries again
+        }
+    }
+
+    /// <summary>Removes a deleted wardrobe's last-worn file, so it does not outlive the wardrobe.</summary>
+    public static void DeleteLastWornFile(WardrobeProfile profile)
+    {
+        try
+        {
+            var path = LastWornPath(profile);
+            if (File.Exists(path)) File.Delete(path);
+        }
+        catch (Exception) { }
     }
 
     /// <summary>Where this lived before wardrobes could be per-character.</summary>

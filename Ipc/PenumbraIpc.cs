@@ -53,7 +53,9 @@ public class PenumbraIpc : IDisposable
     // RedrawObject.V5(int gameObjectIndex, int redrawType) → void  (index 0 = local player)
     private readonly ICallGateSubscriber<int, int, object?> _redrawObject;
 
-    // GameObjectRedrawn.V3: (nint address, int objectIndex) — fired after async reload completes
+    // GameObjectRedrawn: (nint address, int objectIndex) — fired after async reload completes.
+    // No version suffix: the label has never carried one, and subscribing to a label nobody
+    // provides fails silently rather than loudly, which is how this went unnoticed for so long.
     private readonly ICallGateSubscriber<nint, int, object?> _gameObjectRedrawn;
 
     /// <summary>Fires whenever Penumbra finishes redrawing a game object. Arg = game object index (0 = local player).</summary>
@@ -73,7 +75,7 @@ public class PenumbraIpc : IDisposable
 
         _redrawObject = pi.GetIpcSubscriber<int, int, object?>("Penumbra.RedrawObject.V5");
 
-        _gameObjectRedrawn = pi.GetIpcSubscriber<nint, int, object?>("Penumbra.GameObjectRedrawn.V3");
+        _gameObjectRedrawn = pi.GetIpcSubscriber<nint, int, object?>("Penumbra.GameObjectRedrawn");
         _gameObjectRedrawn.Subscribe(OnGameObjectRedrawn);
 
         _getCollections = pi.GetIpcSubscriber<Dictionary<Guid, string>>(

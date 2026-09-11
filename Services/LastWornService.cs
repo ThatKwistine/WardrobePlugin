@@ -110,7 +110,7 @@ public sealed class LastWornService : IDisposable
         Offer            = null;
         _signature       = string.Empty;
         _config.LastWorn = null;
-        _config.Save();
+        _config.SaveLastWorn();
     }
 
     /// <summary>
@@ -262,9 +262,10 @@ public sealed class LastWornService : IDisposable
 
     /// <summary>Writes the look down, if it has changed since the last time.</summary>
     /// <remarks>
-    /// The comparison is what keeps this off the disk. A config save writes the whole wardrobe out,
-    /// which for a large one is not free, and standing in a city wearing the same thing for an hour
-    /// should cost nothing at all.
+    /// The comparison is what keeps this off the disk: standing in a city wearing the same thing for
+    /// an hour should cost nothing at all. What is written is the record's own small file, never the
+    /// config — that used to be the whole wardrobe serialised on the game's thread every time the
+    /// look changed, felt as a stutter thirty seconds after each change.
     /// </remarks>
     private void Capture(string? name = null, uint world = 0)
     {
@@ -308,7 +309,7 @@ public sealed class LastWornService : IDisposable
 
         _signature       = signature;
         _config.LastWorn = snapshot;
-        _config.Save();
+        _config.SaveLastWorn();
         _log.Debug($"[Wardrobe] Wrote down what {name} is wearing: {snapshot.Look.ItemIds.Count} item(s), " +
                    $"{snapshot.Look.VanillaItems.Count} vanilla piece(s)");
     }
