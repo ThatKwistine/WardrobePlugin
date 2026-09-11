@@ -41,6 +41,34 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 6, 1, 1), "11 September 2026", new List<ChangelogSection>
+        {
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("Your look is put back after a redraw — for the first time.",
+                    "Everything the wardrobe was meant to do after Penumbra redraws you — put " +
+                    "the worn items and their dyes back, the outfit's hat and weapon toggles, and " +
+                    "the base character's design when it asks to be kept on — was listening " +
+                    "for a Penumbra event under a name Penumbra has never used, so none of it ever " +
+                    "ran. It does now.\n\n" +
+                    "Because it runs at all now, it is also held to the player only, and a design " +
+                    "with Glamourer's own force-redraw ticked cannot bounce it into redrawing " +
+                    "forever."),
+
+                new("The half-minute stutter after changing your look is gone.",
+                    "Thirty seconds after any change, the record of what you were last wearing " +
+                    "was written by saving the whole wardrobe — megabytes, on the game's " +
+                    "own thread, felt as a short freeze. The record now has a small file of its " +
+                    "own per wardrobe, and the wardrobe itself is no longer written for it.\n\n" +
+                    "The record you already have carries over; nothing to do."),
+
+                new("Penumbra 1.7.1 and Glamourer 1.7.1 checked.",
+                    "Every call the wardrobe makes was compared against the new builds. Nothing " +
+                    "changed that affects it, and the mods Penumbra 1.7.1 rewrote into its newer " +
+                    "file layout on first launch are read exactly as before."),
+            }),
+        }),
+
         new(new Version(1, 6, 1, 0), "9 September 2026", new List<ChangelogSection>
         {
             new("What's new", new List<ChangelogNote>
