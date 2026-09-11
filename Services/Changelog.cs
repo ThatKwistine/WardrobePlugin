@@ -50,22 +50,13 @@ public static class Changelog
                     "the worn items and their dyes back, the outfit's hat and weapon toggles, and " +
                     "the base character's design when it asks to be kept on — was listening " +
                     "for a Penumbra event under a name Penumbra has never used, so none of it ever " +
-                    "ran. It does now.\n\n" +
+                    "ran. It does now, found while checking the wardrobe against Penumbra 1.7.1 " +
+                    "and Glamourer 1.7.1 — which changed nothing else that affects it.\n\n" +
                     "Because it runs at all now, it is also held to the player only, and a design " +
                     "with Glamourer's own force-redraw ticked cannot bounce it into redrawing " +
-                    "forever."),
-
-                new("The half-minute stutter after changing your look is gone.",
-                    "Thirty seconds after any change, the record of what you were last wearing " +
-                    "was written by saving the whole wardrobe — megabytes, on the game's " +
-                    "own thread, felt as a short freeze. The record now has a small file of its " +
-                    "own per wardrobe, and the wardrobe itself is no longer written for it.\n\n" +
-                    "The record you already have carries over; nothing to do."),
-
-                new("Penumbra 1.7.1 and Glamourer 1.7.1 checked.",
-                    "Every call the wardrobe makes was compared against the new builds. Nothing " +
-                    "changed that affects it, and the mods Penumbra 1.7.1 rewrote into its newer " +
-                    "file layout on first launch are read exactly as before."),
+                    "forever. Along the way, the record of what you were last wearing moved into a " +
+                    "small file of its own, so writing it no longer writes the whole wardrobe out; " +
+                    "the record you already have carries over."),
             }),
         }),
 
