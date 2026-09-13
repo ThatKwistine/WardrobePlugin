@@ -62,24 +62,36 @@ character on two wardrobes would load whichever happened to sit earlier in the l
 ## Copying between wardrobes
 
 Pieces move as **copies**, never as shared references. The reason to put something in a second
-character's wardrobe is usually that it needs to be different there — another size option, another
-collection, another material — so the copy is a template to re-fit, and editing it never touches the
-original.
+character's wardrobe is usually that it needs to be different there — another collection, another
+material — so the copy is a template to re-fit, and editing it never touches the original. A body
+size is the quickest of those edits: the copy keeps its size group, so it is a pick on the card
+rather than a trip through Edit. See [Sizes](Wearing-Items.md#sizes).
 
 Two directions, same result:
 
 - **Pulling.** **Import → From Another Wardrobe** picks a source, lists its items or its outfits, and
-  brings the ticked ones in.
-- **Pushing.** Right-click a card's Wear button, or use **Select** and the panel's **Copy to
-  wardrobe**, to send from where you are.
+  brings the ticked ones in. The item list can be narrowed to a slot, ordered by slot, by name or
+  newest first, and searched by name, tag, note, game item or mod. Each row carries a small picture
+  (hover it for a bigger one) unless **Pictures** is switched off. Variants sit folded under their
+  original, and ticking an original ticks its variants and its linked pieces too — untick any you do
+  not want. **Tag with '…'** puts the source wardrobe's name on everything that arrives, so the copies
+  can be found again once they are mixed in with the rest; it is off unless you turn it on.
+- **Pushing.** Right-click a card and choose **Copy to wardrobe**, or use **Select** and the
+  panel's **Copy to wardrobe**, to send from where you are. What you send takes its variants and linked pieces along,
+  and the menu says how many that adds.
 
 What comes with a copy:
 
-- the mods, their options, the game item, the dyes, the notes and the tags
-- the pictures, as the same files on disk — the picture is of the piece, and it is the same piece
-- **links and variant grouping, within the batch.** Copy an item together with its variants and they
-  arrive still grouped; a link to something you left behind is dropped rather than left pointing at
-  an item the other wardrobe has never heard of.
+- the mods, their options and size groups, the game item, the dyes, the notes and the tags
+- the pictures, as the same files on disk — the picture is of the piece, and it is the same piece.
+  Tick **Copy pictures too** (in the Import panel, or at the top of the Copy to wardrobe menu) and
+  the files are copied into the other wardrobe's own pictures folder instead, so the copy has
+  pictures of its own to re-shoot or tidy without touching the original's. One setting for both
+  directions, off unless you turn it on, and it does nothing for a wardrobe with no folder of its own.
+- **links and variant grouping.** They are pointed at the other wardrobe's copies — the ones made in
+  the same batch, or the ones already there from an earlier one, so a variant brought over a week
+  after its original still folds under it. A link to something the other wardrobe has never seen is
+  dropped rather than left pointing at an item it cannot find.
 
 What does not:
 
@@ -88,9 +100,17 @@ What does not:
 - **an outfit's glamour plate link.** A plate number names a slot in one character's own twenty, so a
   copy claiming plate 4 because the original was plate 4 would be claiming a sync that never happened.
 
-Copying an outfit brings whatever it is made of, reusing anything you have already taken across
-rather than making a second copy of it. Anything the target already holds a copy of is skipped, so
-using the menu twice does not build a wardrobe of duplicates.
+Copying an outfit brings whatever it is made of, reusing anything already there rather than making a
+second copy of it; the outfit's row says how many of its pieces that is, and hovering it lists them.
+
+Anything the other wardrobe already has is greyed out and skipped, so using the menu twice does not
+build a wardrobe of duplicates. "Already has" is read four ways: it holds a copy of the piece, it
+holds the original the piece was copied from, both are copies of the same original, or it holds the
+**same mod at the same options in the same slot** — which is what two wardrobes made from the same
+Penumbra install end up with when each character imported the mod on their own. The row's tooltip
+says which of those it found and which item it matched. Names are never compared: two characters can
+each have a "Summer dress" that are different dresses, and a name is the first thing anybody changes
+on a copy.
 
 ## Things worth knowing
 

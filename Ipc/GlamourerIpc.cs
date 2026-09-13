@@ -992,7 +992,7 @@ public class GlamourerIpc : IDisposable
             {
                 try
                 {
-                    materials[key] = JToken.Parse(json);
+                    SetMaterialRow(materials, key, JToken.Parse(json));
                 }
                 catch (Exception ex)
                 {
@@ -1010,6 +1010,40 @@ public class GlamourerIpc : IDisposable
             _log.Warning(ex, "[Wardrobe] Glamourer ApplyAdvancedDyes failed");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Writes one row into a Materials block under the key Glamourer will read as the same row.
+    /// </summary>
+    /// <remarks>
+    /// A material key is a number, and Glamourer accepts it in any hex spelling — but it writes
+    /// it one way, and that way changed: 1.6 wrote sixteen hex digits, 1.7 writes eight. A row
+    /// captured under the old build is stored as <c>0000000001010100</c>, the state that comes
+    /// back today spells the same row <c>01010100</c>, and setting the stored key on that object
+    /// added a second property rather than replacing the first. Glamourer parsed both to the same
+    /// number and warned, once per apply, "Duplicate material value key 16843264 ... skipped" —
+    /// and skipped the wardrobe's row, so the stored colour never landed.
+    /// <para>
+    /// So the match is numeric: any property that parses to the same key is removed first, and the
+    /// row goes in under Glamourer's current spelling. Rows already stored in the old spelling are
+    /// left as they are — they are read numerically here, so they never need rewriting.
+    /// </para>
+    /// </remarks>
+    private static void SetMaterialRow(JObject materials, string key, JToken row)
+    {
+        if (!uint.TryParse(key, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var packed))
+        {
+            // Not a key the wardrobe understands; hand it over unchanged rather than lose it
+            materials[key] = row;
+            return;
+        }
+
+        foreach (var prop in materials.Properties().ToList())
+            if (uint.TryParse(prop.Name, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var existing) &&
+                existing == packed)
+                prop.Remove();
+
+        materials[packed.ToString("X8", CultureInfo.InvariantCulture)] = row;
     }
 
     /// <summary>

@@ -97,6 +97,21 @@ its items you do not already have on — and takes nothing off. The same button 
 character's own panel; this is it where you can reach it. With no base set the menu entry is greyed
 and the toolbar button is not drawn at all.
 
+## Sizes
+
+An item whose mod has a size group — a bust size, a thigh size — carries it on its card: a small
+**Size: YAB+ M** under the buttons, reading the mod's own option name, with the same entry on the
+right-click menu for a card too short to show it. Open it and the group's options are listed right
+there, in the mod's own words. Pick one and the item's option changes, exactly as it would in Edit,
+and if the item is on it is re-applied on the spot — no redraw, the same as Edit → Save on a worn
+item.
+
+An item with two size groups shows each under the group's own name instead of "Size", so a bust
+and a hips group can be told apart.
+
+Which group is the size is worked out on import for body and legs items, and can be ticked or
+unticked on any group in Edit — see [Size options](Items-and-Mods.md#size-options).
+
 ## In-Game Look
 
 The three take-off entries on the **Character** menu do different things:
@@ -206,8 +221,7 @@ it, a hair mod and the accessory that sits in it.
 
 A linked item's card says so in its button: **Wear +1**, **Unequip +2**. Hovering it lists exactly
 what comes with it. Underneath is **Wear only this** (or **Unequip only this**), which acts on that
-one item and leaves its partners alone. The same action is on the right-click menu of the main
-button.
+one item and leaves its partners alone. The same action is on the card's right-click menu.
 
 Wearing a linked item skips any partner already worn, so nothing is needlessly re-applied.
 Unequipping only takes off the partners that are actually on.

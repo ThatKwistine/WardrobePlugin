@@ -284,6 +284,66 @@ public class WardrobeItem : IImageOwner
     }
 
     /// <summary>
+    /// What this piece is, for telling whether another wardrobe already has it.
+    /// </summary>
+    /// <remarks>
+    /// The slot, the layer, and every mod with the options it is worn at — which is the opposite
+    /// choice from <see cref="ModSignature"/>, and for the opposite reason: there, differing
+    /// options are what make two items variants rather than duplicates; here they are what make
+    /// the red dress a different piece from the blue one. Two wardrobes made from the same
+    /// Penumbra install will hold the same mod at the same options in the same slot, imported
+    /// separately by each character, and nothing on either item points at the other. This is how
+    /// the copy offer sees through that.
+    /// <para>
+    /// The collection is left out. A copy in another character's wardrobe is expected to be
+    /// edited onto that character's collection, and it would be perverse for the edit that makes
+    /// the copy useful to be the edit that makes it stop matching its original.
+    /// </para>
+    /// <para>
+    /// A card with no mod behind it is matched by what it does have: the game item it equips, or
+    /// the design it applies. One with neither returns null, which callers read as "not a piece
+    /// that can be recognised" rather than as a piece every other blank card is equal to.
+    /// </para>
+    /// </remarks>
+    public string? PieceFingerprint()
+    {
+        var mods = new List<string>();
+        foreach (var mod in Mods)
+        {
+            if (string.IsNullOrEmpty(mod.ModDirectory)) continue;
+
+            var singles = mod.Options
+                .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                .Select(kv => $"{kv.Key}={kv.Value}");
+
+            // Tri-states supersede the legacy list when present, exactly as they do on wear
+            var multis = mod.OptionStates.Count > 0
+                ? mod.OptionStates
+                    .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                    .Select(kv => kv.Key + "=" + string.Join(",",
+                        kv.Value.OrderBy(o => o.Key, StringComparer.Ordinal)
+                                .Select(o => $"{o.Key}:{(o.Value ? 1 : 0)}")))
+                : mod.MultiOptions
+                    .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                    .Select(kv => kv.Key + "=" + string.Join(",",
+                        kv.Value.OrderBy(v => v, StringComparer.Ordinal)));
+
+            mods.Add(mod.ModDirectory.ToLowerInvariant() + "|" +
+                     string.Join(";", singles) + "|" + string.Join(";", multis));
+        }
+
+        mods.Sort(StringComparer.Ordinal);
+
+        string body;
+        if (mods.Count > 0)                body = "mods:"   + string.Join("\n", mods);
+        else if (GlamourerItemId is { } g) body = "item:"   + g;
+        else if (DesignId is { } d)        body = "design:" + d;
+        else return null;
+
+        return $"{(int)Slot}|{Layer ?? string.Empty}|{Replaces ?? string.Empty}|{body}";
+    }
+
+    /// <summary>
     /// Whether applying this item forces a Penumbra redraw of the character. Null until the toggle
     /// is touched, which reads as the default for the item's slot.
     /// </summary>

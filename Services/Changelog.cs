@@ -41,6 +41,82 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 6, 2, 0), "13 September 2026", new List<ChangelogSection>
+        {
+            new("What's new", new List<ChangelogNote>
+            {
+                new("Folders.",
+                    "File cards away into folders, on both grids. Once a folder exists a Folders " +
+                    "button joins the filter row beside Worn and Variants, and it works like them: " +
+                    "on, the grid shows one card per folder — a 3x3 of what is inside, the name and " +
+                    "the count — opened by clicking, with Back and the crumbs above the grid to lead " +
+                    "out again; off, every card stands on its own, filed or not. Folders nest on a " +
+                    "slash, take a colour like a style, and search and the other filters look inside " +
+                    "every one of them, with each card saying how much of it matched.\n\n" +
+                    "Underneath, a folder is a tag under Folder/ the same way a style is a tag under " +
+                    "Style/, which is what makes renaming, colours, backups and sharing work on them " +
+                    "for free."),
+                new("Filing, from wherever you are.",
+                    "Add to Folder on the Select bar, Put in folder in Edit Selected and on a card's " +
+                    "right-click menu, and — inside an open folder — Add to this folder, which picks " +
+                    "from the whole wardrobe and can move other folders inside. Filing is a move: a " +
+                    "card leaves whatever folder it was in, and an item's variants go with it. View → " +
+                    "Folders lists every folder with what is in it, makes them ahead of use, and " +
+                    "renames, colours or deletes them. Deleting a folder never deletes what was in it."),
+                new("Sizes on the card.",
+                    "A body mod's size group — YAB+ S / M, Small / Medium / Large, Flat / Big — can " +
+                    "sit on the item's card as a small Size button under the action row, opening " +
+                    "to the group's options by the mod's own names. Picking one sets the option on " +
+                    "the item, exactly as Edit would, and sends it to Penumbra if the item is on. " +
+                    "The same pick is a submenu on the card's right-click menu.\n\n" +
+                    "Which group is the size is a Size option tick under the group in Edit, and " +
+                    "import, mass import and Re-detect tick it for you on body and leg items whose " +
+                    "options plainly read as sizes — never over a tick you took off. A mod whose " +
+                    "sizes are named unusually is a tick away. The guess switches off under " +
+                    "Settings → Importing, and the whole feature under Settings → Size Options."),
+                new("A right-click menu on every item card.",
+                    "Wear or Unequip, Edit, Rename, Favourite, Put in folder, Tags and Styles as tick " +
+                    "lists with a box for a new tag, Select, Size, Screenshot, View picture, Copy to " +
+                    "wardrobe and Delete — without opening the editor. In Select mode, right-clicking " +
+                    "a ticked card acts on the whole selection.\n\n" +
+                    "The full-size picture viewer is on this menu now, as View picture, rather than " +
+                    "on a right-click of the picture itself; the two fought over the click."),
+                new("Import From A Wardrobe knows what you already have.",
+                    "A piece counts as already here when this wardrobe holds a copy of it, the " +
+                    "original it was copied from, another copy of the same original, or the same " +
+                    "mod at the same options in the same slot — however it got here — and the row " +
+                    "says which it found. Variants sit under their original and come along when it " +
+                    "is ticked, with linked pieces; the list filters by slot, sorts by slot, name or " +
+                    "newest, searches mod names, and carries a picture per row. Tag with the source " +
+                    "wardrobe's name if you like, and Copy pictures too gives the copies picture " +
+                    "files of their own in this wardrobe's folder. The Copy to wardrobe menu on a " +
+                    "card reads the same way."),
+                new("Filing by Penumbra folder. Experimental.",
+                    "Turn on Folders From Penumbra under Settings → Grid & Cards and the Folders " +
+                    "panel gains a button that reads where each item's mod sits on Penumbra's mod " +
+                    "list and files the item under the same folder path. Nothing in Penumbra is " +
+                    "changed, and items already in a folder are left there unless you say otherwise."),
+            }),
+
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("Advanced dyes land again under Glamourer 1.7.",
+                    "Glamourer 1.7 spells a material row's key with eight hex digits where 1.6 " +
+                    "used sixteen. A row the wardrobe had stored under the old spelling was sent " +
+                    "back beside the same row in the new one, and Glamourer warned \"Duplicate " +
+                    "material value key … skipped\" for every apply — and skipped the wardrobe's " +
+                    "row, so an outfit's advanced dyes did not go on. Rows are matched by number " +
+                    "now, whichever way they are spelt; nothing stored needs redoing."),
+                new("Copying a piece back to the wardrobe it came from no longer makes a second one.",
+                    "Copy a piece from one wardrobe to another, then pull from the second back into " +
+                    "the first, and the first got a duplicate of its own item. It is recognised as " +
+                    "already there now."),
+                new("Renaming a tag or style reaches outfits.",
+                    "It rewrote the tag on every item and left the old name on every outfit that " +
+                    "carried it, so a renamed style stopped filtering the outfits it was on."),
+            }),
+        }),
+
         new(new Version(1, 6, 1, 1), "11 September 2026", new List<ChangelogSection>
         {
             new("Fixes", new List<ChangelogNote>

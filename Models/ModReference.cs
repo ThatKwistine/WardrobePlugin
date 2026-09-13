@@ -42,6 +42,23 @@ public class ModReference
     /// </remarks>
     public Dictionary<string, Dictionary<string, bool>> OptionStates { get; set; } = new();
 
+    /// <summary>
+    /// Groups of this mod that are a body size, shown on the item's card as a quick pick of their
+    /// own options.
+    /// </summary>
+    /// <remarks>
+    /// Issue #28. A top comes in the sizes its mod ships — "YAB+ S", "YAB+ M", "Bibo+" — and the
+    /// mod's own names are the whole vocabulary: nothing is translated into a size name, since
+    /// mods do not agree on any and the person choosing knows what "YAB+ M" is. Marking a group
+    /// puts its options on the card, two clicks nearer than the edit panel; the item's stored
+    /// options are still what is worn, and the pick writes to them.
+    /// <para>
+    /// A list rather than one name because a body mod can have a bust group and a hips group
+    /// both about the body slot. Usually found on import — see <see cref="Services.SizeGuess"/>.
+    /// </para>
+    /// </remarks>
+    public List<string> SizeGroups { get; set; } = new();
+
     /// <summary>A copy sharing nothing with this one, for putting an item in another wardrobe.</summary>
     /// <remarks>
     /// The dictionaries are rebuilt rather than handed over. The whole point of copying an item
@@ -58,5 +75,6 @@ public class ModReference
         MultiOptions = MultiOptions.ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value)),
         OptionStates = OptionStates.ToDictionary(kv => kv.Key,
                                                  kv => new Dictionary<string, bool>(kv.Value)),
+        SizeGroups   = new List<string>(SizeGroups),
     };
 }

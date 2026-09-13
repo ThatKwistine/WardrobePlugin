@@ -275,4 +275,7 @@ public class SharedMod
     public Dictionary<string, string>                   Options      { get; set; } = new();
     public Dictionary<string, List<string>>             MultiOptions { get; set; } = new();
     public Dictionary<string, Dictionary<string, bool>> OptionStates { get; set; } = new();
+
+    /// <summary>Groups marked as the item's size, by name.</summary>
+    public List<string> SizeGroups { get; set; } = new();
 }

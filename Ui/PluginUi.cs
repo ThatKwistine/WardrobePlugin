@@ -27,6 +27,7 @@ public partial class PluginUi : Window, IDisposable
     private readonly ITextureProvider        _textures;
     private readonly IPluginLog              _log;
     private readonly ItemImportPanel         _panel;
+    private readonly ModAnalysisService      _analysis;
     private readonly ScreenshotSessionService _session;
     private readonly BackupService            _backup;
     private readonly MassImportPanel          _massImport;
@@ -463,12 +464,13 @@ public partial class PluginUi : Window, IDisposable
         ITextureProvider textures, IPluginLog log, ItemImportPanel panel,
         ScreenshotSessionService session, BackupService backup, MassImportPanel massImport,
         SharePanel share, HtmlExportService htmlExport, LastWornService lastWorn,
-        WardrobeProfileService profiles)
+        WardrobeProfileService profiles, ModAnalysisService analysis)
         : base("Wardrobe###WardrobeMain", BaseFlags)
     {
         _config   = config;
         _wardrobe = wardrobe;
         _profiles = profiles;
+        _analysis = analysis;
 
         // The detected-worn markers are item ids from whichever wardrobe was in force when the scan
         // ran. Carried into another wardrobe they match nothing, or — worse — match something else.
@@ -478,6 +480,8 @@ public partial class PluginUi : Window, IDisposable
             _desynced.Clear();
             _selected.Clear();
             _scanStatus = string.Empty;
+            _folderPath       = string.Empty;
+            _outfitFolderPath = string.Empty;
         };
         _textures = textures;
         _log      = log;
@@ -659,7 +663,7 @@ public partial class PluginUi : Window, IDisposable
 
         var totalW  = ImGui.GetContentRegionAvail().X;
         var totalH  = ImGui.GetContentRegionAvail().Y;
-        var rightOpen = _panel.IsOpen || _showImageBrowser || _showTags
+        var rightOpen = _panel.IsOpen || _showImageBrowser || _showTags || _showFolders
                         || _showCameraPresets || _showWardrobeImport
                         || _editingOutfit != null || (_selectMode && _bulkPanelOpen);
 
@@ -695,6 +699,10 @@ public partial class PluginUi : Window, IDisposable
             ImGui.Separator();
             UiLayout.PopWrap();
 
+            // Above the scrolling grid rather than in it, so the row arithmetic under the cards
+            // starts at the top of the child and the way out of a folder never scrolls away
+            DrawFolderCrumbs(_outfitsView);
+
             ImGui.BeginChild("##wardrobeGrid", new Vector2(-1, ImGui.GetContentRegionAvail().Y));
             UiLayout.PushWrap();
             if (_outfitsView) DrawOutfitsGrid();
@@ -726,6 +734,8 @@ public partial class PluginUi : Window, IDisposable
                 DrawOutfitEditPanel();
             else if (_showTags)
                 DrawTagFilter();
+            else if (_showFolders)
+                DrawFoldersPanel();
             else if (_showImageBrowser)
                 DrawImageBrowser();
             else if (_showCameraPresets)
@@ -1865,6 +1875,7 @@ public partial class PluginUi : Window, IDisposable
         var full   = ImGui.GetContentRegionAvail().X;
 
         DrawBulkOutfitCopyActions(chosen);
+        DrawBulkFolderActions(outfits: true);
 
         ImGui.TextUnformatted("Visibility");
         ImGui.TextDisabled("Keeps cards out of the grid without deleting anything. Items, pictures, " +
@@ -2074,6 +2085,8 @@ public partial class PluginUi : Window, IDisposable
             ImGui.SetTooltip(none
                 ? "Tick some items first."
                 : "Opens the share window with these items ticked.");
+
+        DrawBulkBarFolderButton(outfits, none);
 
         UiLayout.SameLineIfRoomForButton(" Done ");
         if (ImGui.Button(" Done ")) ExitSelectMode();
@@ -2287,6 +2300,9 @@ public partial class PluginUi : Window, IDisposable
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
+
+        // Draws its own separator, or nothing at all with folders off
+        DrawBulkFolderActions(outfits: false);
 
         DrawBulkCollectionActions();
 
@@ -2866,6 +2882,8 @@ public partial class PluginUi : Window, IDisposable
                       "as one card, so this is a list of the pieces, not the copies.");
         }
 
+        DrawFoldersRowButton();
+
         DrawSlotButtons();
         DrawSearchAndSort();
         ImGui.Spacing();
@@ -3290,8 +3308,9 @@ public partial class PluginUi : Window, IDisposable
     {
         const StringComparison ci = StringComparison.OrdinalIgnoreCase;
 
+        // A folder tag is searched as it is shown, so "folder" does not match everything filed
         return item.Name.Contains(word, ci)
-            || item.Tags.Any(t => t.Contains(word, ci))
+            || item.Tags.Any(t => Services.PageText.FolderShown(t).Contains(word, ci))
             || item.Mods.Any(m => m.ModName.Contains(word, ci) || m.ModDirectory.Contains(word, ci))
             || (item.GlamourerItemName?.Contains(word, ci) ?? false)
             || (item.Notes?.Contains(word, ci) ?? false);
@@ -3324,7 +3343,7 @@ public partial class PluginUi : Window, IDisposable
         const StringComparison ci = StringComparison.OrdinalIgnoreCase;
 
         if (outfit.Name.Contains(word, ci)) return true;
-        if (outfit.Tags.Any(t => t.Contains(word, ci))) return true;
+        if (outfit.Tags.Any(t => Services.PageText.FolderShown(t).Contains(word, ci))) return true;
         if (outfit.DesignName.Contains(word, ci)) return true;
         if (outfit.VanillaItems.Values.Any(p => p.Name.Contains(word, ci))) return true;
 
@@ -3376,6 +3395,15 @@ public partial class PluginUi : Window, IDisposable
             return "No items yet. Click '+ Import from Mod' to add your first item.";
 
         var filters = ActiveFilters(includeItemFilters: true);
+
+        if (InFolder(false) && filters.Count == 0 && SearchWords().Length == 0)
+            return $"'{_folderPath}' is empty. Select some cards and use Put in folder to fill it.";
+
+        if (_foldersOnly && filters.Count == 0 && SearchWords().Length == 0)
+            return "No folders yet. Select some cards and use Add to Folder to make one.";
+
+        if (_foldersOnly)
+            return "No folder holds anything that matches.";
 
         if (SearchWords().Length > 0)
             return filters.Count > 0
@@ -3711,6 +3739,25 @@ public partial class PluginUi : Window, IDisposable
             return;
         }
 
+        var touched = RetagPath(oldPath, newPath);
+
+        _log.Information($"[Wardrobe] Renamed tag '{oldPath}' to '{newPath}' on {touched} tag(s)");
+        CancelTagRename();
+    }
+
+    /// <summary>
+    /// Moves a tag path, and everything nested under it, everywhere it appears — items, outfits,
+    /// the pre-made list, the filters and the colour map — and saves.
+    /// </summary>
+    /// <remarks>
+    /// The rewrite behind a rename, and behind moving a folder into another folder, which is a
+    /// rename of every segment above the last. No checks: the callers decide whether the new path
+    /// is free. Outfits are rewritten as well as items; a renamed style used to be left behind on
+    /// every outfit that carried it.
+    /// </remarks>
+    /// <returns>How many tags were rewritten.</returns>
+    private int RetagPath(string oldPath, string newPath)
+    {
         bool Matches(string tag) =>
             tag.Equals(oldPath, StringComparison.OrdinalIgnoreCase) ||
             tag.StartsWith($"{oldPath}/", StringComparison.OrdinalIgnoreCase);
@@ -3719,11 +3766,11 @@ public partial class PluginUi : Window, IDisposable
 
         var touched = 0;
 
-        foreach (var item in _config.WardrobeItems)
-            for (var i = 0; i < item.Tags.Count; i++)
-                if (Matches(item.Tags[i]))
+        foreach (var tags in _config.WardrobeItems.Select(i => i.Tags).Concat(_config.Outfits.Select(o => o.Tags)))
+            for (var i = 0; i < tags.Count; i++)
+                if (Matches(tags[i]))
                 {
-                    item.Tags[i] = Rewrite(item.Tags[i]);
+                    tags[i] = Rewrite(tags[i]);
                     touched++;
                 }
 
@@ -3743,9 +3790,7 @@ public partial class PluginUi : Window, IDisposable
         }
 
         _config.Save();
-        _log.Information($"[Wardrobe] Renamed tag '{oldPath}' to '{newPath}' on {touched} item tag(s)");
-        CancelTagRename();
-        return;
+        return touched;
 
         void RewriteSet(HashSet<string> filters)
         {
@@ -4295,6 +4340,8 @@ public partial class PluginUi : Window, IDisposable
         hash.Add(_config.ModCategoriesEnabled);
         hash.Add(_config.GroupVariants);
         hash.Add(_config.ExpandedVariantGroups.Count);
+        hash.Add(_foldersOnly);
+        hash.Add(_folderPath);
 
         hash.Add(_favoritesOnly);
         hash.Add(_variantsOnly);
@@ -4365,7 +4412,11 @@ public partial class PluginUi : Window, IDisposable
                                                .ThenBy(x => x.DateAdded),
         };
 
-        return FoldVariants(query.ToList());
+        var filtering = SearchWords().Length > 0 || ActiveFilters(includeItemFilters: true).Count > 0;
+        _gridFolders  = FoldFolders(query.ToList(), _config.WardrobeItems, i => i.Tags, _folderPath,
+                                    filtering, out var loose);
+
+        return FoldVariants(loose);
     }
 
 
@@ -4376,6 +4427,15 @@ public partial class PluginUi : Window, IDisposable
         // on a wardrobe of a thousand-odd items that is tens of thousands of string comparisons —
         // and doing it again for a frame in which nothing changed was most of what the window cost
         // to leave open.
+        EnsureFolderPathExists(outfits: false);
+        DrawFolderRenamePopup();
+
+        if (_gridToTop)
+        {
+            ImGui.SetScrollY(0f);
+            _gridToTop = false;
+        }
+
         var stamp = GridStamp();
         if (stamp != _gridStamp)
         {
@@ -4398,10 +4458,11 @@ public partial class PluginUi : Window, IDisposable
             }
         }
 
-        var items = _gridItems;
+        var items   = _gridItems;
+        var folders = _gridFolders;
         _visibleCount = items.Count;
 
-        if (items.Count == 0)
+        if (items.Count == 0 && folders.Count == 0)
         {
             ImGui.Spacing();
             ImGui.TextDisabled(EmptyGridMessage());
@@ -4412,17 +4473,21 @@ public partial class PluginUi : Window, IDisposable
         var columns = Math.Max(1, (int)((avail + CardPad) / (CardWidth + CardPad)));
         Guid? toDelete = null;
 
+        // Folder cards lead, then the loose items; the same size, so one set of row arithmetic
+        var total = folders.Count + items.Count;
+
         // Only draw the rows actually on screen. Cards are a fixed size, so the visible range is
         // just arithmetic, and empty spacers above and below keep the scrollbar honest. Drawing
         // every card regardless of scroll position is what made a 200-item wardrobe expensive.
         var rowHeight = CardHeight + ImGui.GetStyle().ItemSpacing.Y;
-        var totalRows = (items.Count + columns - 1) / columns;
+        var totalRows = (total + columns - 1) / columns;
         var viewH     = ImGui.GetWindowHeight();
 
         // Hold the card the panel was opened on, or the top of the view when the reflow was not
         // started from a card. Resolved here rather than where it was asked for, because an id is
         // the only part of a card's position that means the same thing either side of a reflow.
         var hold = _gridHold is { } holdId ? items.FindIndex(i => i.Id == holdId) : -1;
+        if (hold >= 0) hold += folders.Count;
         _gridHold = null;
 
         var scrollY = ApplyGridScroll(_gridScroll, columns, rowHeight, totalRows, viewH, hold);
@@ -4439,9 +4504,14 @@ public partial class PluginUi : Window, IDisposable
             for (var c = 0; c < columns; c++)
             {
                 var idx = row * columns + c;
-                if (idx >= items.Count) break;
+                if (idx >= total) break;
                 if (c > 0) ImGui.SameLine();
-                DrawCard(items[idx], ref toDelete);
+
+                if (idx < folders.Count)
+                    DrawFolderCard(false, folders[idx], new Vector2(CardWidth, CardHeight), ThumbSize,
+                                   ItemTexture, i => i.Id, _selected);
+                else
+                    DrawCard(items[idx - folders.Count], ref toDelete);
             }
         }
 
@@ -4717,12 +4787,18 @@ public partial class PluginUi : Window, IDisposable
             ImGui.SetTooltip(string.Join("  ",
                 item.Tags.Where(TagTree.IsStyle)
                     .Select(t => t[(TagTree.StyleRoot.Length + 1)..])
-                    .Concat(item.Tags.Where(t => !TagTree.IsStyle(t)).Select(t => $"#{t}"))));
+                    .Concat(item.Tags.Where(t => !TagTree.IsStyle(t) && !TagTree.IsFolder(t)).Select(t => $"#{t}"))
+                    .Concat(item.Tags.Where(TagTree.IsFolder).Select(t => $"in {Services.PageText.FolderShown(t)}"))));
 
         // The badge line is kept even when it is empty, so every card stays the same height —
         // whichever of the two filled it, or an empty line when neither did
         if (!DrawVariantToggle(item, sameLine: hasBadge) && !hasBadge)
             ImGui.NewLine();
+
+        // The count goes in the label rather than behind a glyph, so what the button is about to do
+        // is legible without hovering it
+        var links      = _wardrobe.ResolveLinks(item);
+        var linkSuffix = links.Count > 0 ? $" +{links.Count}" : string.Empty;
 
         // In select mode the tick box takes the button row's place rather than being added below it.
         // Same card height, so entering the mode does not reflow the grid, and the delete button is
@@ -4730,6 +4806,7 @@ public partial class PluginUi : Window, IDisposable
         if (_selectMode)
         {
             DrawCardSelector(item);
+            DrawCardContextMenu(item, worn, links, ref pendingDelete);
             ImGui.EndChild();
             ImGui.PopStyleColor(2);
             ImGui.PopID();
@@ -4747,11 +4824,6 @@ public partial class PluginUi : Window, IDisposable
         // which are not on the character at all.
         var (wearLabel, removeLabel) = item.Slot.ActionLabels();
         var modOnly = item.Slot.IsModOnly();
-
-        // The count goes in the label rather than behind a glyph, so what the button is about to do
-        // is legible without hovering it
-        var links      = _wardrobe.ResolveLinks(item);
-        var linkSuffix = links.Count > 0 ? $" +{links.Count}" : string.Empty;
 
         if (worn)
         {
@@ -4775,10 +4847,6 @@ public partial class PluginUi : Window, IDisposable
             if (links.Count > 0 && ImGui.IsItemHovered())
                 ImGui.SetTooltip($"Also wears:\n{LinkList(links)}");
         }
-
-        // Right-click reaches the solo action too. The row below is the discoverable way in, but it
-        // is the first thing to go when a card runs short of room, and this cannot be crowded out.
-        DrawSoloContextMenu(item, worn, links);
 
         // Scaled down far enough, "Edit" no longer fits its button and ImGui clips it to "Edi".
         // A pencil says the same thing in the room that is left rather than most of a word.
@@ -4807,6 +4875,9 @@ public partial class PluginUi : Window, IDisposable
             pendingDelete = item.Id;
 
         DrawSoloRow(item, worn, links);
+        DrawCardSizeRow(item);
+
+        DrawCardContextMenu(item, worn, links, ref pendingDelete);
 
         ImGui.EndChild();
         ImGui.PopStyleColor(2);
@@ -5085,25 +5156,6 @@ public partial class PluginUi : Window, IDisposable
                 : $"Wears only this item.\nLeaves these alone:\n{LinkList(links)}");
     }
 
-    private void DrawSoloContextMenu(WardrobeItem item, bool worn, List<WardrobeItem> links)
-    {
-        // Opened for the copy entry as well now, so the guard is "is there anything to show" rather
-        // than "does this item have links"
-        if (links.Count == 0 && !CanCopyBetweenWardrobes) return;
-        if (!ImGui.BeginPopupContextItem($"##solomenu_{item.Id}")) return;
-
-        if (links.Count > 0)
-        {
-            var (wearLabel, removeLabel) = item.Slot.ActionLabels();
-            if (ImGui.MenuItem(worn ? $"{removeLabel} only this" : $"{wearLabel} only this"))
-                Solo(item, worn);
-        }
-
-        DrawCopyToWardrobeMenu(new[] { item }, item.Id.ToString());
-
-        ImGui.EndPopup();
-    }
-
     private void Solo(WardrobeItem item, bool worn)
     {
         if (worn) _wardrobe.UnwearItem(item);
@@ -5170,29 +5222,9 @@ public partial class PluginUi : Window, IDisposable
     private unsafe void DrawItemImage(WardrobeItem item)
     {
         var size = new Vector2(ThumbSize, ThumbSize);
-        var path = item.ImagePath ?? string.Empty;
+        var top  = ImGui.GetCursorPos();
 
-        // Resolve once per item, not once per frame. File.Exists here was a synchronous stat on
-        // every card of every frame, which is what made large wardrobes crawl.
-        if (!_imageCache.TryGetValue(item.Id, out var entry) || entry.Path != path)
-        {
-            ISharedImmediateTexture? texture = null;
-            if (!string.IsNullOrEmpty(path) && File.Exists(path))
-            {
-                try { texture = _textures.GetFromFile(path); }
-                catch (Exception ex)
-                {
-                    _log.Warning(ex, $"[Wardrobe] Could not load image for '{item.Name}'");
-                }
-            }
-
-            entry = (path, texture);
-            _imageCache[item.Id] = entry;
-        }
-
-        var top = ImGui.GetCursorPos();
-
-        if (entry.Texture?.GetWrapOrDefault() is { } wrap)
+        if (ItemTexture(item)?.GetWrapOrDefault() is { } wrap)
         {
             ImageDraw.Square(wrap, ThumbSize);
             AcceptImageDrop(item);
@@ -5203,6 +5235,34 @@ public partial class PluginUi : Window, IDisposable
         DrawEmptyPreview(item.Slot.DisplayName(), size);
         AcceptImageDrop(item);
         DrawQuickViewOverlay(item, top, hasImage: false);
+    }
+
+    /// <summary>The item's picture, or null when it has none or the file is gone.</summary>
+    /// <remarks>
+    /// Resolved once per item, not once per frame. <c>File.Exists</c> here was a synchronous stat
+    /// on every card of every frame, which is what made large wardrobes crawl. Keyed by item id,
+    /// so items from another wardrobe — the import panel's rows — share the cache without
+    /// colliding with anything.
+    /// </remarks>
+    private ISharedImmediateTexture? ItemTexture(WardrobeItem item)
+    {
+        var path = item.ImagePath ?? string.Empty;
+
+        if (_imageCache.TryGetValue(item.Id, out var entry) && entry.Path == path)
+            return entry.Texture;
+
+        ISharedImmediateTexture? texture = null;
+        if (!string.IsNullOrEmpty(path) && File.Exists(path))
+        {
+            try { texture = _textures.GetFromFile(path); }
+            catch (Exception ex)
+            {
+                _log.Warning(ex, $"[Wardrobe] Could not load image for '{item.Name}'");
+            }
+        }
+
+        _imageCache[item.Id] = (path, texture);
+        return texture;
     }
 
     /// <summary>
@@ -5247,10 +5307,11 @@ public partial class PluginUi : Window, IDisposable
     /// The magnifier in the corner of a card's picture, and the click on the picture itself.
     /// </summary>
     /// <remarks>
-    /// A right-click on the picture rather than a button on it: the card is small at the sizes where
-    /// this matters most, and anything drawn over the thumbnail is covering the very thing it exists
-    /// to show you. The tooltip is what makes it findable, so the picture carries one whether or not
-    /// there is anything else to say about it.
+    /// The viewer is reached from the card's right-click menu rather than from a right-click on the
+    /// picture itself. The picture used to take the right-click directly, and once the whole card
+    /// had a menu the two fought over it — a right-click that landed a pixel inside the picture did
+    /// one thing and a pixel outside did another. The tooltip says where the viewer went. Nothing is
+    /// drawn over the thumbnail either way: the card is small at the sizes where this matters most.
     /// <para>
     /// Only on a real picture. A card with no image has the slot name as its placeholder, and there
     /// is nothing to view any larger.
@@ -5264,11 +5325,8 @@ public partial class PluginUi : Window, IDisposable
 
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(count > 1
-                ? $"{count} pictures. Right-click to view them full size."
-                : "Right-click to view full size.");
-
-        if (ImGui.IsItemClicked(ImGuiMouseButton.Right))
-            _quickViewItem = item.Id;
+                ? $"{count} pictures. Right-click for the menu, then View picture."
+                : "Right-click for the menu, then View picture.");
 
         // A count in the corner of the thumbnail, and only when there is more than one. Nothing else
         // on the card could say that a piece has a back view, and a gallery nobody knows about is a
@@ -7042,6 +7100,8 @@ public partial class PluginUi : Window, IDisposable
         hash.Add(ShowDesigns);
         hash.Add(_showHiddenOutfits);
         hash.Add(_search);
+        hash.Add(_foldersOnly);
+        hash.Add(_outfitFolderPath);
 
         hash.Add(_tagFilter.Count);
         foreach (var tag in _tagFilter) hash.Add(tag);
@@ -7081,9 +7141,17 @@ public partial class PluginUi : Window, IDisposable
             query = query.Where(o => OutfitMatchesSearch(o, words, byId));
         }
 
-        return query
+        var sorted = query
             .OrderBy(o => o.Name, NaturalOrder.Comparer)
             .ToList();
+
+        // Hidden and unticked sources are not a filter in this sense: an empty folder should still
+        // show while the only thing narrowing the grid is which kinds of card it lists
+        var filtering = SearchWords().Length > 0 || ActiveFilters(includeItemFilters: false).Count > 0;
+        _outfitFolders = FoldFolders(sorted, _config.Outfits, o => o.Tags, _outfitFolderPath,
+                                     filtering, out var loose);
+
+        return loose;
     }
 
     private void DrawOutfitsGrid()
@@ -7147,6 +7215,15 @@ public partial class PluginUi : Window, IDisposable
             return;
         }
 
+        EnsureFolderPathExists(outfits: true);
+        DrawFolderRenamePopup();
+
+        if (_gridToTop)
+        {
+            ImGui.SetScrollY(0f);
+            _gridToTop = false;
+        }
+
         // Rebuilt only when something it depends on has moved, for the reason the item grid is —
         // the name sort is a managed comparer over every pair, and a wardrobe with design cards in
         // it has plenty of pairs
@@ -7163,6 +7240,7 @@ public partial class PluginUi : Window, IDisposable
         }
 
         var outfits = _outfitItems;
+        var folders = _outfitFolders;
 
         // An outfit deleted while ticked must not linger and reappear in a later bulk action
         if (_selectMode && _selectedOutfits.Count > 0)
@@ -7171,7 +7249,22 @@ public partial class PluginUi : Window, IDisposable
             _selectedOutfits.RemoveWhere(id => !live.Contains(id));
         }
 
-        if (outfits.Count == 0)
+        if (outfits.Count == 0 && folders.Count == 0 && _foldersOnly &&
+            SearchWords().Length == 0 && ActiveFilters(includeItemFilters: false).Count == 0)
+        {
+            ImGui.TextDisabled(InFolder(true)
+                ? $"'{_outfitFolderPath}' has no outfits. Select some cards and use Put in folder to fill it."
+                : "No folder holds an outfit yet. Select some cards and use Add to Folder.");
+            return;
+        }
+
+        if (outfits.Count == 0 && folders.Count == 0 && _foldersOnly)
+        {
+            ImGui.TextDisabled("No folder holds an outfit that matches.");
+            return;
+        }
+
+        if (outfits.Count == 0 && folders.Count == 0)
         {
             var narrowing = ActiveFilters(includeItemFilters: false);
 
@@ -7218,10 +7311,21 @@ public partial class PluginUi : Window, IDisposable
         // The same reflow the item grid guards against: the outfit editor is a right-hand panel too,
         // so opening one takes width off this grid and rearranges every card behind it.
         var hold = _gridHold is { } holdId ? outfits.FindIndex(o => o.Id == holdId) : -1;
+        if (hold >= 0) hold += folders.Count;
         _gridHold = null;
 
         ApplyGridScroll(_outfitScroll, columns, cardH + ImGui.GetStyle().ItemSpacing.Y,
-                        (outfits.Count + columns - 1) / columns, ImGui.GetWindowHeight(), hold);
+                        (folders.Count + outfits.Count + columns - 1) / columns, ImGui.GetWindowHeight(), hold);
+
+        // Folder cards lead, the same size as the cards around them
+        foreach (var folder in folders)
+        {
+            DrawFolderCard(true, folder, new Vector2(cardW, cardH), cardW - CardPad * 2,
+                           OutfitTexture, o => o.Id, _selectedOutfits);
+            col++;
+            if (col < columns) ImGui.SameLine();
+            else col = 0;
+        }
 
         foreach (var outfit in outfits)
         {
@@ -7861,6 +7965,8 @@ public partial class PluginUi : Window, IDisposable
             }
 
             ImGui.Separator();
+
+            DrawOutfitFolderMenu(outfit);
 
             // Beside Duplicate rather than beside Delete, because it is the opposite of destructive
             // and sitting it next to the red button would invite the wrong read of it (#26)
@@ -9804,28 +9910,32 @@ public partial class PluginUi : Window, IDisposable
         ImGui.PopStyleColor();
     }
 
+    /// <summary>The outfit's picture, or null when it has none or the file is gone.</summary>
+    /// <remarks>Resolved once per outfit, as for items — never stat the filesystem per frame.</remarks>
+    private ISharedImmediateTexture? OutfitTexture(Outfit outfit)
+    {
+        var path = outfit.ImagePath ?? string.Empty;
+
+        if (_outfitImageCache.TryGetValue(outfit.Id, out var entry) && entry.Path == path)
+            return entry.Texture;
+
+        ISharedImmediateTexture? texture = null;
+        if (!string.IsNullOrEmpty(path) && File.Exists(path))
+        {
+            try { texture = _textures.GetFromFile(path); }
+            catch (Exception ex) { _log.Warning(ex, $"[Wardrobe] Could not load image for outfit '{outfit.Name}'"); }
+        }
+
+        _outfitImageCache[outfit.Id] = (path, texture);
+        return texture;
+    }
+
     private unsafe void DrawOutfitImage(Outfit outfit, float thumbSize)
     {
         var size = new Vector2(thumbSize, thumbSize);
-        var path = outfit.ImagePath ?? string.Empty;
+        var top  = ImGui.GetCursorPos();
 
-        // Resolved once per outfit, as for items — never stat the filesystem per frame
-        if (!_outfitImageCache.TryGetValue(outfit.Id, out var entry) || entry.Path != path)
-        {
-            ISharedImmediateTexture? texture = null;
-            if (!string.IsNullOrEmpty(path) && File.Exists(path))
-            {
-                try { texture = _textures.GetFromFile(path); }
-                catch (Exception ex) { _log.Warning(ex, $"[Wardrobe] Could not load image for outfit '{outfit.Name}'"); }
-            }
-
-            entry = (path, texture);
-            _outfitImageCache[outfit.Id] = entry;
-        }
-
-        var top = ImGui.GetCursorPos();
-
-        if (entry.Texture?.GetWrapOrDefault() is { } wrap)
+        if (OutfitTexture(outfit)?.GetWrapOrDefault() is { } wrap)
         {
             if (_config.PortraitOutfitPreviews) ImageDraw.Portrait(wrap, thumbSize);
             else                                ImageDraw.Square(wrap, thumbSize);

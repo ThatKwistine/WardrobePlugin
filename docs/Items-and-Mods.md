@@ -23,20 +23,35 @@ those used to mean opening the edit panel fifty times for the field that sits at
 
 It is not offered in select mode, where a click on a card is a tick.
 
+## The card menu
+
+**Right-click anywhere on a card** for the quick edits: **Wear** or **Unequip** (with the linked pieces, and *only this* when there are any),
+**Size** where the item has one, **Edit…**, **Rename**, **Select**, **Favourite**, **Put in
+folder** and **Take out of folder**, **Tags** and **Styles** as tick lists with a box for a new tag,
+**Screenshot**, **View picture**, **Copy to wardrobe**, and **Delete** (Ctrl-armed, like the X).
+
+**Select** is the way into select mode from the card you want selected: it switches the mode on
+with that card ticked, and reads **Deselect** on a card that already is.
+
+In **Select** mode, right-clicking a ticked card acts on the whole selection — the menu says how many
+— and the entries that only make sense for one card step aside. Right-clicking an unticked card acts
+on that card alone.
+
 ## Quick view
 
-**Right-click a card's picture** to see it full size, over the whole window — sized to your screen
-rather than to the wardrobe window, which is usually the narrower of the two. It shows the item's
-name, slot and tags, with **Wear**, **Edit** and **Close**; Escape closes it too. The picture's
-tooltip says so, and the same right-click works on the preview in an item's edit panel, which also
-has a **View full size** button.
+**View picture** on a card's right-click menu shows it full size, over the whole window — sized to
+your screen rather than to the wardrobe window, which is usually the narrower of the two. It shows
+the item's name, slot and tags, with **Wear**, **Edit** and **Close**; Escape closes it too. The
+picture's tooltip says where to find it. Right-clicking the preview in an item's edit panel opens
+the same viewer, and the panel also has a **View full size** button.
 
 Outfits work the same way — right-click an outfit card's picture, or the preview in its edit panel.
 The outfit version shows how many items it holds, any vanilla pieces, and its styles, with **Wear**
 and **Edit**.
 
-Right-click rather than a button on the card: at small card sizes anything drawn over the thumbnail
-covers the very thing it exists to show you.
+A menu entry rather than a button on the card: at small card sizes anything drawn over the thumbnail
+covers the very thing it exists to show you. It used to be a right-click on the picture itself, until
+the card grew a menu of its own and the two fought over the click.
 
 An item or outfit with [several pictures](Images-and-Screenshots.md#several-pictures-per-item) shows
 the count in the corner of its thumbnail, and the viewer pages through them with **◄ ►** or the arrow
@@ -380,6 +395,34 @@ fighting over a variant, editing and saving either one settles it.
 group, which reads back the same as never having had one — so the panel showed it as all-off next
 time, and saving again made that true. If you set groups to **Ignore all** before this was fixed,
 set them once more and they will stay.
+
+### Size options
+
+Some option groups are not a style choice but a fit: a bust size, a thigh size, the group a body mod
+ships so the same top sits right on two different bodies — "YAB+ S", "YAB+ M", "Bibo+". Those are
+the options you change most often, and they can be put on the item's card so changing one is a
+click there rather than a trip through Edit.
+
+Under each group in an item's **Mod Options** section is a **Size option** tick. Ticked, the group
+goes on the card as a small **Size: YAB+ M** under the buttons, and opening it lists the group's
+options by the mod's own names — nothing is renamed or translated. Picking one sets the option here,
+exactly as choosing it in Edit would, and if the item is on it is sent straight to Penumbra. See
+[Sizes](Wearing-Items.md#sizes).
+
+Most of this is ticked for you. Importing a body or legs item — and **Re-detect** on an older one —
+looks for a group the slot has a say in with two or more options that plainly read as sizes
+(*Small / Medium / Large*, *S / M / L*, *Flat / Big*, and the like) and marks it. It only ever
+marks where nothing is marked, so a tick you took off stays off; and it can be turned off under
+**Settings → Importing**. A mod whose sizes are named unrecognisably is a tick away.
+
+Checkbox groups work too. The pick shows every option as the item has it ticked; picking a size
+turns the other sizes off with it, since they are alternatives, and picking anything else in the
+group — a fix, an extra — just toggles it, because that is what a checkbox is.
+
+A tick is per item and per slot, on purpose — the legs of a set mark the mod's leg group, not the
+chest one — so saving it never writes onto the other items from the same mod, unlike the options
+above. A copy made in another wardrobe keeps it. The whole feature can be switched off under
+**Settings → Size Options**.
 
 ## Customisation mods
 

@@ -41,6 +41,13 @@ public class PenumbraIpc : IDisposable
     // GetModDirectory() → the Penumbra mods root directory on disk (no args)
     private readonly ICallGateSubscriber<string> _getModDirectory;
 
+    // GetModPath.V5(modDirectory, modName) → (ec, FullPath, FullDefault, NameDefault): where the mod
+    // sits in Penumbra's own folder tree, as "Folder/Sub/Mod Name". FullDefault says the mod has
+    // never been filed anywhere. Element order confirmed by reflecting Penumbra.Api 1.7.1.3, and
+    // it is not the order the name suggests: the "path is default" flag comes before "name is
+    // default".
+    private readonly ICallGateSubscriber<string, string, (int, string, bool, bool)> _getModPath;
+
     // GetGameObjectResourcePaths.V5(ushort[] objectIndices) → one dictionary per index, mapping the
     // ACTUAL path of every resource in play to the game paths it stands in for. A redirected file
     // gives its path on disk; anything vanilla or swapped gives a game path instead.
@@ -102,6 +109,9 @@ public class PenumbraIpc : IDisposable
 
         _getModDirectory = pi.GetIpcSubscriber<string>(
             "Penumbra.GetModDirectory");
+
+        _getModPath = pi.GetIpcSubscriber<string, string, (int, string, bool, bool)>(
+            "Penumbra.GetModPath.V5");
 
         _getGameObjectResourcePaths =
             pi.GetIpcSubscriber<ushort[], Dictionary<string, HashSet<string>>?[]>(
@@ -313,6 +323,33 @@ public class PenumbraIpc : IDisposable
         catch (Exception ex)
         {
             _log.Debug($"[Wardrobe] Penumbra GetGameObjectResourcePaths failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The folder a mod is filed under in Penumbra's own mod list, as "Gear/Dresses" — the sort
+    /// path with the mod's own name taken off the end. Empty for a mod at the root, null when the
+    /// mod has never been filed or Penumbra could not say.
+    /// </summary>
+    /// <remarks>
+    /// Penumbra's sort path is folders and then a display name that need not be the mod's real
+    /// name — a mod can be renamed in the list without renaming the mod — so the last segment is
+    /// dropped whatever it says rather than matched against <paramref name="modName"/>.
+    /// </remarks>
+    public string? GetModSortFolder(string modDirectory, string modName)
+    {
+        try
+        {
+            var (ec, fullPath, pathDefault, _) = _getModPath.InvokeFunc(modDirectory, modName);
+            if (ec != 0 || pathDefault || string.IsNullOrEmpty(fullPath)) return null;
+
+            var cut = fullPath.LastIndexOf('/');
+            return cut < 0 ? string.Empty : fullPath[..cut];
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"[Wardrobe] Penumbra GetModPath failed for '{modName}': {ex.Message}");
             return null;
         }
     }

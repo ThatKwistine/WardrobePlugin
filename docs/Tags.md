@@ -83,6 +83,64 @@ All of this is behind Settings → **Tag Colours** → **Colour tags and styles*
 nothing changes until you pick a colour. Turning it off keeps every colour you have chosen and only
 stops them being used, so it is a switch rather than a purge.
 
+## Folders
+
+A **folder** is where a card is filed, as distinct from what it is or what mood it suits. Once a
+folder exists, a **Folders** button appears on the filter row beside Worn and Variants, and it works
+like them: on, the grid shows its folders — one card per folder, a 3x3 of what is inside, the name,
+and the count; off, every card stands on its own, filed or not. Click a folder card, or its **Open**
+button, to see the contents; **Back** and the crumbs above the grid lead out again. Folders nest:
+`Animations/Idles` is a folder inside a folder, and opening `Animations` shows `Idles` as a card
+among whatever is filed directly in `Animations`. Turning the filter off leaves whatever folder was
+open, so the next press starts at the top.
+
+Both grids have them, and they share one set: an outfit filed in `Summer` is in the same folder as
+the items filed there, though each grid keeps its own place — opening a folder on the items grid
+does not move the outfits grid. A folder card on the items grid counts items; on the outfits grid,
+outfits.
+
+Filing is a move. **Select** some cards and use **Add to Folder…** on the bar above the grid (or
+**Put in folder…** in the Edit Selected panel), or right-click a card (an outfit's Edit button) for
+the same menu, and pick a folder or type a new one — a slash nests it. A card leaves whatever folder
+it was in, and an item's variants go with it. **Take out** puts things back at the top. Filing
+changes nothing on the grid until the Folders filter is on; the card stays where it was.
+
+The other way round works too: inside an open folder, **Add to this folder…** on the crumb row opens
+a picker over the whole wardrobe — search, tick, add — listing everything not already filed there,
+and saying where each ticked card is filed now. Above the cards it lists the other folders, and a
+ticked folder moves inside this one with everything in it — the only way to move a folder, since
+renaming changes only its last segment.
+
+**View → Folders** opens a panel listing every folder as a tree with how much is filed under each,
+where folders can be made ahead of use — type a name, **Make** — and clicked to open on the grid, or
+right-clicked to rename, colour or delete.
+
+With **Folders From Penumbra** turned on (Settings → Grid & Cards, marked Experimental), the panel
+also has **File items by Penumbra folder**: it reads where each item's mod sits on Penumbra's own mod
+list and files the item under the same folder path, so a mod filed as `Gear/Dresses/Red Dress` puts
+its item in `Gear/Dresses`. It reads the first mod on each item, the one it was imported from. Mods
+at Penumbra's root, or never filed there, are left alone, and nothing in Penumbra is changed. By
+default an item already in a folder is kept where it is; untick **Only items not already in a
+folder** to let the mod list win.
+
+The filter composes with the rest. Search and the other filters look inside every folder, and a
+folder's name counts as part of what is inside it — search "summer" and everything filed under
+`Summer` matches, so the folder card shows with its full count. Search for "idle" with Folders on
+and the grid shows the folders that hold a match, each saying how much of it matched — three folders
+rather than a hundred cards — and a folder with nothing matching is not shown. An empty folder is
+shown when nothing else is being filtered, so a folder you have just made or just emptied does not
+vanish.
+
+Right-click a folder card to **rename** it, give it a **colour** (the card takes the tint, as a
+style's does), **take everything out**, or **delete** it — which unfiles what is inside and forgets
+the folder. Nothing in a folder is ever deleted with it.
+
+Underneath, a folder is an ordinary tag filed under `Folder/` — `Folder/Animations/Idles` — the same
+way a style is a tag under `Style/`. That is what makes nesting, renaming, colours, bulk filing,
+search, backups and sharing work on folders for free. It also means an item *can* be in two folders
+if you tag it by hand, and that the order inside a folder is the grid's sort. The folder branch is
+kept out of the tag tree, since the Folders button is its control.
+
 ## Sub-tags
 
 A `/` makes a tag nested: `Shoes/Boots/Ankle Boots` is one tag, drawn in the panel as three levels

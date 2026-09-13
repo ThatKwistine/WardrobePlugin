@@ -363,6 +363,8 @@ public class WardrobeShareService
             foreach (var (group, states) in mod.OptionStates)
                 copy.OptionStates[group] = new Dictionary<string, bool>(states);
 
+            copy.SizeGroups.AddRange(mod.SizeGroups);
+
             shared.Mods.Add(copy);
         }
 
@@ -688,6 +690,8 @@ public class WardrobeShareService
 
             foreach (var (group, states) in mod.OptionStates)
                 copy.OptionStates[group] = new Dictionary<string, bool>(states);
+
+            copy.SizeGroups.AddRange(mod.SizeGroups);
 
             item.Mods.Add(copy);
         }

@@ -105,6 +105,12 @@ public class ItemImportPanel : IDisposable
 
         /// <summary>Options forced off. Anything in neither this nor <see cref="MultiSel"/> is ignored.</summary>
         public Dictionary<string, HashSet<string>> MultiOff  = new();
+
+        /// <summary>
+        /// Groups marked as sizes, staged from <see cref="ModReference.SizeGroups"/> and written
+        /// back on Save, so Cancel discards it like every other edit-mode field.
+        /// </summary>
+        public HashSet<string> SizeGroups = new();
     }
     private readonly List<EditModOptions> _editModOptions = new();
 
@@ -336,6 +342,7 @@ public class ItemImportPanel : IDisposable
 
             entry.ResolvedPath = path;
             entry.PathExists   = path != null && Directory.Exists(path);
+            entry.SizeGroups   = new HashSet<string>(mod.SizeGroups);
 
             if (entry.PathExists)
             {
@@ -499,6 +506,33 @@ public class ItemImportPanel : IDisposable
                              "Penumbra is what you keep.\n\n" +
                              $"Clears {asserted} setting(s). Takes effect when you Save.");
         ImGui.PopID();
+    }
+
+    /// <summary>
+    /// Under each option group: whether it is the body size, and so goes on the card as a quick
+    /// pick of its own options.
+    /// </summary>
+    /// <remarks>
+    /// The per-item half of issue #28, and all of it — a tick. The group's options are the size
+    /// names, in the mod's own words; nothing is translated. Usually already ticked by the import,
+    /// which recognises a group whose options read as sizes (<see cref="SizeGuess"/>).
+    /// </remarks>
+    private void DrawSizeGroupTick(ModOptionGroup g, EditModOptions opts)
+    {
+        if (!_config.SizeOptionsEnabled) return;
+
+        var on = opts.SizeGroups.Contains(g.GroupName);
+        ImGui.Indent();
+        if (ImGui.Checkbox($"Size option##size_{g.GroupName}", ref on))
+        {
+            if (on) opts.SizeGroups.Add(g.GroupName);
+            else    opts.SizeGroups.Remove(g.GroupName);
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Puts this group on the item's card as a quick pick of its options," + "\n" +
+                             "for a size you change often. The pick sets the option above, the" + "\n" +
+                             "same as choosing it here.");
+        ImGui.Unindent();
     }
 
     public void Close()
@@ -775,6 +809,7 @@ public class ItemImportPanel : IDisposable
                                     $"{string.Join(", ", g.Slots!.Select(s => s.DisplayName()))}, not this slot)");
 
                             ModOptionPicker.Draw(g, opts.SingleSel, opts.MultiSel, opts.MultiOff);
+                            DrawSizeGroupTick(g, opts);
                         }
                     }
                     ImGui.Spacing();
@@ -871,6 +906,13 @@ public class ItemImportPanel : IDisposable
                 _editTarget.Mods[i].Options      = newSingle;
                 _editTarget.Mods[i].MultiOptions = newMulti;
                 _editTarget.Mods[i].OptionStates = newStates;
+
+                // Not propagated to other slots below: which group is *this* slot's size is this
+                // item's business, and the legs of a set mark a different group
+                _editTarget.Mods[i].SizeGroups = groups
+                    .Select(g => g.GroupName)
+                    .Where(opts.SizeGroups.Contains)
+                    .ToList();
 
                 // Propagate to items in *other* slots only. Items sharing a mod across slots are
                 // worn together and Penumbra holds one option state per mod, so what they both have
@@ -2640,6 +2682,7 @@ public class ItemImportPanel : IDisposable
                 MultiOptions = ModOptionSets.ForSlot(primaryMultiOptions, _analysisResult?.OptionGroups, slot),
             });
             item.Mods.AddRange(extraRefs);
+            SizeGuess.Apply(item, _analysisResult?.OptionGroups, _config);
             _config.WardrobeItems.Add(item);
         }
 
@@ -3129,6 +3172,10 @@ public class ItemImportPanel : IDisposable
             // can genuinely narrow what a mod covers, and a stale map would go on vouching for faces
             // the mod no longer replaces
             item.CustomizeIdsByRace = CoverageFor(result, slot);
+
+            // Only where the item has no binding for its slot's size yet, so a Re-detect for a
+            // weapon's base id does not overwrite a binding somebody labelled by hand
+            SizeGuess.Apply(item, result.OptionGroups, _config);
 
             _config.Save();
 

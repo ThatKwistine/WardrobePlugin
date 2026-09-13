@@ -51,6 +51,12 @@ public static class TagTree
     /// <summary>Whether a tag is a style. A bare "Style" with nothing under it is an ordinary tag.</summary>
     public static bool IsStyle(string tag) => Services.PageText.IsStyle(tag);
 
+    /// <summary>The root folders are filed under. See <see cref="Services.PageText.FolderRoot"/>.</summary>
+    public const string FolderRoot = Services.PageText.FolderRoot;
+
+    /// <summary>Whether a tag files something in a folder.</summary>
+    public static bool IsFolder(string tag) => Services.PageText.IsFolder(tag);
+
     /// <summary>The tag a style name is stored as.</summary>
     public static string StylePath(string name) => Services.PageText.StylePath(name);
 
@@ -62,14 +68,21 @@ public static class TagTree
     /// styles have a control of their own and would otherwise be offered twice; true where the tree
     /// is the only way to reach a tag, so that bulk-applying a style to a selection stays possible.
     /// </param>
-    public static TagNode Build(Configuration config, bool includeStyles)
+    /// <param name="includeFolders">
+    /// Whether the reserved <see cref="FolderRoot"/> branch is part of the tree. Folders have
+    /// controls of their own — the Folders filter and the cards — and a tag tree offering them as
+    /// well would make one thing look like two.
+    /// </param>
+    public static TagNode Build(Configuration config, bool includeStyles, bool includeFolders = false)
     {
-        var root = new TagNode();
+        var folders = includeFolders;
+        var root    = new TagNode();
 
         foreach (var item in config.WardrobeItems)
         foreach (var tag in item.Tags)
         {
             if (!includeStyles && IsStyle(tag)) continue;
+            if (!folders && IsFolder(tag)) continue;
             AddPath(root, tag, inUse: true);
         }
 
@@ -78,10 +91,40 @@ public static class TagTree
         foreach (var tag in config.DefinedTags)
         {
             if (!includeStyles && IsStyle(tag)) continue;
+            if (!folders && IsFolder(tag)) continue;
             AddPath(root, tag, inUse: false);
         }
 
         return root;
+    }
+
+    /// <summary>
+    /// The folders, as a tree under the reserved root: every path some item is filed under, plus
+    /// those made ahead of use.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="TagNode.FullPath"/> on every node is the stored tag — <c>Folder/Animations/Idles</c>
+    /// — so it can be handed straight to anything that reads tags. The root node itself stands for
+    /// the top level and has no path.
+    /// </remarks>
+    public static TagNode Folders(Configuration config)
+    {
+        var root = new TagNode();
+
+        foreach (var item in config.WardrobeItems)
+        foreach (var tag in item.Tags)
+            if (IsFolder(tag)) AddPath(root, tag, inUse: true);
+
+        // One set of folders for both grids, so an outfit's folder exists on the items grid too
+        foreach (var outfit in config.Outfits)
+        foreach (var tag in outfit.Tags)
+            if (IsFolder(tag)) AddPath(root, tag, inUse: true);
+
+        foreach (var tag in config.DefinedTags)
+            if (IsFolder(tag)) AddPath(root, tag, inUse: false);
+
+        // The reserved root is the only child; what callers want is the tree beneath it
+        return root.Children.TryGetValue(FolderRoot, out var top) ? top : root;
     }
 
     /// <summary>

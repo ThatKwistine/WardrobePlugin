@@ -149,6 +149,23 @@ animation an item replaces is detected on import and can be changed when editing
 
 ---
 
+## Size Options
+
+A body mod's size group — a bust, a thigh — on the item's card as a small pick of its own options,
+so a top can be changed between bodies without opening Edit. See
+[Size options](Items-and-Mods.md#size-options) for how a group gets marked.
+
+**Size options on cards** — on by default. Off hides the pick on every card and its entry on the
+right-click menu, the tick under each group in Edit, and stops imports marking groups. Nothing is
+forgotten: the groups an item has marked are kept, and turning it back on finds them as they were.
+
+**Recognise size groups when importing** — on by default. A body or legs item whose mod has a group
+with options that plainly read as sizes — *Small / Medium / Large*, *S / M / L*, as a dropdown or
+as checkboxes — gets that group marked as its size on import and on Re-detect. It never changes a
+group you have marked or unmarked yourself; turn it off if you would rather tick them by hand.
+
+---
+
 ## Glamourer Designs
 
 **Show Glamourer designs as outfits** gives each of your Glamourer designs a card in the outfits grid.
@@ -356,6 +373,15 @@ left them open, so this is the one switch that resets all of them at once.
 
 A variant that is currently worn is never folded away, whatever these settings say. See
 [Folding variants away](Items-and-Mods.md#folding-variants-away).
+
+---
+
+
+## Folders From Penumbra
+
+*Experimental.* **Offer filing by Penumbra folder** adds a **From Penumbra** block to the Folders
+panel under View, with a button that files every item under the folder its mod sits in on Penumbra's
+mod list. Nothing in Penumbra is changed. See [Folders](Tags.md#folders).
 
 ---
 

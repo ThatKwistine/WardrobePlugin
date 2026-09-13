@@ -155,7 +155,7 @@ public sealed class Plugin : IDalamudPlugin
         var panel = new ItemImportPanel(_config, _wardrobeService, Penumbra, Glamourer, _analysisService, _itemLookup, _screenshotSession, Log, _italicFont);
         _massImport = new MassImportPanel(_config, Penumbra, _analysisService, _itemLookup, Log, _italicFont);
         _share = new SharePanel(_config, _wardrobeService, _shareService, Penumbra, Textures, Log);
-        _ui = new PluginUi(_config, _wardrobeService, Textures, Log, panel, _screenshotSession, _backupService, _massImport, _share, _htmlExport, _lastWorn, _profiles);
+        _ui = new PluginUi(_config, _wardrobeService, Textures, Log, panel, _screenshotSession, _backupService, _massImport, _share, _htmlExport, _lastWorn, _profiles, _analysisService);
         _changelog = new ChangelogWindow(_config);
         _ui.Changelog = _changelog;
 

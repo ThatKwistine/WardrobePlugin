@@ -174,6 +174,7 @@ public partial class PluginUi
         {
             _showSettings = false;
             _showTags     = false;
+            _showFolders  = false;
             RefreshBrowserImages();
         });
 

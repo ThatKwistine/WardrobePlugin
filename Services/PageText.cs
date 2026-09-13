@@ -40,6 +40,36 @@ public static class PageText
     /// <summary>The tag a style name is stored as.</summary>
     public static string StylePath(string name) => $"{StyleRoot}/{name}";
 
+    /// <summary>
+    /// Tag path segment reserved for folders — where a piece is filed, as distinct from what it is
+    /// or what mood it suits.
+    /// </summary>
+    /// <remarks>
+    /// The same trick as <see cref="StyleRoot"/>, for the same reason: a folder is an ordinary
+    /// tag under this root, so nesting, renaming, colouring, bulk filing, search and backup all
+    /// work on folders without a second system to keep in step. What makes it a folder is only how
+    /// the grid treats it — items under one are folded into a card and shown when it is opened —
+    /// and with folders switched off these are plain tags again, visible in the tag tree as
+    /// <c>Folder/…</c>, so nothing is ever lost by turning the feature off.
+    /// <para>
+    /// Two things this cannot give and the alternative could: an item can be in two folders,
+    /// because tags are many-to-many; and the order inside a folder is the grid's sort, because a
+    /// tag carries no arrangement. Neither was asked for, and a per-folder order could be added
+    /// beside this without moving anything.
+    /// </para>
+    /// </remarks>
+    public const string FolderRoot = "Folder";
+
+    /// <summary>Whether a tag files something in a folder. A bare "Folder" is an ordinary tag.</summary>
+    public static bool IsFolder(string tag) =>
+        tag.StartsWith(FolderRoot + "/", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The tag a folder path is stored as, from the path as it is shown ("Animations/Idles").</summary>
+    public static string FolderPath(string shown) => $"{FolderRoot}/{shown}";
+
+    /// <summary>The path as it is shown, from the tag it is stored as.</summary>
+    public static string FolderShown(string tag) => IsFolder(tag) ? tag[(FolderRoot.Length + 1)..] : tag;
+
     /// <summary>Splits a tag list onto a card as styles and ordinary tags, dropping the reserved prefix.</summary>
     public static void SplitTags(IEnumerable<string> tags, PageCard card)
     {
@@ -49,6 +79,8 @@ public static class PageText
 
             if (IsStyle(tag))
                 card.Styles.Add(tag[(StyleRoot.Length + 1)..]);
+            else if (IsFolder(tag))
+                card.Tags.Add("in " + FolderShown(tag));
             else
                 card.Tags.Add(tag);
         }

@@ -35,10 +35,15 @@ and the slot goes empty.
 - **Pictures.** Drag images onto cards, or let the plugin take the screenshots for you — several per
   item if you want the side and the back as well as the front.
 - **Find things.** Nested tags, favourites, search across names and notes, sort by name or date.
+- **Folders.** File cards away, on both grids, and browse by folder with one button on the filter
+  row — a card per folder, opened to what is inside. Search looks inside every one.
 - **Bulk import.** Bring in a batch of mods at once instead of one at a time, tagging each as you go.
 - **A wardrobe per character.** Optional. Give each character their own items, outfits, bases and
   camera angles, and the wardrobe follows you as you log in. Tags and styles stay shared, and pieces
   can be copied from one character to another as templates to re-fit.
+- **Sizes on the card.** A body mod's size group — Small / Medium / Large, S / M / L — is found
+  on import and put on the item's card, so switching a top between two bodies is a click there
+  rather than a trip through Edit.
 - **Show someone.** Export the whole wardrobe as a web page — pictures, tags and all — that opens in
   any browser with no plugin, no game and no account at the other end. Nothing is uploaded; it is a
   file on your disk that you send yourself. Experimental.
@@ -137,7 +142,7 @@ so it is worth being liberal here and tidying up later. See
 | [Wearing items](docs/Wearing-Items.md) | How wear and unequip work, linked items, and why the order matters |
 | [Outfits and dyes](docs/Outfits.md) | Saving looks, per-item dyes, editing an outfit by wearing it |
 | [Items, mods and detection](docs/Items-and-Mods.md) | Mass import, supplementary mods, variants, shared models, option groups |
-| [Tags](docs/Tags.md) | Sub-tags, making tags ahead of use, tagging a batch, filtering |
+| [Tags](docs/Tags.md) | Folders, sub-tags, making tags ahead of use, tagging a batch, filtering |
 | [Images and screenshots](docs/Images-and-Screenshots.md) | Previews, automated sessions, camera presets |
 | [Sharing a wardrobe](docs/Sharing.md) | Sending your wardrobe as a file, opening one you were sent |
 | [A wardrobe per character](docs/Wardrobes.md) | Separate wardrobes, binding characters, copying between them |

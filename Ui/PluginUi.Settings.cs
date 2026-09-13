@@ -63,6 +63,8 @@ public partial class PluginUi
                     DrawImportSettings),
                 new SettingsSection("Other Mod Types", "animation vfx mount minion emote category",
                     DrawModCategorySettings),
+                new SettingsSection("Size Options", "size chest legs bust thigh body card pick recognise",
+                    DrawSizeSettings),
                 new SettingsSection("Uncompressed Textures", "texture size compression bc7 memory vram",
                     DrawTextureFlagSettings, Experimental: true),
             }),
@@ -105,6 +107,8 @@ public partial class PluginUi
                     DrawSlotIconSettings),
                 new SettingsSection("Variants", "variant group fold original recolour",
                     DrawVariantSettings),
+                new SettingsSection("Folders From Penumbra", "folder folders penumbra sort path file sync import",
+                    DrawPenumbraFolderSettings, Experimental: true),
             }),
 
         new SettingsCategory("Tags & Styles",

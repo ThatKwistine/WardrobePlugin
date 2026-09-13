@@ -1140,6 +1140,7 @@ public class MassImportPanel : Window, IDisposable
                     MultiOptions = ModOptionSets.ForSlot(primaryMulti,   analysis.OptionGroups, slot),
                 });
                 item.Mods.AddRange(extraRefs);
+                SizeGuess.Apply(item, analysis.OptionGroups, _config);
 
                 _config.WardrobeItems.Add(item);
                 created++;

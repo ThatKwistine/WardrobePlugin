@@ -36,6 +36,19 @@ public enum LastWornRestore
     Automatic = 2,
 }
 
+/// <summary>Order of the import-from-another-wardrobe list. Persisted as numbers, so do not renumber.</summary>
+public enum WardrobeImportSort
+{
+    /// <summary>Slot order, then name, with a heading per slot — the default, and how the grid reads.</summary>
+    Slot = 0,
+
+    /// <summary>Name alone, for finding a piece you know the name of.</summary>
+    Name = 1,
+
+    /// <summary>Most recently added first, for bringing over what the other character just imported.</summary>
+    Newest = 2,
+}
+
 [Serializable]
 public class Configuration : IPluginConfiguration
 {
@@ -367,6 +380,28 @@ public class Configuration : IPluginConfiguration
     public List<string> DefinedTags { get; set; } = new();
 
     /// <summary>
+    /// Whether size options exist at all: the pick on the card, its entry on the right-click menu,
+    /// the tick in Edit and the recognition on import.
+    /// </summary>
+    /// <remarks>
+    /// On by default, since the pick is what issue #28 asked for and it only appears on cards whose
+    /// mod has a size group. Off hides every part of it and changes no data: the groups an item has
+    /// marked are kept, so turning it back on finds everything as it was.
+    /// </remarks>
+    public bool SizeOptionsEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Whether importing an item, or Re-detect, marks a size group it can recognise by name.
+    /// </summary>
+    /// <remarks>
+    /// On by default, since the recognising is what puts the size pick on most cards without
+    /// anyone opening Edit. Off for anyone who would rather mark them by hand — the guess only
+    /// ever marks where nothing is marked, but a card growing a button unasked is a fair thing to
+    /// not want.
+    /// </remarks>
+    public bool GuessSizeGroups { get; set; } = true;
+
+    /// <summary>
     /// Whether the offer of a starter set of styles has been answered, either by taking it or by
     /// turning it down.
     /// </summary>
@@ -414,9 +449,15 @@ public class Configuration : IPluginConfiguration
     /// </remarks>
     public bool GroupVariants { get; set; } = true;
 
-    /// <summary>Every tag the wardrobe knows: those on items, plus those created ahead of use.</summary>
+    /// <summary>Every tag the wardrobe knows: those on items and outfits, plus those created ahead of use.</summary>
+    /// <remarks>
+    /// Outfits included, since 2026-09-13. A folder or style only an outfit carried was invisible
+    /// to the collision checks and the suggestion lists, so a folder made from the outfits grid
+    /// could not be moved into or picked from the items side.
+    /// </remarks>
     public List<string> AllTags() =>
         WardrobeItems.SelectMany(i => i.Tags)
+            .Concat(Outfits.SelectMany(o => o.Tags))
             .Concat(DefinedTags)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(t => t, Services.NaturalOrder.Comparer)
@@ -724,6 +765,18 @@ public class Configuration : IPluginConfiguration
     public bool AutoScreenshotEnabled { get; set; }
 
     /// <summary>
+    /// Whether the Folders panel offers to file items by where their mods sit on Penumbra's mod
+    /// list. The Experimental opt-in.
+    /// </summary>
+    /// <remarks>
+    /// Off until turned on. It reads Penumbra's sort path for every mod the wardrobe knows and
+    /// files items under the same folder paths — a lot of filing from one button, on a reading of
+    /// the mod list that has been checked against one install. The folders it makes are ordinary
+    /// folders afterwards, so nothing is lost by turning this off again.
+    /// </remarks>
+    public bool PenumbraFolderSyncEnabled { get; set; }
+
+    /// <summary>
     /// Whether worn items whose mods ship uncompressed textures are marked as such. The Experimental
     /// opt-in.
     /// </summary>
@@ -873,6 +926,43 @@ public class Configuration : IPluginConfiguration
     /// </para>
     /// </remarks>
     public bool ImportListNewestFirst { get; set; }
+
+    /// <summary>
+    /// Show a picture beside each row of the import-from-another-wardrobe list.
+    /// </summary>
+    /// <remarks>
+    /// On by default because the pictures are the fastest way to tell two cards with similar
+    /// names apart; off, the list is the plain name-and-slot list it was, for anyone who finds the
+    /// rows too tall or the panel too slow on a very large wardrobe.
+    /// </remarks>
+    public bool WardrobeImportPictures { get; set; } = true;
+
+    /// <summary>
+    /// Tag what the import-from-another-wardrobe panel brings in with the source wardrobe's name.
+    /// </summary>
+    /// <remarks>
+    /// Off by default: a copy is a template for this character, and the wardrobe it came from is
+    /// provenance rather than a property of the piece. On, it is the one-click answer to "which
+    /// of these did I just bring over" once the copies are mixed in with everything else.
+    /// </remarks>
+    public bool TagWardrobeImports { get; set; }
+
+    /// <summary>
+    /// Copy the picture files along with an item or outfit copied between wardrobes, into the
+    /// target wardrobe's own pictures folder.
+    /// </summary>
+    /// <remarks>
+    /// Off by default, which is how copies have always worked: the copy points at the same files
+    /// as the original, since the picture is of the piece and the piece is the same piece. On, the
+    /// copy gets files of its own in the other wardrobe's folder — for anyone who keeps each
+    /// character's pictures together, or who re-shoots copies and does not want the originals
+    /// affected. Applies to both directions, the Import panel and the Copy to wardrobe menu, and
+    /// does nothing for a target wardrobe with no pictures folder of its own.
+    /// </remarks>
+    public bool CopyPicturesBetweenWardrobes { get; set; }
+
+    /// <summary>How the import-from-another-wardrobe list is ordered. See <see cref="WardrobeImportSort"/>.</summary>
+    public WardrobeImportSort WardrobeImportOrder { get; set; } = WardrobeImportSort.Slot;
 
     /// <summary>
     /// Show your Glamourer designs in the outfits grid, as cards of their own.

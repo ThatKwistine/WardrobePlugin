@@ -108,7 +108,8 @@ public partial class PluginUi
             "Every picture the wardrobe holds, in one list.",
             onActivate: () =>
             {
-                _showTags = false;
+                _showTags    = false;
+                _showFolders = false;
                 RefreshBrowserImages();
             });
 
@@ -117,11 +118,21 @@ public partial class PluginUi
             onActivate: () =>
             {
                 _showImageBrowser = false;
+                _showFolders      = false;
 
                 // Whatever the last visit ended on has been read by now, and would otherwise
                 // reappear as if something had just happened
                 _newTag       = string.Empty;
                 _newTagStatus = string.Empty;
+            });
+
+        MenuPanelToggle("Folders", ref _showFolders,
+            "Every folder, to make ahead of use, open, rename, colour or delete.",
+            onActivate: () =>
+            {
+                _showImageBrowser  = false;
+                _showTags          = false;
+                _panelFolderStatus = string.Empty;
             });
 
         DrawSettingsWindowItem();

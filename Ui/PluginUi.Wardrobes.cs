@@ -215,6 +215,10 @@ public partial class PluginUi
     /// <summary>What the last copy did, shown until the next one.</summary>
     private string _copyStatus = string.Empty;
 
+    /// <summary>How much of the batch each other wardrobe already has, and what that was counted for.</summary>
+    private readonly Dictionary<Guid, int> _copyTargetHave = new();
+    private int _copyTargetStamp;
+
     /// <summary>True when there is anywhere to copy to.</summary>
     /// <remarks>
     /// Every entry point checks this rather than drawing a disabled control. With the feature off,
@@ -267,37 +271,73 @@ public partial class PluginUi
     }
 
     /// <summary>Every wardrobe but the one in force, as somewhere to copy into.</summary>
+    /// <remarks>
+    /// The batch grows to include each item's variants and linked partners before anything is
+    /// counted or copied, so "the red dress" arrives as the four colours and the shoes it is worn
+    /// with — the same reading the Import panel gives a tick. The label counts what is new after
+    /// that, against everything the other wardrobe already holds by any route, not only what this
+    /// menu put there.
+    /// </remarks>
     private void DrawCopyTargets(IReadOnlyList<WardrobeItem> items)
     {
+        var batch = Services.WardrobeProfileService.WithCompanions(_config.ActiveProfile, items);
+        var extra = batch.Count - items.Count;
+
+        DrawCopyPicturesSwitch(null);
+        ImGui.Separator();
+
+        // Counted rather than assumed: using the menu twice should not build a wardrobe of
+        // duplicates, and saying so up front beats silently doing nothing. Counted once per batch
+        // rather than per frame, because the count indexes every card of every other wardrobe.
+        var stamp = new HashCode();
+        stamp.Add(_config.Revision);
+        foreach (var item in batch) stamp.Add(item.Id);
+
+        if (_copyTargetStamp != stamp.ToHashCode())
+        {
+            _copyTargetStamp = stamp.ToHashCode();
+            _copyTargetHave.Clear();
+
+            foreach (var profile in _config.Profiles)
+            {
+                if (profile.Id == _config.ActiveProfileId) continue;
+                var present = new Services.WardrobeProfileService.Presence(profile);
+                _copyTargetHave[profile.Id] = batch.Count(i => present.Find(i) != null);
+            }
+        }
+
         foreach (var profile in _config.Profiles.ToList())
         {
             if (profile.Id == _config.ActiveProfileId) continue;
 
-            // Counted rather than assumed: using the menu twice should not build a wardrobe of
-            // duplicates, and saying so up front beats silently doing nothing
-            var have = items.Count(i => profile.Items.Any(t => t.CopiedFromId == i.Id));
+            var have = _copyTargetHave.TryGetValue(profile.Id, out var h) ? h : 0;
 
-            var label = have > 0 && have == items.Count
+            var label = have > 0 && have == batch.Count
                 ? $"{profile.Name}  (already there)"
                 : have > 0
-                    ? $"{profile.Name}  ({items.Count - have} new)"
+                    ? $"{profile.Name}  ({batch.Count - have} new)"
                     : profile.Name;
 
-            if (ImGui.MenuItem(label, string.Empty, false, have < items.Count))
+            if (ImGui.MenuItem(label, string.Empty, false, have < batch.Count))
             {
-                var result  = _profiles.CopyTo(profile, items);
+                var result  = _profiles.CopyTo(profile, batch, PushOptions);
                 _copyStatus = result.Skipped > 0
                     ? $"Copied {result.Copied} to '{profile.Name}', skipped {result.Skipped} it already had."
                     : $"Copied {result.Copied} item(s) to '{profile.Name}'.";
             }
 
             if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-                ImGui.SetTooltip(have == items.Count
-                    ? $"'{profile.Name}' already has a copy of everything selected."
+                ImGui.SetTooltip(have == batch.Count
+                    ? $"'{profile.Name}' already has everything selected" +
+                      (extra > 0 ? " and what goes with it." : ".")
                     : $"Copies into '{profile.Name}' as a template.\n\n" +
                       "Same mods and options to start with — switch to that wardrobe\n" +
                       "to change what that character needs. Editing a copy never\n" +
-                      "touches the original.");
+                      "touches the original." +
+                      (extra > 0
+                          ? $"\n\nBrings {extra} more: the variants and linked pieces of\n" +
+                            "what is selected."
+                          : string.Empty));
         }
     }
 
@@ -345,11 +385,14 @@ public partial class PluginUi
 
         if (ImGui.BeginPopup(popup))
         {
+            DrawCopyPicturesSwitch(null);
+            ImGui.Separator();
+
             foreach (var profile in _config.Profiles.ToList())
             {
                 if (profile.Id == _config.ActiveProfileId) continue;
 
-                var have = outfits.Count(o => profile.Outfits.Any(t => t.CopiedFromId == o.Id));
+                var have = outfits.Count(o => Services.WardrobeProfileService.OutfitAlreadyIn(profile, o));
 
                 if (ImGui.MenuItem(have == outfits.Count
                                        ? $"{profile.Name}  (already there)"
@@ -357,7 +400,7 @@ public partial class PluginUi
                                    string.Empty, false, have < outfits.Count))
                 {
                     var result = _profiles.CopyOutfitsTo(_config.ActiveProfile, profile, outfits,
-                                                         out var items);
+                                                         out var items, PushOptions);
 
                     _copyStatus = $"Copied {result.Copied} outfit(s) and {items.Copied} item(s) " +
                                   $"to '{profile.Name}'.";
@@ -388,17 +431,38 @@ public partial class PluginUi
     /// <summary>Whether the panel is showing the source wardrobe's outfits rather than its items.</summary>
     private bool _importOutfits;
 
+    /// <summary>Which slot the item list is narrowed to, or null for all of them.</summary>
+    private EquipSlot? _importSlot;
+
+    /// <summary>
+    /// What this wardrobe already holds of the source's items, one answer per source item.
+    /// </summary>
+    /// <remarks>
+    /// Rebuilt when either wardrobe changes size or identity rather than every frame: the answer
+    /// costs a fingerprint per card, and the list asks for every row. An edit to an item's options
+    /// while the panel is open is not seen until the next import, which is the moment it would
+    /// have mattered anyway.
+    /// </remarks>
+    private readonly Dictionary<Guid, WardrobeItem?> _importHeld = new();
+    private (Guid Source, Guid Target, int SourceCount, int TargetCount)? _importHeldKey;
+
+    /// <summary>Side of a row's picture: exactly the two lines of text beside it, so a row is one height whatever it holds.</summary>
+    private static float ImportThumb => ImGui.GetFrameHeight() + ImGui.GetTextLineHeightWithSpacing();
+
     /// <summary>Opens the panel, on whichever other wardrobe comes first.</summary>
     private void OpenWardrobeImport()
     {
         _showImageBrowser   = false;
         _showTags           = false;
+        _showFolders        = false;
         _showCameraPresets  = false;
         _showWardrobeImport = true;
 
         _importPicked.Clear();
-        _importSearch  = string.Empty;
-        _importOutfits = false;
+        _importSearch   = string.Empty;
+        _importOutfits  = false;
+        _importSlot     = null;
+        _importHeldKey  = null;
 
         _importSourceId ??= _config.Profiles.Find(p => p.Id != _config.ActiveProfileId)?.Id;
     }
@@ -414,7 +478,8 @@ public partial class PluginUi
     /// <para>
     /// A list rather than a grid of cards. This panel shares the right-hand column with everything
     /// else, and a name and a slot are what you choose by when the pictures are of pieces you
-    /// already own.
+    /// already own — though a small picture beside the name turned out to be what tells two
+    /// similarly named cards apart, so the rows carry one unless that is switched off.
     /// </para>
     /// </remarks>
     private void DrawWardrobeImportPanel()
@@ -436,6 +501,10 @@ public partial class PluginUi
         ImGui.Spacing();
 
         var source = others.Find(p => p.Id == _importSourceId) ?? others[0];
+
+        // The source falls back when the wardrobe in force changes under an open panel — and the
+        // ticks were ids in the wardrobe that just stopped being the source
+        if (_importSourceId != source.Id) _importPicked.Clear();
         _importSourceId = source.Id;
 
         ImGui.TextDisabled("Take items from");
@@ -449,6 +518,7 @@ public partial class PluginUi
 
                 _importSourceId = other.Id;
                 _importPicked.Clear();
+                _importSlot = null;
             }
             ImGui.EndCombo();
         }
@@ -465,7 +535,12 @@ public partial class PluginUi
 
         ImGui.Spacing();
         ImGui.SetNextItemWidth(-1);
-        ImGui.InputTextWithHint("##importsearch", "Search…", ref _importSearch, 128);
+        ImGui.InputTextWithHint("##importsearch",
+            _importOutfits ? "Search names and tags…" : "Search names, tags, mods…",
+            ref _importSearch, 128);
+
+        if (!_importOutfits) DrawImportListControls(source);
+
         ImGui.Spacing();
 
         if (_importOutfits) DrawWardrobeImportOutfits(source);
@@ -491,20 +566,192 @@ public partial class PluginUi
         if (active) ImGui.PopStyleColor(2);
     }
 
+    /// <summary>The slot filter, the sort order, and the two switches on the item list.</summary>
+    /// <remarks>
+    /// Dropdowns rather than the grid's row of slot buttons: this column is narrow, and a source
+    /// wardrobe can have pieces in twenty slots. Only slots the source actually has are offered,
+    /// with counts, so the dropdown doubles as a summary of what is over there.
+    /// </remarks>
+    private void DrawImportListControls(WardrobeProfile source)
+    {
+        var slots = source.Items
+            .GroupBy(i => i.Slot)
+            .OrderBy(g => (int)g.Key)
+            .Select(g => (Slot: g.Key, Count: g.Count()))
+            .ToList();
+
+        if (_importSlot is { } chosen && slots.All(s => s.Slot != chosen)) _importSlot = null;
+
+        var half = (ImGui.GetContentRegionAvail().X - ImGui.GetStyle().ItemSpacing.X) / 2f;
+
+        ImGui.SetNextItemWidth(half);
+        var slotLabel = _importSlot is { } s ? s.DisplayName() : "All slots";
+        if (ImGui.BeginCombo("##importslot", slotLabel))
+        {
+            if (ImGui.Selectable($"All slots  ({source.Items.Count})", _importSlot == null))
+                _importSlot = null;
+
+            foreach (var (slot, count) in slots)
+            {
+                if (ImGui.Selectable($"{slot.DisplayName()}  ({count})", _importSlot == slot))
+                    _importSlot = slot;
+                if (_importSlot == slot) ImGui.SetItemDefaultFocus();
+            }
+            ImGui.EndCombo();
+        }
+
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(half);
+        var order = _config.WardrobeImportOrder;
+        if (ImGui.BeginCombo("##importorder", ImportOrderLabel(order)))
+        {
+            foreach (var option in new[] { WardrobeImportSort.Slot, WardrobeImportSort.Name,
+                                           WardrobeImportSort.Newest })
+            {
+                if (ImGui.Selectable(ImportOrderLabel(option), order == option) && order != option)
+                {
+                    _config.WardrobeImportOrder = option;
+                    _config.Save();
+                }
+            }
+            ImGui.EndCombo();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("By slot reads like the grid, with a heading per slot.\n" +
+                             "Newest first is for bringing over what the other\n" +
+                             "character imported most recently.");
+
+        var pictures = _config.WardrobeImportPictures;
+        if (ImGui.Checkbox("Pictures", ref pictures))
+        {
+            _config.WardrobeImportPictures = pictures;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("A small picture beside each row. Off, the list is names and\n" +
+                             "slots alone, which is shorter and lighter on a huge wardrobe.");
+
+        DrawImportTagSwitch(source);
+    }
+
+    /// <summary>The "tag what arrives" switch, shared by the item and outfit lists.</summary>
+    private void DrawImportTagSwitch(WardrobeProfile source)
+    {
+        var label = $"Tag with '{source.Name}'";
+
+        UiLayout.SameLineIfRoom(UiLayout.CheckboxWidth(label));
+
+        var tag = _config.TagWardrobeImports;
+        if (ImGui.Checkbox(label, ref tag))
+        {
+            _config.TagWardrobeImports = tag;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Puts the source wardrobe's name on everything this brings in, so\n" +
+                             "the copies can be found again once they are mixed in with the\n" +
+                             "rest. The originals are not tagged.");
+
+        DrawCopyPicturesSwitch(_config.ActiveProfile);
+    }
+
+    /// <summary>
+    /// The "copy the pictures too" switch, drawn beside the tag switch in the Import panel and on
+    /// its own line in the Copy to wardrobe popups.
+    /// </summary>
+    /// <remarks>
+    /// Disabled, with the reason, when the wardrobe the pictures would go to has no folder of its
+    /// own: the setting still holds — it is one setting for both directions — but this particular
+    /// copy has nowhere to put them, and a tick that quietly did nothing would be worse than one
+    /// that says so.
+    /// </remarks>
+    private void DrawCopyPicturesSwitch(WardrobeProfile? target)
+    {
+        const string label = "Copy pictures too";
+
+        if (target != null) UiLayout.SameLineIfRoom(UiLayout.CheckboxWidth(label));
+
+        var folder = target?.ImagesFolder;
+        var usable = target == null || (!string.IsNullOrEmpty(folder) && System.IO.Directory.Exists(folder));
+
+        if (!usable) ImGui.BeginDisabled();
+
+        var copy = _config.CopyPicturesBetweenWardrobes;
+        if (ImGui.Checkbox(label, ref copy))
+        {
+            _config.CopyPicturesBetweenWardrobes = copy;
+            _config.Save();
+        }
+
+        if (!usable) ImGui.EndDisabled();
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            ImGui.SetTooltip(!usable
+                ? $"'{target!.Name}' has no pictures folder of its own, so there is nowhere\n" +
+                  "to copy them to; the copy will show the same files as the original.\n" +
+                  "Give that wardrobe a folder in Settings to turn this on."
+                : (target != null
+                    ? $"Copies each picture file into '{target.Name}'s own pictures folder, so\n"
+                    : "Copies each picture file into the other wardrobe's own pictures folder, so\n") +
+                  "the copy has pictures of its own. Off, the copy shows the same files\n" +
+                  "as the original — fine until one of them is re-shot, or the other\n" +
+                  "wardrobe's folder is tidied.\n\n" +
+                  "One setting for both directions, the Import panel and the Copy to\n" +
+                  "wardrobe menu. The originals and their files are never touched." +
+                  (target == null
+                    ? "\nA wardrobe with no pictures folder of its own gets the shared files."
+                    : string.Empty));
+    }
+
+    private static string ImportOrderLabel(WardrobeImportSort order) => order switch
+    {
+        WardrobeImportSort.Name   => "By name",
+        WardrobeImportSort.Newest => "Newest first",
+        _                         => "By slot",
+    };
+
+    /// <summary>How the Import panel's copies are made: the tag switch and the pictures switch.</summary>
+    private Services.WardrobeProfileService.CopyOptions ImportOptions(WardrobeProfile source) =>
+        new(Tag: _config.TagWardrobeImports ? source.Name.Trim() : null,
+            Pictures: _config.CopyPicturesBetweenWardrobes);
+
+    /// <summary>How the Copy to wardrobe menu's copies are made: pictures only, no tag.</summary>
+    private Services.WardrobeProfileService.CopyOptions PushOptions =>
+        new(Pictures: _config.CopyPicturesBetweenWardrobes);
+
+    /// <summary>
+    /// What this wardrobe already holds of each of <paramref name="source"/>'s items, cached.
+    /// </summary>
+    private Dictionary<Guid, WardrobeItem?> ImportHeld(WardrobeProfile source)
+    {
+        var target = _config.ActiveProfile;
+        var key    = (source.Id, target.Id, source.Items.Count, target.Items.Count);
+
+        if (_importHeldKey == key) return _importHeld;
+
+        var present = new Services.WardrobeProfileService.Presence(target);
+
+        _importHeld.Clear();
+        foreach (var item in source.Items)
+            _importHeld[item.Id] = present.Find(item);
+
+        _importHeldKey = key;
+        return _importHeld;
+    }
+
     /// <summary>
     /// The source wardrobe's outfits, which bring their items with them.
     /// </summary>
     /// <remarks>
     /// An outfit is a list of item ids and nothing else, so one copied on its own would arrive as a
     /// name with an empty look behind it. Whatever it is made of comes too — reusing anything
-    /// already brought over rather than making a second copy of it.
+    /// already here rather than making a second copy of it, and the row says how many of its
+    /// pieces that is.
     /// </remarks>
     private void DrawWardrobeImportOutfits(WardrobeProfile source)
     {
         var target = _config.ActiveProfile;
-
-        var have = new HashSet<Guid>(
-            target.Outfits.Where(o => o.CopiedFromId.HasValue).Select(o => o.CopiedFromId!.Value));
+        var held   = ImportHeld(source);
 
         var needle = _importSearch.Trim();
         var outfits = source.Outfits
@@ -523,11 +770,13 @@ public partial class PluginUi
         }
 
         if (ImGui.SmallButton("Select all shown"))
-            foreach (var outfit in outfits.Where(o => !have.Contains(o.Id)))
+            foreach (var outfit in outfits.Where(o => !Services.WardrobeProfileService.OutfitAlreadyIn(target, o)))
                 _importPicked.Add(outfit.Id);
 
         ImGui.SameLine();
         if (ImGui.SmallButton("Clear")) _importPicked.Clear();
+
+        DrawImportTagSwitch(source);
 
         ImGui.Spacing();
 
@@ -536,7 +785,7 @@ public partial class PluginUi
         {
             foreach (var outfit in outfits)
             {
-                var owned = have.Contains(outfit.Id);
+                var owned = Services.WardrobeProfileService.OutfitAlreadyIn(target, outfit);
 
                 ImGui.PushID(outfit.Id.ToString());
                 if (owned) ImGui.BeginDisabled();
@@ -550,7 +799,17 @@ public partial class PluginUi
 
                 if (owned) ImGui.EndDisabled();
 
-                var note = owned ? "already here" : $"{outfit.ItemIds.Count} piece(s)";
+                if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                    DrawImportOutfitTooltip(source, outfit, held, owned);
+
+                var pieces = outfit.ItemIds.Count(id => source.Items.Exists(i => i.Id == id));
+                var here   = outfit.ItemIds.Count(id => held.TryGetValue(id, out var h) && h != null);
+
+                var note = owned          ? "already here"
+                         : here == 0      ? $"{pieces} piece(s)"
+                         : here == pieces ? $"{pieces} piece(s), all here"
+                                          : $"{pieces} piece(s), {here} here";
+
                 UiLayout.SameLineIfRoomForText(note);
                 ImGui.TextDisabled(note);
 
@@ -565,8 +824,9 @@ public partial class PluginUi
         if (!canAdd) ImGui.BeginDisabled();
         if (ImGui.Button($" Import {chosen.Count} outfit(s) ", new Vector2(-1, 0)))
         {
-            var result = _profiles.CopyOutfitsTo(source, target, chosen, out var items);
+            var result = _profiles.CopyOutfitsTo(source, target, chosen, out var items, ImportOptions(source));
             _importPicked.Clear();
+            _importHeldKey = null;
 
             _copyStatus = items.Copied > 0
                 ? $"Imported {result.Copied} outfit(s) and {items.Copied} item(s) they needed."
@@ -576,39 +836,96 @@ public partial class PluginUi
 
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
             ImGui.SetTooltip(canAdd
-                ? "Brings the outfits and whatever they are made of. Pieces you\n" +
-                  "already took across are reused rather than copied again."
+                ? "Brings the outfits and whatever they are made of. Pieces\n" +
+                  "already here are reused rather than copied again."
                 : "Tick some outfits first.");
 
         if (!string.IsNullOrEmpty(_copyStatus))
             Hint(_copyStatus);
     }
 
+    /// <summary>What an outfit is made of, and which of those pieces are here already.</summary>
+    private void DrawImportOutfitTooltip(WardrobeProfile source, Outfit outfit,
+        IReadOnlyDictionary<Guid, WardrobeItem?> held, bool owned)
+    {
+        ImGui.BeginTooltip();
+
+        if (owned)
+        {
+            ImGui.TextUnformatted("This wardrobe already has this outfit.");
+            ImGui.EndTooltip();
+            return;
+        }
+
+        var any = false;
+        foreach (var id in outfit.ItemIds)
+        {
+            if (source.Items.Find(i => i.Id == id) is not { } piece) continue;
+            any = true;
+
+            var here = held.TryGetValue(id, out var h) && h != null;
+            ImGui.TextUnformatted(piece.Name);
+            ImGui.SameLine();
+            ImGui.TextDisabled(here ? "— here already" : $"— {piece.Slot.DisplayName()}");
+        }
+
+        if (outfit.VanillaItems.Count > 0)
+        {
+            if (any) ImGui.Spacing();
+            ImGui.TextDisabled($"{outfit.VanillaItems.Count} vanilla piece(s), which need no copying.");
+        }
+        else if (!any)
+            ImGui.TextDisabled("Made of nothing that still exists over there.");
+
+        ImGui.EndTooltip();
+    }
+
+    /// <summary>
+    /// The source wardrobe's items, grouped as the grid groups them: originals with their variants
+    /// folded beneath.
+    /// </summary>
+    /// <remarks>
+    /// Ticking an original ticks its variants and its linked partners too, which is what somebody
+    /// ticking "the red dress" means when the red dress is four colours and a pair of shoes that go
+    /// with it. Each can then be unticked on its own. Unticking the original takes its variants
+    /// with it and leaves links alone — a linked piece may well be wanted for something else.
+    /// <para>
+    /// A variant whose original is filtered out of view, or was never in this wardrobe, stands on
+    /// its own line: the fold is a reading aid, not a rule about what can be picked.
+    /// </para>
+    /// </remarks>
     private void DrawWardrobeImportList(WardrobeProfile source)
     {
         var target = _config.ActiveProfile;
+        var held   = ImportHeld(source);
 
-        // Anything already brought over, so a second visit does not offer the same pieces again
-        var have = new HashSet<Guid>(
-            target.Items.Where(i => i.CopiedFromId.HasValue).Select(i => i.CopiedFromId!.Value));
-
-        var needle = _importSearch.Trim();
-        var items = source.Items
-            .Where(i => needle.Length == 0 ||
-                        i.Name.Contains(needle, StringComparison.OrdinalIgnoreCase) ||
-                        i.Tags.Any(t => t.Contains(needle, StringComparison.OrdinalIgnoreCase)))
-            .OrderBy(i => i.Name, Services.NaturalOrder.Comparer)
+        var needle  = _importSearch.Trim();
+        var visible = source.Items
+            .Where(i => _importSlot == null || i.Slot == _importSlot)
+            .Where(i => needle.Length == 0 || ImportSearchMatches(i, needle))
             .ToList();
 
-        var available = items.Where(i => !have.Contains(i.Id)).ToList();
-
-        if (items.Count == 0)
+        if (visible.Count == 0)
         {
-            ImGui.TextDisabled(needle.Length > 0
-                ? $"Nothing in '{source.Name}' matches '{needle}'."
+            ImGui.TextDisabled(needle.Length > 0 || _importSlot != null
+                ? $"Nothing in '{source.Name}' matches."
                 : $"'{source.Name}' is empty.");
             return;
         }
+
+        var visibleIds = new HashSet<Guid>(visible.Select(i => i.Id));
+
+        // Originals in the chosen order; a variant sits under its original when both are shown
+        var order     = _config.WardrobeImportOrder;
+        var originals = Sorted(visible.Where(i => i.VariantOfId is not { } p || !visibleIds.Contains(p)), order)
+            .ToList();
+
+        var variantsOf = visible
+            .Where(i => i.VariantOfId is { } p && visibleIds.Contains(p))
+            .GroupBy(i => i.VariantOfId!.Value)
+            .ToDictionary(g => g.Key, g => Sorted(g, order).ToList());
+
+        var available = visible.Where(i => held.TryGetValue(i.Id, out var h) && h == null).ToList();
 
         if (ImGui.SmallButton("Select all shown"))
             foreach (var item in available) _importPicked.Add(item.Id);
@@ -616,33 +933,53 @@ public partial class PluginUi
         ImGui.SameLine();
         if (ImGui.SmallButton("Clear")) _importPicked.Clear();
 
+        if (available.Count < visible.Count)
+        {
+            var note = $"{visible.Count - available.Count} already here";
+            UiLayout.SameLineIfRoomForText(note);
+            ImGui.TextDisabled(note);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Greyed out below. A piece is here already when this wardrobe\n" +
+                                 "holds a copy of it, the original it was copied from, or the same\n" +
+                                 "mod at the same options in the same slot — however it got here.");
+        }
+
         ImGui.Spacing();
 
         // Reserve the action row at the bottom, so the list scrolls rather than pushing it off
         var footer = ImGui.GetFrameHeightWithSpacing() + ImGui.GetTextLineHeightWithSpacing();
         if (ImGui.BeginChild("##importlist", new Vector2(-1, -footer), true))
         {
-            foreach (var item in items)
+            // Only rows in view are drawn; the rest are skipped as blank space of the same height.
+            // A row that is drawn loads its picture, and a wardrobe of five hundred pieces drawn in
+            // full every frame was five hundred full-size pictures loaded at once — the stutter
+            // that hit whenever the panel opened, and again on every swap of wardrobe while it was.
+            var rowHeight = (_config.WardrobeImportPictures ? ImportThumb : ImGui.GetFrameHeight())
+                          + ImGui.GetStyle().ItemSpacing.Y;
+            var top       = ImGui.GetScrollY() - rowHeight;
+            var bottom    = ImGui.GetScrollY() + ImGui.GetWindowHeight() + rowHeight;
+
+            EquipSlot? heading = null;
+
+            foreach (var item in originals)
             {
-                var owned = have.Contains(item.Id);
-
-                ImGui.PushID(item.Id.ToString());
-
-                if (owned) ImGui.BeginDisabled();
-
-                var picked = _importPicked.Contains(item.Id);
-                if (ImGui.Checkbox($"{item.Name}##pick", ref picked))
+                if (order == WardrobeImportSort.Slot && _importSlot == null && heading != item.Slot)
                 {
-                    if (picked) _importPicked.Add(item.Id);
-                    else        _importPicked.Remove(item.Id);
+                    if (heading != null) ImGui.Spacing();
+                    ImGui.TextDisabled(item.Slot.DisplayName());
+                    heading = item.Slot;
                 }
 
-                if (owned) ImGui.EndDisabled();
+                var variants = variantsOf.TryGetValue(item.Id, out var v) ? v : null;
 
-                UiLayout.SameLineIfRoomForText(item.Slot.DisplayName());
-                ImGui.TextDisabled(owned ? "already here" : item.Slot.DisplayName());
+                DrawImportRowOrSkip(source, item, held, variants, indent: false, rowHeight, top, bottom);
 
-                ImGui.PopID();
+                if (variants == null) continue;
+
+                ImGui.Indent(UiScale.S(16f));
+                foreach (var variant in variants)
+                    DrawImportRowOrSkip(source, variant, held, null, indent: true, rowHeight, top, bottom);
+                ImGui.Unindent(UiScale.S(16f));
             }
         }
         ImGui.EndChild();
@@ -653,8 +990,9 @@ public partial class PluginUi
         if (!canAdd) ImGui.BeginDisabled();
         if (ImGui.Button($" Import {chosen.Count} item(s) ", new Vector2(-1, 0)))
         {
-            var result = _profiles.CopyTo(target, chosen);
+            var result = _profiles.CopyTo(target, chosen, ImportOptions(source));
             _importPicked.Clear();
+            _importHeldKey = null;
 
             _copyStatus = result.Skipped > 0
                 ? $"Imported {result.Copied}, skipped {result.Skipped} already here."
@@ -663,13 +1001,211 @@ public partial class PluginUi
         if (!canAdd) ImGui.EndDisabled();
 
         if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
-            ImGui.SetTooltip(canAdd
-                ? "Copies them in with the same mods and options, ready to be\n" +
-                  "edited for this character."
-                : "Tick some items first.");
+        {
+            var hidden = chosen.Count(i => !visibleIds.Contains(i.Id));
+            ImGui.SetTooltip(!canAdd
+                ? "Tick some items first."
+                : hidden > 0
+                    ? "Copies them in with the same mods and options, ready to be\n" +
+                      $"edited for this character.\n\n{hidden} of them are ticked but not shown by the\n" +
+                      "current search or slot filter — Clear unticks everything."
+                    : "Copies them in with the same mods and options, ready to be\n" +
+                      "edited for this character.");
+        }
 
         if (!string.IsNullOrEmpty(_copyStatus))
             Hint(_copyStatus);
+    }
+
+    private static IEnumerable<WardrobeItem> Sorted(IEnumerable<WardrobeItem> items, WardrobeImportSort order) =>
+        order switch
+        {
+            WardrobeImportSort.Name   => items.OrderBy(i => i.Name, Services.NaturalOrder.Comparer),
+            WardrobeImportSort.Newest => items.OrderByDescending(i => i.DateAdded)
+                                              .ThenBy(i => i.Name, Services.NaturalOrder.Comparer),
+            _                         => items.OrderBy(i => (int)i.Slot)
+                                              .ThenBy(i => i.Name, Services.NaturalOrder.Comparer),
+        };
+
+    /// <summary>Name, tags, notes, and the mods behind the item, so a piece can be found by any of them.</summary>
+    private static bool ImportSearchMatches(WardrobeItem item, string needle) =>
+        item.Name.Contains(needle, StringComparison.OrdinalIgnoreCase)
+        || item.Tags.Any(t => t.Contains(needle, StringComparison.OrdinalIgnoreCase))
+        || (item.Notes?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
+        || (item.GlamourerItemName?.Contains(needle, StringComparison.OrdinalIgnoreCase) ?? false)
+        || item.Mods.Any(m => m.ModName.Contains(needle, StringComparison.OrdinalIgnoreCase)
+                           || m.ModDirectory.Contains(needle, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The row if any of it is in view, otherwise the space it would take.</summary>
+    /// <remarks>
+    /// The blank is the row's nominal height, and a drawn row is padded to the same, so the
+    /// scroll range does not shift as rows come into view. Text-only rows are a frame high exactly;
+    /// picture rows are the picture plus spacing.
+    /// </remarks>
+    private void DrawImportRowOrSkip(WardrobeProfile source, WardrobeItem item,
+        IReadOnlyDictionary<Guid, WardrobeItem?> held, IReadOnlyList<WardrobeItem>? variants, bool indent,
+        float rowHeight, float top, float bottom)
+    {
+        var y = ImGui.GetCursorPosY();
+
+        if (y + rowHeight < top || y > bottom)
+        {
+            ImGui.Dummy(new Vector2(0f, rowHeight - ImGui.GetStyle().ItemSpacing.Y));
+            return;
+        }
+
+        DrawImportRow(source, item, held, variants, indent);
+    }
+
+    /// <summary>One row of the item list: picture, tick box, and what the piece is.</summary>
+    /// <param name="variants">The variants folded under this row, or null for a row that has none.</param>
+    private void DrawImportRow(WardrobeProfile source, WardrobeItem item,
+        IReadOnlyDictionary<Guid, WardrobeItem?> held, IReadOnlyList<WardrobeItem>? variants, bool indent)
+    {
+        var owned    = held.TryGetValue(item.Id, out var existing) ? existing : null;
+        var pictures = _config.WardrobeImportPictures;
+        var thumb    = pictures ? ImportThumb : 0f;
+
+        ImGui.PushID(item.Id.ToString());
+
+        if (pictures)
+        {
+            if (ItemTexture(item)?.GetWrapOrDefault() is { } wrap)
+                ImageDraw.Square(wrap, thumb);
+            else
+            {
+                var at = ImGui.GetCursorScreenPos();
+                ImGui.GetWindowDrawList().AddRectFilled(at, at + new Vector2(thumb, thumb),
+                    ImGui.GetColorU32(new Vector4(0.07f, 0.07f, 0.09f, 1f)));
+                ImGui.Dummy(new Vector2(thumb, thumb));
+            }
+
+            if (ImGui.IsItemHovered()) DrawImportPreview(item);
+
+            ImGui.SameLine();
+            ImGui.BeginGroup();
+        }
+
+        if (owned != null) ImGui.BeginDisabled();
+
+        var picked = _importPicked.Contains(item.Id);
+        if (ImGui.Checkbox($"{item.Name}##pick", ref picked))
+        {
+            if (picked)
+            {
+                _importPicked.Add(item.Id);
+
+                foreach (var companion in Services.WardrobeProfileService.WithCompanions(source, new[] { item }))
+                    if (held.TryGetValue(companion.Id, out var h) && h == null)
+                        _importPicked.Add(companion.Id);
+            }
+            else
+            {
+                _importPicked.Remove(item.Id);
+
+                if (variants != null)
+                    foreach (var variant in variants)
+                        _importPicked.Remove(variant.Id);
+            }
+        }
+
+        if (owned != null) ImGui.EndDisabled();
+
+        if (ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+            DrawImportRowTooltip(source, item, owned, variants);
+
+        // The second line, or the tail of the only line: slot, then what travels with it
+        var parts = new List<string>();
+
+        if (owned != null)
+        {
+            parts.Add(owned.CopiedFromId == item.Id || item.CopiedFromId == owned.Id
+                ? "already here"
+                : owned.Name.Equals(item.Name, StringComparison.OrdinalIgnoreCase)
+                    ? "already here"
+                    : $"here as '{owned.Name}'");
+        }
+        else
+        {
+            if (!indent) parts.Add(item.Slot.DisplayName());
+
+            var links = item.LinkedItemIds.Count(id => source.Items.Exists(i => i.Id == id));
+            if (variants is { Count: > 0 }) parts.Add($"+{variants.Count} variant(s)");
+            if (links > 0)                  parts.Add($"+{links} linked");
+        }
+
+        var note = string.Join(" · ", parts);
+
+        if (pictures)
+        {
+            if (note.Length > 0) ImGui.TextDisabled(note);
+            ImGui.EndGroup();
+
+            // Rows are as tall as the picture whatever the text does, so the list reads as rows
+            var shortfall = thumb - ImGui.GetItemRectSize().Y;
+            if (shortfall > 0f) ImGui.Dummy(new Vector2(0f, shortfall - ImGui.GetStyle().ItemSpacing.Y));
+        }
+        else if (note.Length > 0)
+        {
+            UiLayout.SameLineIfRoomForText(note);
+            ImGui.TextDisabled(note);
+        }
+
+        ImGui.PopID();
+    }
+
+    /// <summary>The picture at a size you can actually see, on hover.</summary>
+    private void DrawImportPreview(WardrobeItem item)
+    {
+        if (ItemTexture(item)?.GetWrapOrDefault() is not { } wrap) return;
+
+        ImGui.BeginTooltip();
+        ImageDraw.Square(wrap, UiScale.S(220f));
+        ImGui.EndTooltip();
+    }
+
+    /// <summary>Why a row is greyed out, or what ticking it brings.</summary>
+    private void DrawImportRowTooltip(WardrobeProfile source, WardrobeItem item, WardrobeItem? owned,
+        IReadOnlyList<WardrobeItem>? variants)
+    {
+        ImGui.BeginTooltip();
+
+        if (owned != null)
+        {
+            var how = owned.CopiedFromId == item.Id ? "a copy of this"
+                    : item.CopiedFromId == owned.Id ? "the original this was copied from"
+                    : owned.CopiedFromId != null && owned.CopiedFromId == item.CopiedFromId
+                                                    ? "a copy of the same original"
+                                                    : "the same mod at the same options, in the same slot";
+
+            ImGui.TextUnformatted($"This wardrobe already has this piece: '{owned.Name}' is {how}.");
+        }
+        else
+        {
+            var mods = item.Mods.Where(m => !string.IsNullOrEmpty(m.ModName)).Select(m => m.ModName).ToList();
+            if (mods.Count > 0)
+                ImGui.TextDisabled(string.Join(", ", mods));
+            else if (!string.IsNullOrEmpty(item.GlamourerItemName))
+                ImGui.TextDisabled(item.GlamourerItemName);
+
+            var links = item.LinkedItemIds
+                .Select(id => source.Items.Find(i => i.Id == id))
+                .Where(i => i != null)
+                .Select(i => i!.Name)
+                .ToList();
+
+            if (variants is { Count: > 0 } || links.Count > 0)
+            {
+                ImGui.Spacing();
+                ImGui.TextUnformatted("Ticking this also ticks:");
+                if (variants is { Count: > 0 })
+                    ImGui.TextDisabled($"  {variants.Count} variant(s) — untick any you do not want");
+                foreach (var name in links)
+                    ImGui.TextDisabled($"  {name}, which is linked to it");
+            }
+        }
+
+        ImGui.EndTooltip();
     }
 
     // ── Settings ──────────────────────────────────────────────────────────────

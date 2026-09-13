@@ -11,7 +11,8 @@ Open **Import → Share**.
 It contains the *description* of your items and outfits:
 
 - the name, slot, tags and notes
-- which Penumbra mod each one needs, and which options within that mod
+- which Penumbra mod each one needs, and which options within that mod — and which of its groups
+  is a body size
 - the game item and model set the wardrobe detected
 - for outfits: the pieces, the dyes on each of them, the plain game items filling the other slots,
   and whether the hat and weapon show

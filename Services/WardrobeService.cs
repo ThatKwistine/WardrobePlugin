@@ -1076,6 +1076,35 @@ public class WardrobeService : IDisposable
     public bool IsItemWorn(WardrobeItem item) =>
         _config.WornItems.TryGetValue(item.WornKey(), out var id) && id == item.Id;
 
+    // ── Size groups ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Sends one group of one of the item's mods to Penumbra as the item now stores it, for a pick
+    /// made on the card of an item that is on. Nothing else about the item is touched.
+    /// </summary>
+    /// <remarks>
+    /// Penumbra reloads the affected files on a settings change by itself, the same way it does
+    /// when the edit panel saves a worn item, so there is no redraw here.
+    /// </remarks>
+    public void ReapplyGroup(WardrobeItem item, ModReference mod, string group)
+    {
+        if (string.IsNullOrEmpty(mod.ModDirectory)) return;
+
+        if (mod.Options.TryGetValue(group, out var option))
+            _penumbra.ApplyModSettings(mod.Collection, mod.ModDirectory, mod.ModName,
+                new Dictionary<string, string> { [group] = option });
+        else if (mod.OptionStates.TryGetValue(group, out var states))
+            _penumbra.ApplyModOptionStates(mod.Collection, mod.ModDirectory, mod.ModName,
+                new Dictionary<string, Dictionary<string, bool>> { [group] = states });
+        else if (mod.MultiOptions.TryGetValue(group, out var selection))
+            _penumbra.ApplyMultiModSettings(mod.Collection, mod.ModDirectory, mod.ModName,
+                new Dictionary<string, List<string>> { [group] = selection });
+        else
+            return;
+
+        _log.Debug($"[Wardrobe] Re-applied '{item.Name}' ({mod.ModName}: {group}) from the card");
+    }
+
     // ── Linked items ──────────────────────────────────────────────────────────
 
     /// <summary>
