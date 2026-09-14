@@ -234,6 +234,15 @@ Full details in [Tags](Tags.md#tags-from-glamourer-folders).
 hairstyle your character has. With this on, the plugin also sets the hairstyle number the mod
 expects.
 
+**Put worn items back after a redraw.** On by default. Whenever Penumbra redraws your character — a
+zone change, a mod toggle, another plugin applying something — the items you are wearing, their dyes
+and the outfit's hat and weapon toggles are sent to Glamourer again, so the outfit comes through the
+redraw intact. That also puts back a piece you took off in Glamourer, or one another plugin removed,
+because the wardrobe still has it down as worn. Turn this off and a redraw is left alone: what you
+change in Glamourer stays changed until you wear something from the wardrobe again. A base
+character's design is not covered by this — it has [its own switch](#base-character) on the base.
+See [After a redraw](Wearing-Items.md#after-a-redraw).
+
 **Revert customisation mods to** takes a Glamourer design holding your character's normal look.
 Reverting a hair, face or skin item re-applies that design's *customisations only*, so equipment is
 untouched. Without one, the plugin restores just the hairstyle number it noted when the item was
@@ -508,6 +517,10 @@ frame for the crop rather than for the window. **Off**, **During screenshot sess
 or **Always**. It is never in the resulting picture, and it stands down for 9:16 outfit captures
 because GPose's portrait mode already guides those — see
 [The crop guide](Images-and-Screenshots.md#the-crop-guide).
+
+**Keep the guide when the game's interface is hidden** leaves the guide on the cleared screen after
+you hide the interface (Scroll Lock by default). Off, hiding the interface puts the guide away with
+the wardrobe's windows. Shown only while the guide is on, and also on the session HUD.
 
 **Edit Angles For Every Slot** opens every slot's camera presets in one panel, for framing a whole
 wardrobe's angles in one visit to GPose instead of inventing each one while a session waits. See

@@ -186,11 +186,22 @@ public partial class PluginUi
         {
             _showImageBrowser = false;
             _showSettings     = false;
+            _showFolders      = false;
 
             // Whatever the last visit ended on has been read by now, and would otherwise reappear
             // as if something had just happened
             _newTag       = string.Empty;
             _newTagStatus = string.Empty;
+        });
+
+        // The same panel the menu bar's View → Folders opens, one button along from Tags
+        UiLayout.SameLineIfRoomForButton(" Folders ");
+        ToggleButton(" Folders ", ref _showFolders, onActivate: () =>
+        {
+            _showImageBrowser  = false;
+            _showSettings      = false;
+            _showTags          = false;
+            _panelFolderStatus = string.Empty;
         });
 
 

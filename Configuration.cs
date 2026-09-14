@@ -1048,6 +1048,17 @@ public class Configuration : IPluginConfiguration
     public bool TagTreeInEditor { get; set; } = false;
 
     /// <summary>
+    /// Which of the item edit panel's collapsing sections are open, by key.
+    /// </summary>
+    /// <remarks>
+    /// Kept here because ImGui does not keep tree state between sessions, and a section somebody
+    /// opens is usually one they want open on the next item too — and on the next launch. Tags
+    /// starts open as the section most edits go on to; the rest start folded so the panel opens
+    /// on the picture, the name and the slot rather than on a scroll.
+    /// </remarks>
+    public List<string> EditSectionsOpen { get; set; } = new() { "tags" };
+
+    /// <summary>
     /// Keep Glamourer's advanced dyes with an outfit, on top of the game's two dye channels.
     /// </summary>
     /// <remarks>
@@ -1225,6 +1236,20 @@ public class Configuration : IPluginConfiguration
     /// </remarks>
     public CropGuideMode CropGuide { get; set; } = CropGuideMode.Sessions;
 
+    /// <summary>
+    /// Whether the crop guide stays on screen after the player hides the game's interface.
+    /// </summary>
+    /// <remarks>
+    /// The plugin draws its own interface while one is hidden — it has to, because a session reads
+    /// each picture in the draw callback and Dalamud stops calling that when the interface goes —
+    /// so it is this plugin, not Dalamud, that decides what hiding the interface hides (#31). The
+    /// windows always go: hiding the interface means the game and nothing else, and a window left
+    /// behind is the whole complaint. The guide is the one thing with a case for staying, since it
+    /// exists for exactly the moment someone clears the screen to frame a shot; but it is also
+    /// something drawn over the game, so it goes too unless asked to stay.
+    /// </remarks>
+    public bool CropGuideWhenUiHidden { get; set; }
+
     /// <summary>Ordering applied to the item grid.</summary>
     public ItemSortMode SortMode { get; set; } = ItemSortMode.NameAsc;
 
@@ -1236,6 +1261,24 @@ public class Configuration : IPluginConfiguration
     /// hair mod only shows if that hairstyle already happens to be selected.
     /// </summary>
     public bool ApplyHairstyleWithHairMods { get; set; } = true;
+
+    /// <summary>
+    /// Put the worn items back on after Penumbra redraws the character.
+    /// </summary>
+    /// <remarks>
+    /// On, a redraw — a zone change, a mod toggle, another plugin's apply — is followed by every
+    /// worn item, its dyes and the outfit's hat and weapon toggles being sent to Glamourer again,
+    /// so the outfit comes through it intact. It also means a piece taken off in Glamourer, or by
+    /// another plugin, comes straight back at the next redraw: the wardrobe still has it down as
+    /// worn and nothing tells it otherwise (#33). Off, a redraw is left alone, and what was changed
+    /// in Glamourer stays changed until something is worn from the wardrobe again.
+    /// <para>
+    /// Only the items. The base character's design has a switch of its own on the base
+    /// (<see cref="BaseCharacter.KeepDesignApplied"/>), and a worn sculpt's design dresses
+    /// the face or the skin, which is not what anyone takes off in Glamourer for a scene.
+    /// </para>
+    /// </remarks>
+    public bool RestoreWornAfterRedraw { get; set; } = true;
 
     /// <summary>
     /// Hairstyle the character had before a wardrobe hair item changed it, restored on revert.

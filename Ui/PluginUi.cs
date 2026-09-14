@@ -6105,6 +6105,23 @@ public partial class PluginUi : Window, IDisposable
             ImGui.SetTooltip("Shrinks the wardrobe window to a small session view while\n" +
                              "a session runs, so it stays out of the shot.");
 
+        // Only while there is a guide to keep; the HUD is narrow, so the label is the short form of
+        // the one in settings
+        if (_config.CropGuide != Configuration.CropGuideMode.Off)
+        {
+            var guideWhenHidden = _config.CropGuideWhenUiHidden;
+            if (ImGui.Checkbox("Keep crop guide when UI is hidden", ref guideWhenHidden))
+            {
+                _config.CropGuideWhenUiHidden = guideWhenHidden;
+                _config.Save();
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Hiding the interface (Scroll Lock by default) puts the wardrobe's\n" +
+                                 "windows away, and normally the guide with them. Tick this to leave\n" +
+                                 "the guide up on the cleared screen while you frame the shot.\n\n" +
+                                 "The same checkbox is under Settings → Crop Guide.");
+        }
+
         ImGui.Spacing();
         DrawSessionBasePicker();
 
@@ -10671,6 +10688,24 @@ public partial class PluginUi : Window, IDisposable
                              "Turn this off to leave your hairstyle untouched.");
 
         ImGui.Spacing();
+
+        var restoreWorn = _config.RestoreWornAfterRedraw;
+        if (ImGui.Checkbox("Put worn items back after a redraw", ref restoreWorn))
+        {
+            _config.RestoreWornAfterRedraw = restoreWorn;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Whenever Penumbra redraws your character — a zone change, a mod\n" +
+                             "toggle, another plugin applying something — the items you are\n" +
+                             "wearing, their dyes and the outfit's hat and weapon toggles are\n" +
+                             "sent to Glamourer again, so the outfit comes through it intact.\n\n" +
+                             "That also puts back a piece you took off in Glamourer, or one another\n" +
+                             "plugin removed. Turn this off and a redraw is left alone: what you\n" +
+                             "change in Glamourer stays changed until you wear something from\n" +
+                             "the wardrobe again.");
+
+        ImGui.Spacing();
         DrawRevertDesignPicker();
     }
 
@@ -12028,6 +12063,20 @@ public partial class PluginUi : Window, IDisposable
                              "Square captures only. An outfit shot with portrait previews on\n" +
                              "is cropped 9:16 and gets no guide — GPose's own portrait mode\n" +
                              "already frames that one for you.");
+
+        if (_config.CropGuide == Configuration.CropGuideMode.Off) return;
+
+        ImGui.Spacing();
+        var whenHidden = _config.CropGuideWhenUiHidden;
+        if (ImGui.Checkbox("Keep the guide when the game's interface is hidden", ref whenHidden))
+        {
+            _config.CropGuideWhenUiHidden = whenHidden;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Hiding the interface (Scroll Lock by default) puts the wardrobe's\n" +
+                             "windows away, and normally the guide with them. Tick this to leave\n" +
+                             "the guide up on the cleared screen while you frame the shot.");
 
         ImGui.TextDisabled(options[current].Hint);
     }

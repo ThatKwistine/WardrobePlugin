@@ -111,6 +111,12 @@ public class ItemImportPanel : IDisposable
         /// back on Save, so Cancel discards it like every other edit-mode field.
         /// </summary>
         public HashSet<string> SizeGroups = new();
+
+        /// <summary>Group → option → what the card calls it, staged from <see cref="ModReference.SizeOptionLabels"/>.</summary>
+        public Dictionary<string, Dictionary<string, string>> SizeOptionLabels = new();
+
+        /// <summary>Group → options left off the card, staged from <see cref="ModReference.SizeHiddenOptions"/>.</summary>
+        public Dictionary<string, HashSet<string>> SizeHidden = new();
     }
     private readonly List<EditModOptions> _editModOptions = new();
 
@@ -343,6 +349,10 @@ public class ItemImportPanel : IDisposable
             entry.ResolvedPath = path;
             entry.PathExists   = path != null && Directory.Exists(path);
             entry.SizeGroups   = new HashSet<string>(mod.SizeGroups);
+            entry.SizeOptionLabels = mod.SizeOptionLabels.ToDictionary(kv => kv.Key,
+                                                                       kv => new Dictionary<string, string>(kv.Value));
+            entry.SizeHidden       = mod.SizeHiddenOptions.ToDictionary(kv => kv.Key,
+                                                                        kv => new HashSet<string>(kv.Value));
 
             if (entry.PathExists)
             {
@@ -532,6 +542,59 @@ public class ItemImportPanel : IDisposable
             ImGui.SetTooltip("Puts this group on the item's card as a quick pick of its options," + "\n" +
                              "for a size you change often. The pick sets the option above, the" + "\n" +
                              "same as choosing it here.");
+
+        // Which options the card offers and what it calls them, folded under the tick. A body
+        // mod can ship sixty sizes of which one character wears four, and a refit shipped as its
+        // own mod has one toggle called "Top", which on the card says nothing about what it is
+        if (on && ImGui.TreeNode($"On the card##sizecard_{g.GroupName}"))
+        {
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Untick an option to leave it off the card's pick — it is still" + "\n" +
+                                 "here, and still applies if it is the one chosen. The box beside" + "\n" +
+                                 "it is what the card calls it; blank keeps the mod's own name." + "\n" +
+                                 "Penumbra is not changed by either.");
+
+            if (!opts.SizeOptionLabels.TryGetValue(g.GroupName, out var labels))
+                opts.SizeOptionLabels[g.GroupName] = labels = new Dictionary<string, string>();
+            if (!opts.SizeHidden.TryGetValue(g.GroupName, out var hidden))
+                opts.SizeHidden[g.GroupName] = hidden = new HashSet<string>();
+
+            var shownCount = g.OptionNames.Count(o => !hidden.Contains(o));
+            ImGui.TextDisabled($"{shownCount} of {g.OptionNames.Count} on the card");
+            ImGui.SameLine();
+            if (ImGui.SmallButton($"All##sizeall_{g.GroupName}")) hidden.Clear();
+            ImGui.SameLine();
+            if (ImGui.SmallButton($"None##sizenone_{g.GroupName}"))
+                foreach (var o in g.OptionNames) hidden.Add(o);
+
+            var nameW = g.OptionNames.Max(n => ImGui.CalcTextSize(n).X);
+            foreach (var option in g.OptionNames)
+            {
+                var shown = !hidden.Contains(option);
+                if (ImGui.Checkbox($"##sizeshow_{g.GroupName}_{option}", ref shown))
+                {
+                    if (shown) hidden.Remove(option);
+                    else       hidden.Add(option);
+                }
+                ImGui.SameLine();
+                var afterBox = ImGui.GetCursorPosX();
+
+                labels.TryGetValue(option, out var label);
+                label ??= string.Empty;
+
+                ImGui.AlignTextToFramePadding();
+                if (shown) ImGui.TextUnformatted(option);
+                else       ImGui.TextDisabled(option);
+                ImGui.SameLine(afterBox + nameW + ImGui.GetStyle().ItemSpacing.X);
+                ImGui.SetNextItemWidth(-1);
+                if (ImGui.InputTextWithHint($"##sizelabel_{g.GroupName}_{option}", option, ref label, 48))
+                {
+                    if (string.IsNullOrWhiteSpace(label)) labels.Remove(option);
+                    else                                  labels[option] = label;
+                }
+            }
+            ImGui.TreePop();
+        }
         ImGui.Unindent();
     }
 
@@ -552,13 +615,113 @@ public class ItemImportPanel : IDisposable
 
     // ── Edit mode ─────────────────────────────────────────────────────────────
 
+    /// <summary>
+    /// The edit panel: the picture, the name and the slot, then everything else folded away.
+    /// </summary>
+    /// <remarks>
+    /// The panel used to be ten sections stacked in one 360px column — game item, collections,
+    /// supplementary mods, tags, notes, links, options, variants — with Save at the very bottom of
+    /// it. Most edits touch the name, the picture or the tags, and every one of them meant scrolling
+    /// past the rest to reach the button. So the same thing Settings had done to it: the parts
+    /// every edit needs stay on screen, and each remaining section is a collapsing header with its
+    /// count in the title, so "Linked items (2)" says what is inside without opening it.
+    /// <para>
+    /// Which headers are open is kept in the config rather than left to ImGui, whose tree state is
+    /// not saved between sessions. Somebody who always wants Mod Options open should not have to
+    /// click it open every launch, and somebody who liked the old everything-at-once panel gets
+    /// it back by opening the lot once.
+    /// </para>
+    /// </remarks>
     private void DrawEditMode()
     {
         ImGui.TextUnformatted("Edit Item");
         ImGui.Separator();
         ImGui.Spacing();
 
-        // Image preview
+        DrawEditPicture();
+        // Take Screenshot calls Close(), which nulls _editTarget — nothing below may run that frame
+        if (_editTarget == null) return;
+
+        DrawEditBasics();
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var item = _editTarget!;
+        var slot = SelectedSlot(_editSlotIdx);
+
+        // Outside the header, since it is the one thing in there that needs acting on: a gear
+        // item with nothing to equip is worn as nothing. On the saved slot, like the text inside
+        // the header, so the two never disagree about what kind of item this is
+        if (item.GlamourerItemName == null && !item.Slot.IsModOnly())
+            ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f),
+                "No game item detected — Glamourer won't apply on Wear.");
+
+        if (EditSection("Game item", "game"))
+            DrawEditGameItem(item, slot);
+
+        if (slot.IsCustomization() && EditSection("Glamourer design", "design"))
+            DrawItemDesignPicker(item, slot);
+
+        var modCount = item.Mods.Count - _editModRemovals.Count + _extraMods.Count;
+        if (EditSection($"Mods ({modCount})", "mods"))
+        {
+            DrawEditModCollections();
+            ImGui.Spacing();
+            DrawEditExtraMods();
+        }
+
+        if (EditSection("Mod Options", "options"))
+            DrawEditModOptions(item);
+
+        if (EditSection($"Tags ({_editTags.Count})", "tags"))
+            DrawTagEditor();
+
+        if (EditSection(string.IsNullOrWhiteSpace(_editNotes) ? "Notes" : "Notes ●", "notes"))
+            DrawNotesEditor();
+
+        if (EditSection($"Linked items ({_wardrobe.ResolveLinks(item).Count})", "links"))
+            DrawLinkedItemsEditor(item);
+
+        var variants = VariantCount(item);
+        if (EditSection(variants > 0 ? $"Variants ({variants})" : "Variants", "variants"))
+            DrawEditVariants(item);
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        DrawEditFooter();
+    }
+
+    /// <summary>
+    /// One collapsing section of the edit panel, its open state kept in the config.
+    /// </summary>
+    /// <remarks>
+    /// The label may change from frame to frame — it carries a count — so the id is the key, and
+    /// the key is what the config remembers. Set from the config every frame and written back on
+    /// the frame the header is clicked, which is the same header in every item edited after it.
+    /// </remarks>
+    private bool EditSection(string label, string key)
+    {
+        var open = _config.EditSectionsOpen.Contains(key);
+
+        ImGui.SetNextItemOpen(open, ImGuiCond.Always);
+        var now = ImGui.CollapsingHeader($"{label}##esec_{key}");
+
+        if (now != open)
+        {
+            if (now) _config.EditSectionsOpen.Add(key);
+            else     _config.EditSectionsOpen.Remove(key);
+            _config.Save();
+        }
+
+        if (now) ImGui.Spacing();
+        return now;
+    }
+
+    /// <summary>The cover, the other pictures, and the button that takes a new one.</summary>
+    private void DrawEditPicture()
+    {
         var avail = ImGui.GetContentRegionAvail().X;
         if (!string.IsNullOrEmpty(_editImage) && System.IO.File.Exists(_editImage))
         {
@@ -588,24 +751,13 @@ public class ItemImportPanel : IDisposable
             catch { }
         }
 
-        ImGui.TextDisabled("Name");
-        ImGui.SetNextItemWidth(-1);
-        ImGui.InputText("##ename", ref _editName, 128);
-
-        ImGui.Spacing();
-        ImGui.TextDisabled("Image path");
-        ImGui.SetNextItemWidth(-1);
-        ImGui.InputText("##eimage", ref _editImage, 512);
-
-        // The other pictures of this item, under the box that holds the cover's path. Writes straight
-        // to the item rather than staging like the fields above: a picture is added by dropping one on
-        // or by removing one, and neither is an edit anybody expects to have to press Save for — nor
-        // to lose by pressing Cancel.
+        // The other pictures of this item. Writes straight to the item rather than staging like the
+        // fields below: a picture is added by dropping one on or by removing one, and neither is an
+        // edit anybody expects to have to press Save for — nor to lose by pressing Cancel.
         // Captured locally: the callback below runs while this frame is still being drawn, but reading
         // the field inside it would leave a null dereference waiting for whoever moves this line
         var edited = _editTarget!;
 
-        ImGui.Spacing();
         ImageGallery.Draw($"edit_{edited.Id}", edited, Plugin.Textures, UiScale.S(56f), () =>
         {
             // The cover may have changed hands, so the staged path has to follow or saving would put
@@ -623,31 +775,51 @@ public class ItemImportPanel : IDisposable
         // when the panel opened and rewritten by each frame's widgets, so on the frame this is
         // clicked they hold everything typed up to the end of the previous frame — which is all of
         // it, since a click cannot share a frame with the typing that preceded it.
-        if (_session.FoldersReady)
-        {
-            ImGui.Spacing();
+        if (!_session.FoldersReady) return;
 
-            if (ImGui.Button("Take Screenshot", new Vector2(-1, 0)))
-            {
-                // Save current edits first so the item is up to date
-                _editTarget!.Name     = _editName.Trim();
-                _editTarget.Slot      = SelectedSlot(_editSlotIdx);
-                _editTarget.Replaces  = EditedReplaces();
-                _editTarget.Layer     = EditedLayer();
-                _editTarget.Notes     = EditedNotes();
-                _editTarget.ForceRedraw = EditedForceRedraw();
-                _editTarget.Tags      = new List<string>(_editTags);
-                _config.Save();
-                _session.StartSingle(_editTarget);
-                Close();
-                return; // Close() nulls _editTarget — nothing below may run this frame
-            }
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip("Wears this item and waits for a screenshot.\n" +
-                                 "The result is cropped to a square and saved as its picture.\n\n" +
-                                 "Anything you have changed here is saved first, so the shot\n" +
-                                 "is of the item as you have just edited it.");
+        ImGui.Spacing();
+
+        if (ImGui.Button("Take Screenshot", new Vector2(-1, 0)))
+        {
+            // Save current edits first so the item is up to date
+            _editTarget!.Name     = _editName.Trim();
+            _editTarget.Slot      = SelectedSlot(_editSlotIdx);
+            _editTarget.Replaces  = EditedReplaces();
+            _editTarget.Layer     = EditedLayer();
+            _editTarget.Notes     = EditedNotes();
+            _editTarget.ForceRedraw = EditedForceRedraw();
+            _editTarget.Tags      = new List<string>(_editTags);
+            _config.Save();
+            _session.StartSingle(_editTarget);
+            Close();
+            return; // Close() nulls _editTarget — the caller checks before drawing on
         }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Wears this item and waits for a screenshot.\n" +
+                             "The result is cropped to a square and saved as its picture.\n\n" +
+                             "Anything you have changed here is saved first, so the shot\n" +
+                             "is of the item as you have just edited it.");
+    }
+
+    /// <summary>
+    /// Name, image path and slot — the fields every edit is likely to want, so they stay on screen.
+    /// </summary>
+    /// <remarks>
+    /// What the slot decides comes with it: what an animation replaces, which layer a face mod
+    /// occupies and whether applying redraws are all answers to "what kind of item is this", and
+    /// an item moved to another slot should be asked its new slot's questions straight away.
+    /// </remarks>
+    private void DrawEditBasics()
+    {
+        ImGui.Spacing();
+        ImGui.TextDisabled("Name");
+        ImGui.SetNextItemWidth(-1);
+        ImGui.InputText("##ename", ref _editName, 128);
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Image path");
+        ImGui.SetNextItemWidth(-1);
+        ImGui.InputText("##eimage", ref _editImage, 512);
 
         ImGui.Spacing();
         ImGui.TextDisabled("Slot");
@@ -659,53 +831,44 @@ public class ItemImportPanel : IDisposable
         if (ImGui.Combo("##eslot", ref _editSlotIdx, slotNames, slotNames.Length))
             _editDetectMsg = string.Empty;
 
+        var slot = SelectedSlot(_editSlotIdx);
+
         // Mod categories are not exclusive per slot, so what the item displaces is its own field
-        if (SelectedSlot(_editSlotIdx).IsModCategory())
-            DrawReplacesEditor(SelectedSlot(_editSlotIdx));
+        if (slot.IsModCategory())
+            DrawReplacesEditor(slot);
 
         // Customisation is exclusive per slot but not per kind: a sculpt and the texture painted on
         // it share the slot and are not alternatives, so which of the two this is has its own field.
         // Hair is the exception — one hairstyle at a time — and is offered no layer to set.
-        if (SelectedSlot(_editSlotIdx).IsCustomization())
-        {
-            if (SelectedSlot(_editSlotIdx).SupportsLayers())
-                DrawLayerEditor(SelectedSlot(_editSlotIdx));
-            DrawItemDesignPicker(_editTarget!, SelectedSlot(_editSlotIdx));
-        }
+        if (slot.IsCustomization() && slot.SupportsLayers())
+            DrawLayerEditor(slot);
 
         // Follows the slot combo above rather than the item's saved slot: switching an item to Hair
         // should offer Hair's toggle straight away, not after a save and a re-open
-        DrawForceRedrawToggle("edit", SelectedSlot(_editSlotIdx), ref _editForceRedraw);
+        DrawForceRedrawToggle("edit", slot, ref _editForceRedraw);
+    }
 
-        ImGui.Spacing();
-        ImGui.Separator();
-
-        if (_editTarget?.GlamourerItemName != null)
-        {
-            ImGui.TextDisabled("Game item");
-            ImGui.TextUnformatted(_editTarget.GlamourerItemName);
-        }
-        else if (_editTarget != null && _editTarget.Slot.IsModCategory())
-        {
-            ImGui.TextDisabled($"{_editTarget.Slot.DisplayName()} mods have no game item — " +
+    /// <summary>
+    /// What the mod was detected as, the button that detects it again, and the ways to overrule it.
+    /// </summary>
+    private void DrawEditGameItem(WardrobeItem item, EquipSlot slot)
+    {
+        if (item.GlamourerItemName != null)
+            ImGui.TextUnformatted(item.GlamourerItemName);
+        else if (item.Slot.IsModCategory())
+            ImGui.TextDisabled($"{item.Slot.DisplayName()} mods have no game item — " +
                                "enabling the Penumbra mod is the whole effect.");
-        }
-        else if (_editTarget != null && _editTarget.Slot.IsCustomization())
-        {
-            ImGui.TextDisabled($"{_editTarget.Slot.DisplayName()} mods replace the character " +
+        else if (item.Slot.IsCustomization())
+            ImGui.TextDisabled($"{item.Slot.DisplayName()} mods replace the character " +
                                "model, so there is no item to equip.");
-        }
         else
-        {
-            ImGui.TextColored(new Vector4(1f, 0.6f, 0.3f, 1f),
-                "No game item detected — Glamourer won't apply on Wear.");
-        }
+            ImGui.TextDisabled("Nothing detected.");
 
         // On its own line rather than beside the text above: that text wraps to the panel width,
         // so a button after it would sit off the side
         ImGui.Spacing();
         if (ImGui.SmallButton("Re-detect"))
-            TryRedetectItem(_editTarget!);
+            TryRedetectItem(item);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Re-reads the mod's files to work out which FFXIV item it replaces.");
 
@@ -716,260 +879,258 @@ public class ItemImportPanel : IDisposable
                 _editDetectMsg);
 
         // Override the auto-detected item when several share the same model
-        if (_editTarget!.ModelSetId is { } editSetId)
+        if (item.ModelSetId is { } editSetId)
         {
-            if (DrawGameItemPicker("edititem", editSetId, _editTarget.ModelBaseId, _editTarget.Slot,
-                    _editTarget.GlamourerItemId, out var pickedId, out var pickedName))
+            if (DrawGameItemPicker("edititem", editSetId, item.ModelBaseId, item.Slot,
+                    item.GlamourerItemId, out var pickedId, out var pickedName))
             {
-                _editTarget.GlamourerItemId   = pickedId;
-                _editTarget.GlamourerItemName = pickedName;
+                item.GlamourerItemId   = pickedId;
+                item.GlamourerItemName = pickedName;
                 _config.Save();
             }
         }
-        else if (_editTarget.Mods.Count > 0 && !_editTarget.Slot.IsModCategory())
+        else if (item.Mods.Count > 0 && !item.Slot.IsModCategory())
         {
             ImGui.TextDisabled("Click Re-detect to list other items sharing this model.");
         }
 
-        if (!_editTarget.Slot.IsModOnly())
-            DrawManualItemPicker(_editTarget);
+        if (!item.Slot.IsModOnly())
+            DrawManualItemPicker(item);
 
         ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.TextUnformatted("Mods & Collections");
-        ImGui.TextDisabled("A mod only takes effect in the collection your character uses.");
-        ImGui.Spacing();
-        DrawEditModCollections();
+    }
 
-        ImGui.Spacing();
-        DrawEditExtraMods();
+    /// <summary>Every option group of every mod on the item, read from disk the first time it is opened.</summary>
+    private void DrawEditModOptions(WardrobeItem item)
+    {
+        // Lazy load: run analysis the first time the section is opened
+        if (_editModOptions.Count == 0 && item.Mods.Count > 0)
+            LoadEditModOptions();
 
-        ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.TextUnformatted("Tags");
-        DrawTagEditor();
-
-        ImGui.Spacing();
-        ImGui.Separator();
-        DrawNotesEditor();
-
-        ImGui.Spacing();
-        ImGui.Separator();
-        DrawLinkedItemsEditor(_editTarget!);
-
-        // Any handler above may have called Close(), which nulls _editTarget. Bail rather than
-        // dereference it — the panel is already closing and nothing below would be drawn anyway.
-        if (_editTarget == null) return;
-
-        // Collapsible mod options editor
-        ImGui.Spacing();
-        ImGui.Separator();
-        if (ImGui.CollapsingHeader("Mod Options"))
+        if (item.Mods.Count == 0)
         {
-            // Lazy load: run analysis the first time the section is opened
-            if (_editModOptions.Count == 0 && _editTarget!.Mods.Count > 0)
-                LoadEditModOptions();
-
-            if (_editTarget!.Mods.Count == 0)
+            ImGui.TextDisabled("This item has no linked mods.");
+        }
+        else
+        {
+            for (var i = 0; i < item.Mods.Count && i < _editModOptions.Count; i++)
             {
-                ImGui.TextDisabled("This item has no linked mods.");
-            }
-            else
-            {
-                for (var i = 0; i < _editTarget.Mods.Count && i < _editModOptions.Count; i++)
+                var mod  = item.Mods[i];
+                var opts = _editModOptions[i];
+                ImGui.TextUnformatted(mod.Label);
+                UiLayout.SameLineIfRoomForText($"({mod.ModName})");
+                ImGui.TextDisabled($"({mod.ModName})");
+                if (opts.ResolvedPath == null)
+                    ImGui.TextDisabled("  Could not resolve mod path (Penumbra IPC failed).");
+                else if (!opts.PathExists)
                 {
-                    var mod  = _editTarget.Mods[i];
-                    var opts = _editModOptions[i];
-                    ImGui.TextUnformatted(mod.Label);
-                    UiLayout.SameLineIfRoomForText($"({mod.ModName})");
-                    ImGui.TextDisabled($"({mod.ModName})");
-                    if (opts.ResolvedPath == null)
-                        ImGui.TextDisabled("  Could not resolve mod path (Penumbra IPC failed).");
-                    else if (!opts.PathExists)
-                    {
-                        ImGui.TextDisabled("  Mod folder not found:");
-                        ImGui.TextDisabled($"  {opts.ResolvedPath}");
-                    }
-                    else if (opts.Analysis == null || opts.Analysis.OptionGroups.Count == 0)
-                    {
-                        ImGui.TextDisabled("  No configurable options in this mod.");
-                        ImGui.TextDisabled($"  ({opts.ResolvedPath})");
-                    }
-                    else
-                    {
-                        DrawLeaveModAlone(mod, opts);
-
-                        foreach (var g in opts.Analysis.OptionGroups)
-                        {
-                            // Naming the ones that belong to another slot is most of the help: this
-                            // is where someone comes to work out why a variant keeps losing its
-                            // options to the item worn beside it
-                            if (!g.AffectsSlot(_editTarget.Slot))
-                                ImGui.TextDisabled($"  ({g.GroupName} changes " +
-                                    $"{string.Join(", ", g.Slots!.Select(s => s.DisplayName()))}, not this slot)");
-
-                            ModOptionPicker.Draw(g, opts.SingleSel, opts.MultiSel, opts.MultiOff);
-                            DrawSizeGroupTick(g, opts);
-                        }
-                    }
-                    ImGui.Spacing();
+                    ImGui.TextDisabled("  Mod folder not found:");
+                    ImGui.TextDisabled($"  {opts.ResolvedPath}");
                 }
-            }
+                else if (opts.Analysis == null || opts.Analysis.OptionGroups.Count == 0)
+                {
+                    ImGui.TextDisabled("  No configurable options in this mod.");
+                    ImGui.TextDisabled($"  ({opts.ResolvedPath})");
+                }
+                else
+                {
+                    DrawLeaveModAlone(mod, opts);
 
-            if (ImGui.SmallButton("Reload Options"))
-                LoadEditModOptions();
+                    foreach (var g in opts.Analysis.OptionGroups)
+                    {
+                        // Naming the ones that belong to another slot is most of the help: this
+                        // is where someone comes to work out why a variant keeps losing its
+                        // options to the item worn beside it
+                        if (!g.AffectsSlot(item.Slot))
+                            ImGui.TextDisabled($"  ({g.GroupName} changes " +
+                                $"{string.Join(", ", g.Slots!.Select(s => s.DisplayName()))}, not this slot)");
+
+                        ModOptionPicker.Draw(g, opts.SingleSel, opts.MultiSel, opts.MultiOff);
+                        DrawSizeGroupTick(g, opts);
+                    }
+                }
+                ImGui.Spacing();
+            }
         }
 
+        if (ImGui.SmallButton("Reload Options"))
+            LoadEditModOptions();
+
         ImGui.Spacing();
-        ImGui.Separator();
-        ImGui.TextUnformatted("Variants");
+    }
+
+    /// <summary>How many other items share this one's variant group, for the section's title.</summary>
+    private int VariantCount(WardrobeItem item)
+    {
+        var original = _wardrobe.ResolveOriginal(item);
+        return original != null ? 1 : _wardrobe.ResolveVariants(item).Count;
+    }
+
+    /// <summary>The item's variant group, and the button that adds to it.</summary>
+    private void DrawEditVariants(WardrobeItem item)
+    {
         ImGui.TextDisabled("A copy with the same mods but different options — another colour " +
                            "or style. It becomes an item of its own.");
         ImGui.Spacing();
 
-        DrawVariantGroup(_editTarget!);
+        DrawVariantGroup(item);
 
         if (ImGui.Button("Create variant of this item", new Vector2(-1, 0)))
-            CreateVariant(_editTarget!);
+            CreateVariant(item);
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Saves this item, then opens a copy with the same mods, collections\n" +
                              "and options already filled in. Change its options and image from there.\n\n" +
                              "The original is left exactly as it is.");
 
-        // Save / Cancel at bottom
         ImGui.Spacing();
-        ImGui.Separator();
+    }
+
+    /// <summary>Save and Cancel. Both close the panel.</summary>
+    private void DrawEditFooter()
+    {
         var footerBtnW = (ImGui.GetContentRegionAvail().X - 8) / 2;
         if (ImGui.Button("Save", new Vector2(footerBtnW, 0)))
         {
-            // Captured before the edits land: changing the slot, or what an animation replaces, changes
-            // the key the item is tracked under. Without moving the entry across, the old key would
-            // keep pointing at this item and it would read as both worn and not worn at once.
-            var wasWorn    = _wardrobe.IsItemWorn(_editTarget!);
-            var oldWornKey = _editTarget!.WornKey();
-
-            _editTarget.Name       = _editName.Trim();
-            _editTarget.ImagePath  = string.IsNullOrEmpty(_editImage) ? null : _editImage.Trim();
-            _editTarget.Slot       = SelectedSlot(_editSlotIdx);
-            _editTarget.Replaces   = EditedReplaces();
-            _editTarget.Layer      = EditedLayer();
-            _editTarget.Notes      = EditedNotes();
-            _editTarget.ForceRedraw = EditedForceRedraw();
-            _editTarget.Tags       = new List<string>(_editTags);
-
-            if (wasWorn && _editTarget.WornKey() != oldWornKey)
-            {
-                _config.WornItems.Remove(oldWornKey);
-                _config.WornItems[_editTarget.WornKey()] = _editTarget.Id;
-            }
-
-            // Write collections back first — the option propagation below matches on collection.
-            for (var i = 0; i < _editTarget.Mods.Count && i < _editModCollections.Count; i++)
-            {
-                var newColl = _editModCollections[i];
-                var oldColl = _editTarget.Mods[i].Collection;
-                if (newColl.Equals(oldColl, StringComparison.OrdinalIgnoreCase)) continue;
-
-                _editTarget.Mods[i].Collection = newColl;
-                _log.Debug($"[Wardrobe] Edit: '{_editTarget.Name}' mod '{_editTarget.Mods[i].ModName}' " +
-                           $"collection '{oldColl}' → '{newColl}'");
-
-                // Other items referencing this mod in the same old collection were almost certainly
-                // imported with the same wrong default, so move them together.
-                var modDir = _editTarget.Mods[i].ModDirectory;
-                foreach (var other in _config.WardrobeItems)
-                {
-                    if (other == _editTarget) continue;
-                    foreach (var om in other.Mods)
-                    {
-                        if (om.ModDirectory.Equals(modDir, StringComparison.OrdinalIgnoreCase) &&
-                            om.Collection.Equals(oldColl, StringComparison.OrdinalIgnoreCase))
-                        {
-                            om.Collection = newColl;
-                            _log.Debug($"[Wardrobe] Edit: also moved '{other.Name}' mod '{om.ModName}' to '{newColl}'");
-                        }
-                    }
-                }
-            }
-
-            // Write back mod options and propagate to all items sharing the same mod
-            for (var i = 0; i < _editTarget.Mods.Count && i < _editModOptions.Count; i++)
-            {
-                var opts = _editModOptions[i];
-                if (opts.Analysis == null) continue;
-
-                var groups    = opts.Analysis.OptionGroups;
-                var newSingle = BuildOptions(groups, opts.SingleSel);
-                var newMulti  = BuildMultiOptions(groups, opts.MultiSel);
-                var newStates = BuildOptionStates(groups, opts.MultiSel, opts.MultiOff);
-
-                _editTarget.Mods[i].Options      = newSingle;
-                _editTarget.Mods[i].MultiOptions = newMulti;
-                _editTarget.Mods[i].OptionStates = newStates;
-
-                // Not propagated to other slots below: which group is *this* slot's size is this
-                // item's business, and the legs of a set mark a different group
-                _editTarget.Mods[i].SizeGroups = groups
-                    .Select(g => g.GroupName)
-                    .Where(opts.SizeGroups.Contains)
-                    .ToList();
-
-                // Propagate to items in *other* slots only. Items sharing a mod across slots are
-                // worn together and Penumbra holds one option state per mod, so what they both have
-                // an opinion on still has to agree. Items in the same slot are variants — different
-                // option sets for the same mod, never worn at once — and must be allowed to differ.
-                //
-                // Only the groups the receiving slot is actually named in, and merged into what it
-                // already has rather than replacing it. Anything looser reaches items that have
-                // nothing to do with this one: a group naming no slot looks shared to every slot, so
-                // filtering on "affects" rather than "names" handed the legs, the feet and the
-                // wrists a full copy of the body's options every time the body was saved (#12).
-                var modDir = _editTarget.Mods[i].ModDirectory;
-                var coll   = _editTarget.Mods[i].Collection;
-                foreach (var other in _config.WardrobeItems)
-                {
-                    if (other == _editTarget) continue;
-                    if (other.Slot == _editTarget.Slot) continue;
-
-                    foreach (var otherMod in other.Mods)
-                    {
-                        if (!otherMod.ModDirectory.Equals(modDir, StringComparison.OrdinalIgnoreCase) ||
-                            !otherMod.Collection.Equals(coll, StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        ModOptionSets.MergeOwned(otherMod.Options,      newSingle, groups, other.Slot);
-                        ModOptionSets.MergeOwned(otherMod.MultiOptions, newMulti,  groups, other.Slot);
-
-                        var copied = ModOptionSets.MergeOwned(otherMod.OptionStates, newStates, groups, other.Slot);
-                        if (copied.Count > 0)
-                            _log.Debug($"[Wardrobe] Edit: '{_editTarget.Name}' also set " +
-                                       $"{string.Join(", ", copied)} on '{other.Name}' — " +
-                                       $"{other.Slot.DisplayName()} is named in those groups");
-                    }
-                }
-            }
-
-            // Last, because it can add to and remove from _editTarget.Mods, and the loops above
-            // index into it against _editModCollections and _editModOptions.
-            ApplyEditSupplementChanges();
-
-            _config.Save();
-
-            // If the item is currently worn, re-apply immediately so Penumbra and Glamourer update.
-            if (_wardrobe.IsItemWorn(_editTarget))
-            {
-                _wardrobe.WearItem(_editTarget);
-                Plugin.Penumbra.RedrawPlayer();
-            }
-
+            SaveEdit();
             Close();
             return; // Close() nulls _editTarget — nothing below may run this frame
         }
         ImGui.SameLine();
         if (ImGui.Button("Cancel", new Vector2(footerBtnW, 0)))
-        {
             Close();
-            return;
+    }
+
+    /// <summary>Writes every staged field back to the item, and what follows from each.</summary>
+    private void SaveEdit()
+    {
+        // Captured before the edits land: changing the slot, or what an animation replaces, changes
+        // the key the item is tracked under. Without moving the entry across, the old key would
+        // keep pointing at this item and it would read as both worn and not worn at once.
+        var wasWorn    = _wardrobe.IsItemWorn(_editTarget!);
+        var oldWornKey = _editTarget!.WornKey();
+
+        _editTarget.Name       = _editName.Trim();
+        _editTarget.ImagePath  = string.IsNullOrEmpty(_editImage) ? null : _editImage.Trim();
+        _editTarget.Slot       = SelectedSlot(_editSlotIdx);
+        _editTarget.Replaces   = EditedReplaces();
+        _editTarget.Layer      = EditedLayer();
+        _editTarget.Notes      = EditedNotes();
+        _editTarget.ForceRedraw = EditedForceRedraw();
+        _editTarget.Tags       = new List<string>(_editTags);
+
+        if (wasWorn && _editTarget.WornKey() != oldWornKey)
+        {
+            _config.WornItems.Remove(oldWornKey);
+            _config.WornItems[_editTarget.WornKey()] = _editTarget.Id;
+        }
+
+        // Write collections back first — the option propagation below matches on collection.
+        for (var i = 0; i < _editTarget.Mods.Count && i < _editModCollections.Count; i++)
+        {
+            var newColl = _editModCollections[i];
+            var oldColl = _editTarget.Mods[i].Collection;
+            if (newColl.Equals(oldColl, StringComparison.OrdinalIgnoreCase)) continue;
+
+            _editTarget.Mods[i].Collection = newColl;
+            _log.Debug($"[Wardrobe] Edit: '{_editTarget.Name}' mod '{_editTarget.Mods[i].ModName}' " +
+                       $"collection '{oldColl}' → '{newColl}'");
+
+            // Other items referencing this mod in the same old collection were almost certainly
+            // imported with the same wrong default, so move them together.
+            var modDir = _editTarget.Mods[i].ModDirectory;
+            foreach (var other in _config.WardrobeItems)
+            {
+                if (other == _editTarget) continue;
+                foreach (var om in other.Mods)
+                {
+                    if (om.ModDirectory.Equals(modDir, StringComparison.OrdinalIgnoreCase) &&
+                        om.Collection.Equals(oldColl, StringComparison.OrdinalIgnoreCase))
+                    {
+                        om.Collection = newColl;
+                        _log.Debug($"[Wardrobe] Edit: also moved '{other.Name}' mod '{om.ModName}' to '{newColl}'");
+                    }
+                }
+            }
+        }
+
+        // Write back mod options and propagate to all items sharing the same mod
+        for (var i = 0; i < _editTarget.Mods.Count && i < _editModOptions.Count; i++)
+        {
+            var opts = _editModOptions[i];
+            if (opts.Analysis == null) continue;
+
+            var groups    = opts.Analysis.OptionGroups;
+            var newSingle = BuildOptions(groups, opts.SingleSel);
+            var newMulti  = BuildMultiOptions(groups, opts.MultiSel);
+            var newStates = BuildOptionStates(groups, opts.MultiSel, opts.MultiOff);
+
+            _editTarget.Mods[i].Options      = newSingle;
+            _editTarget.Mods[i].MultiOptions = newMulti;
+            _editTarget.Mods[i].OptionStates = newStates;
+
+            // Not propagated to other slots below: which group is *this* slot's size is this
+            // item's business, and the legs of a set mark a different group
+            _editTarget.Mods[i].SizeGroups = groups
+                .Select(g => g.GroupName)
+                .Where(opts.SizeGroups.Contains)
+                .ToList();
+            _editTarget.Mods[i].SizeOptionLabels = opts.SizeOptionLabels
+                .Where(kv => opts.SizeGroups.Contains(kv.Key))
+                .Select(kv => (kv.Key, Labels: kv.Value
+                    .Where(l => !string.IsNullOrWhiteSpace(l.Value) && l.Value.Trim() != l.Key)
+                    .ToDictionary(l => l.Key, l => l.Value.Trim())))
+                .Where(kv => kv.Labels.Count > 0)
+                .ToDictionary(kv => kv.Key, kv => kv.Labels);
+            _editTarget.Mods[i].SizeHiddenOptions = opts.SizeHidden
+                .Where(kv => opts.SizeGroups.Contains(kv.Key) && kv.Value.Count > 0)
+                .ToDictionary(kv => kv.Key, kv => kv.Value.ToList());
+
+            // Propagate to items in *other* slots only. Items sharing a mod across slots are
+            // worn together and Penumbra holds one option state per mod, so what they both have
+            // an opinion on still has to agree. Items in the same slot are variants — different
+            // option sets for the same mod, never worn at once — and must be allowed to differ.
+            //
+            // Only the groups the receiving slot is actually named in, and merged into what it
+            // already has rather than replacing it. Anything looser reaches items that have
+            // nothing to do with this one: a group naming no slot looks shared to every slot, so
+            // filtering on "affects" rather than "names" handed the legs, the feet and the
+            // wrists a full copy of the body's options every time the body was saved (#12).
+            var modDir = _editTarget.Mods[i].ModDirectory;
+            var coll   = _editTarget.Mods[i].Collection;
+            foreach (var other in _config.WardrobeItems)
+            {
+                if (other == _editTarget) continue;
+                if (other.Slot == _editTarget.Slot) continue;
+
+                foreach (var otherMod in other.Mods)
+                {
+                    if (!otherMod.ModDirectory.Equals(modDir, StringComparison.OrdinalIgnoreCase) ||
+                        !otherMod.Collection.Equals(coll, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    ModOptionSets.MergeOwned(otherMod.Options,      newSingle, groups, other.Slot);
+                    ModOptionSets.MergeOwned(otherMod.MultiOptions, newMulti,  groups, other.Slot);
+
+                    var copied = ModOptionSets.MergeOwned(otherMod.OptionStates, newStates, groups, other.Slot);
+                    if (copied.Count > 0)
+                        _log.Debug($"[Wardrobe] Edit: '{_editTarget.Name}' also set " +
+                                   $"{string.Join(", ", copied)} on '{other.Name}' — " +
+                                   $"{other.Slot.DisplayName()} is named in those groups");
+                }
+            }
+        }
+
+        // Last, because it can add to and remove from _editTarget.Mods, and the loops above
+        // index into it against _editModCollections and _editModOptions.
+        ApplyEditSupplementChanges();
+
+        _config.Save();
+
+        // If the item is currently worn, re-apply immediately so Penumbra and Glamourer update.
+        if (_wardrobe.IsItemWorn(_editTarget))
+        {
+            _wardrobe.WearItem(_editTarget);
+            Plugin.Penumbra.RedrawPlayer();
         }
     }
 
@@ -1173,12 +1334,10 @@ public class ItemImportPanel : IDisposable
             ? _collections.ToArray()
             : new[] { "(no collections)" };
 
-        if (_config.FollowActiveCollection)
-        {
-            ImGui.TextDisabled("These are fallbacks — the item applies to whichever collection " +
-                               "your character is on.");
-            ImGui.Spacing();
-        }
+        ImGui.TextDisabled(_config.FollowActiveCollection
+            ? "These are fallbacks — the item applies to whichever collection your character is on."
+            : "A mod only takes effect in the collection your character uses.");
+        ImGui.Spacing();
 
         for (var i = 0; i < _editTarget.Mods.Count && i < _editModCollections.Count; i++)
         {
@@ -2010,8 +2169,6 @@ public class ItemImportPanel : IDisposable
     {
         var part = slot.DisplayName().ToLowerInvariant();
 
-        ImGui.Spacing();
-        ImGui.TextDisabled("Glamourer design");
         ImGui.TextDisabled($"Applied when this item goes on. A sculpt only replaces the files of one " +
                            $"{part}, so it stays invisible on a character set to another — this is what " +
                            $"puts them on the one it is for.");
@@ -2794,7 +2951,6 @@ public class ItemImportPanel : IDisposable
     /// </remarks>
     private void DrawNotesEditor()
     {
-        ImGui.TextUnformatted("Notes");
         ImGui.TextDisabled("Where it came from, what it goes with, a link to a preview…");
         ImGui.Spacing();
 
@@ -2819,7 +2975,6 @@ public class ItemImportPanel : IDisposable
     /// </remarks>
     private void DrawLinkedItemsEditor(WardrobeItem item)
     {
-        ImGui.TextUnformatted("Linked items");
         ImGui.TextDisabled("Worn and taken off together with this one. Its card keeps a button for " +
                            "using just this item. Changes here apply straight away.");
         ImGui.Spacing();

@@ -278,4 +278,10 @@ public class SharedMod
 
     /// <summary>Groups marked as the item's size, by name.</summary>
     public List<string> SizeGroups { get; set; } = new();
+
+    /// <summary>Group → option → what the card calls it, where that differs from the option's own name.</summary>
+    public Dictionary<string, Dictionary<string, string>> SizeOptionLabels { get; set; } = new();
+
+    /// <summary>Group → options left off the card's pick.</summary>
+    public Dictionary<string, List<string>> SizeHiddenOptions { get; set; } = new();
 }

@@ -364,6 +364,10 @@ public class WardrobeShareService
                 copy.OptionStates[group] = new Dictionary<string, bool>(states);
 
             copy.SizeGroups.AddRange(mod.SizeGroups);
+            foreach (var (group, labels) in mod.SizeOptionLabels)
+                copy.SizeOptionLabels[group] = new Dictionary<string, string>(labels);
+            foreach (var (group, hidden) in mod.SizeHiddenOptions)
+                copy.SizeHiddenOptions[group] = new List<string>(hidden);
 
             shared.Mods.Add(copy);
         }
@@ -692,6 +696,10 @@ public class WardrobeShareService
                 copy.OptionStates[group] = new Dictionary<string, bool>(states);
 
             copy.SizeGroups.AddRange(mod.SizeGroups);
+            foreach (var (group, labels) in mod.SizeOptionLabels)
+                copy.SizeOptionLabels[group] = new Dictionary<string, string>(labels);
+            foreach (var (group, hidden) in mod.SizeHiddenOptions)
+                copy.SizeHiddenOptions[group] = new List<string>(hidden);
 
             item.Mods.Add(copy);
         }

@@ -73,7 +73,7 @@ public partial class PluginUi
             "What wearing an item changes, and how Glamourer's own designs appear here.",
             new[]
             {
-                new SettingsSection("Wearing", "hair hairstyle apply equip wear",
+                new SettingsSection("Wearing", "hair hairstyle apply equip wear redraw restore glamourer",
                     DrawWearingSettings),
                 new SettingsSection("What You Were Last Wearing",
                     "last worn remember restore login session automatic again reapply",

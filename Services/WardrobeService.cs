@@ -166,6 +166,14 @@ public class WardrobeService : IDisposable
             _log.Debug("[Wardrobe] Redraw within the design cooldown; designs left as they are");
         }
 
+        // The designs above are not covered: the base's has its own switch, and a sculpt's is the
+        // face or the skin, not a piece anyone takes off in Glamourer — see the setting's remarks
+        if (!_config.RestoreWornAfterRedraw)
+        {
+            _log.Debug("[Wardrobe] Redraw: worn items left as they are (restore after redraw is off)");
+            return;
+        }
+
         // Wanted twice below: for the dyes the worn items carry, and for the outfit's own say over
         // the hat and the weapon, which is put back at the end whether it has any items or not
         var outfit = _activeOutfitId is { } activeId

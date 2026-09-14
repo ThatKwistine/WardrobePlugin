@@ -72,13 +72,18 @@ public partial class PluginUi
     }
 
     /// <summary>
-    /// "Size: YAB+ M" under the card's buttons, opening the group's options.
+    /// "Size: YAB+ M" under the card's buttons, opening one list of every size option the item has.
     /// </summary>
     /// <remarks>
     /// Small, under the action row, and only when the card has the height — the same terms as the
     /// solo row it sits beside. The right-click menu has the same thing for a card that does not.
-    /// The group's name is used instead of "Size" when the item has more than one, so a bust and a
-    /// hips group can be told apart.
+    /// <para>
+    /// One button however many groups feed it. With one group it reads the option and opens
+    /// straight to the list; with several it reads "Size Options" and opens to a menu per group,
+    /// each named for the group and where it stands. The groups still act as one set of sizes —
+    /// picking in one switches off the toggles in the others, see <see cref="SwitchOffOtherToggles"/>.
+    /// Options hidden in Edit are left off unless they are the one the item is at.
+    /// </para>
     /// </remarks>
     private void DrawCardSizeRow(WardrobeItem item)
     {
@@ -90,43 +95,64 @@ public partial class PluginUi
         var needed = ImGui.GetTextLineHeight() + ImGui.GetStyle().ItemSpacing.Y * 2;
         if (ImGui.GetContentRegionAvail().Y < needed) return;
 
+        var label = FitToWidth(ButtonLabel(groups), ImGui.GetContentRegionAvail().X - ImGui.GetStyle().FramePadding.X * 2);
+
         ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0f, 0f, 0f, 0f));
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1f, 1f, 1f, 0.12f));
         ImGui.PushStyleColor(ImGuiCol.Text,          new Vector4(0.62f, 0.62f, 0.70f, 1f));
 
-        var first = true;
-        foreach (var (mod, group) in groups)
+        var popup = $"##sizepop_{item.Id}";
+        if (ImGui.SmallButton($"{label}##size_{item.Id}"))
+            ImGui.OpenPopup(popup);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(string.Join("\n", groups.Select(g => $"{g.Group}: {ShownFor(g.Mod, g.Group)}")) +
+                             "\n\n" + "Click to change.");
+
+        ImGui.PopStyleColor(3);
+
+        if (!ImGui.BeginPopup(popup)) return;
+        DrawSizeEntries(item, groups, asMenu: false);
+        ImGui.EndPopup();
+    }
+
+    /// <summary>"Size: nymph" for one group; "Size Options" for several, which open to a menu each.</summary>
+    private static string ButtonLabel(List<(ModReference Mod, string Group)> groups) =>
+        groups.Count == 1 ? $"Size: {ShownFor(groups[0].Mod, groups[0].Group)}" : "Size Options";
+
+    /// <summary>What the card shows for one group: its stored option by its card name, or "as is".</summary>
+    private static string ShownFor(ModReference mod, string group) =>
+        StoredOption(mod, group) is { } option ? mod.SizeOptionLabel(group, option) : "as is";
+
+    /// <summary>
+    /// The popup's contents: one group's options directly, or — as the View menu's Crop Guide
+    /// does — a submenu per group, each named for the group and the option it is at, with the
+    /// option in force ticked inside.
+    /// </summary>
+    private void DrawSizeEntries(WardrobeItem item, List<(ModReference Mod, string Group)> groups, bool asMenu)
+    {
+        if (groups.Count == 1)
         {
-            var label = $"{(groups.Count == 1 ? "Size" : group)}: {StoredOption(mod, group) ?? "as is"}";
-            if (!first) UiLayout.SameLineIfRoom(ImGui.CalcTextSize(label).X + ImGui.GetStyle().FramePadding.X * 2);
-            first = false;
-
-            var popup = $"##sizepop_{mod.ModDirectory}_{group}";
-            if (ImGui.SmallButton($"{label}##size_{mod.ModDirectory}_{group}"))
-                ImGui.OpenPopup(popup);
-            if (ImGui.IsItemHovered())
-                ImGui.SetTooltip($"{group} — this item's size option. Click to change it.");
-
-            if (ImGui.BeginPopup(popup))
+            var (mod, group) = groups[0];
+            if (!asMenu)
             {
                 ImGui.TextDisabled(group);
                 ImGui.Separator();
-                DrawSizeOptionEntries(item, mod, group, asMenu: false);
-                ImGui.EndPopup();
             }
+            DrawGroupEntries(item, groups, mod, group, asMenu);
+            return;
         }
 
-        ImGui.PopStyleColor(3);
+        foreach (var (mod, group) in groups)
+        {
+            if (!ImGui.BeginMenu($"{group}: {ShownFor(mod, group)}##{mod.ModDirectory}_{group}")) continue;
+            DrawGroupEntries(item, groups, mod, group, asMenu: true);
+            ImGui.EndMenu();
+        }
     }
 
-    /// <summary>The group's options, the current one ticked.</summary>
-    /// <remarks>
-    /// A dropdown group is a pick of one. A checkbox group shows every option ticked as the item
-    /// has it: picking an option that reads as a size turns the other size options off with it,
-    /// since they are alternatives, and picking one that does not — a fix, an extra — just toggles
-    /// it, because that is what a checkbox is.
-    /// </remarks>
-    private void DrawSizeOptionEntries(WardrobeItem item, ModReference mod, string group, bool asMenu)
+    /// <summary>One group's options, the ones in force ticked, hidden ones left off.</summary>
+    private void DrawGroupEntries(WardrobeItem item, List<(ModReference Mod, string Group)> groups,
+        ModReference mod, string group, bool asMenu)
     {
         var def = SizeGroup(mod, group);
         if (def == null || def.OptionNames.Count == 0)
@@ -140,27 +166,38 @@ public partial class PluginUi
         foreach (var option in def.OptionNames)
         {
             var on = single ? option == current : IsOn(mod, group, option);
+            if (!on && mod.IsSizeOptionHidden(group, option)) continue;
+
+            var name   = mod.SizeOptionLabel(group, option);
             var picked = asMenu
-                ? ImGui.MenuItem(option, string.Empty, on)
-                : ImGui.Selectable(option, on);
+                ? ImGui.MenuItem($"{name}##{option}", string.Empty, on)
+                : ImGui.Selectable($"{name}##{option}", on);
             if (!picked) continue;
-            if (single) { if (option != current) PickSingle(item, mod, def, option); }
-            else        PickCheckbox(item, mod, def, option, !on);
+
+            if (single) { if (option != current) PickSingle(item, groups, mod, def, option); }
+            else        PickCheckbox(item, groups, mod, def, option, !on);
         }
     }
 
-    /// <summary>Writes a dropdown pick into the item's own options, and sends it if the item is on.</summary>
-    private void PickSingle(WardrobeItem item, ModReference mod, ModOptionGroup def, string chosen)
+    /// <summary>
+    /// Sets a dropdown to the pick, and switches off every toggle among the item's other size
+    /// groups — a body at "nymph" is not also wearing Muse.
+    /// </summary>
+    private void PickSingle(WardrobeItem item, List<(ModReference Mod, string Group)> groups,
+        ModReference mod, ModOptionGroup def, string chosen)
     {
         mod.Options[def.GroupName] = chosen;
-        _config.Save();
-        if (_wardrobe.IsItemWorn(item)) _wardrobe.ReapplyGroup(item, mod, def.GroupName);
+        var changed = new List<(ModReference, string)> { (mod, def.GroupName) };
+        changed.AddRange(SwitchOffOtherToggles(groups, mod, def.GroupName));
+        Commit(item, changed);
     }
 
     /// <summary>
-    /// Ticks or unticks one option of a checkbox group. Ticking a size unticks the other sizes.
+    /// Ticks or unticks one option of a checkbox group. Ticking a size unticks the other sizes in
+    /// the group, and every toggle among the item's other size groups.
     /// </summary>
-    private void PickCheckbox(WardrobeItem item, ModReference mod, ModOptionGroup def, string option, bool on)
+    private void PickCheckbox(WardrobeItem item, List<(ModReference Mod, string Group)> groups,
+        ModReference mod, ModOptionGroup def, string option, bool on)
     {
         // Every option this pick decides: the one clicked, and the other sizes when a size goes on.
         // Nothing else in the group is written, so an extra beside the sizes stays however it was
@@ -169,43 +206,95 @@ public partial class PluginUi
             foreach (var other in def.OptionNames)
                 if (other != option && SizeGuess.ReadsAsSize(other)) decided[other] = false;
 
+        WriteStates(mod, def.GroupName, decided);
+        var changed = new List<(ModReference, string)> { (mod, def.GroupName) };
+        if (on) changed.AddRange(SwitchOffOtherToggles(groups, mod, def.GroupName));
+        Commit(item, changed);
+    }
+
+    /// <summary>
+    /// Turns off what is on in the item's other checkbox size groups, and says which changed.
+    /// </summary>
+    /// <remarks>
+    /// A group with one option is a toggle — a refit's on/off — and the whole of it goes off. A
+    /// group with several is a set of sizes with, perhaps, an extra or two beside them, and only
+    /// the options that read as sizes go off; the extra stays. Dropdowns are left alone, since a
+    /// dropdown cannot be off — the toggle now on sits over whatever it says.
+    /// </remarks>
+    private List<(ModReference, string)> SwitchOffOtherToggles(
+        List<(ModReference Mod, string Group)> groups, ModReference pickedMod, string pickedGroup)
+    {
+        var changed = new List<(ModReference, string)>();
+        foreach (var (mod, group) in groups)
+        {
+            if (ReferenceEquals(mod, pickedMod) && group == pickedGroup) continue;
+            var def = SizeGroup(mod, group);
+            if (def == null || def.GroupType == ModGroupType.Single) continue;
+
+            var off = def.OptionNames
+                .Where(o => IsOn(mod, group, o) && (def.OptionNames.Count == 1 || SizeGuess.ReadsAsSize(o)))
+                .ToDictionary(o => o, _ => false);
+            if (off.Count == 0) continue;
+
+            WriteStates(mod, group, off);
+            changed.Add((mod, group));
+        }
+        return changed;
+    }
+
+    /// <summary>Writes decided on/off states into whichever field the mod's checkbox options live in.</summary>
+    private static void WriteStates(ModReference mod, string group, Dictionary<string, bool> decided)
+    {
         if (mod.OptionStates.Count == 0 && mod.MultiOptions.Count > 0)
         {
             // Still on the whole-selection field: keep it there, or the wear path would switch
             // over to tri-states and drop the rest of the selection
-            var selection = mod.MultiOptions.TryGetValue(def.GroupName, out var had)
+            var selection = mod.MultiOptions.TryGetValue(group, out var had)
                 ? new List<string>(had) : new List<string>();
             foreach (var (name, value) in decided)
             {
                 selection.Remove(name);
                 if (value) selection.Add(name);
             }
-            mod.MultiOptions[def.GroupName] = selection;
+            mod.MultiOptions[group] = selection;
         }
         else
         {
-            if (!mod.OptionStates.TryGetValue(def.GroupName, out var states))
-                mod.OptionStates[def.GroupName] = states = new Dictionary<string, bool>();
+            if (!mod.OptionStates.TryGetValue(group, out var states))
+                mod.OptionStates[group] = states = new Dictionary<string, bool>();
             foreach (var (name, value) in decided) states[name] = value;
         }
-
-        _config.Save();
-        if (_wardrobe.IsItemWorn(item)) _wardrobe.ReapplyGroup(item, mod, def.GroupName);
     }
 
-    /// <summary>The same pick as a submenu on the card's right-click menu.</summary>
+    /// <summary>Saves, and sends every changed group if the item is on.</summary>
+    private void Commit(WardrobeItem item, List<(ModReference Mod, string Group)> changed)
+    {
+        _config.Save();
+        if (!_wardrobe.IsItemWorn(item)) return;
+        foreach (var (mod, group) in changed) _wardrobe.ReapplyGroup(item, mod, group);
+    }
+
+    /// <summary>The text, or as much of it as fits in the width with an ellipsis.</summary>
+    private static string FitToWidth(string text, float width)
+    {
+        if (ImGui.CalcTextSize(text).X <= width) return text;
+        var ellipsis = ImGui.CalcTextSize("…").X;
+        var keep = text.Length;
+        while (keep > 0 && ImGui.CalcTextSize(text[..keep]).X + ellipsis > width) keep--;
+        return keep == 0 ? "…" : text[..keep].TrimEnd() + "…";
+    }
+
+    /// <summary>The same pick as a "Size" submenu on the card's right-click menu.</summary>
     private void DrawMenuSizes(WardrobeItem item)
     {
         if (!_config.SizeOptionsEnabled) return;
 
         var groups = SizeGroupsOf(item).ToList();
-        foreach (var (mod, group) in groups)
-        {
-            var label = $"{(groups.Count == 1 ? "Size" : group)}: {StoredOption(mod, group) ?? "as is"}";
-            if (!ImGui.BeginMenu(label)) continue;
-            DrawSizeOptionEntries(item, mod, group, asMenu: true);
-            ImGui.EndMenu();
-        }
+        if (groups.Count == 0) return;
+
+        if (!ImGui.BeginMenu(ButtonLabel(groups))) return;
+        DrawSizeEntries(item, groups, asMenu: true);
+        ImGui.EndMenu();
     }
 
     /// <summary>Settings → Penumbra & Mods → Size Options: the whole feature, and the recognition.</summary>

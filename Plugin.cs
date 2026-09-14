@@ -24,6 +24,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] public static IDataManager     DataManager  { get; private set; } = null!;
     [PluginService] public static IFramework       Framework    { get; private set; } = null!;
     [PluginService] public static IGameConfig      GameConfig   { get; private set; } = null!;
+    [PluginService] public static IGameGui         GameGui      { get; private set; } = null!;
 
     public static PenumbraIpc         Penumbra     { get; private set; } = null!;
     public static GlamourerIpc        Glamourer    { get; private set; } = null!;
@@ -187,9 +188,7 @@ public sealed class Plugin : IDalamudPlugin
         // Before the windows, so an armed capture reads the frame the game drew rather than one
         // with this plugin's own interface already painted over it
         pi.UiBuilder.Draw        += TickFrameCapture;
-        pi.UiBuilder.Draw        += _windowSystem.Draw;
-        pi.UiBuilder.Draw        += _ui.DrawFileDialog;
-        pi.UiBuilder.Draw        += _cropGuide.Draw;
+        pi.UiBuilder.Draw        += DrawInterface;
         pi.UiBuilder.OpenMainUi   += OpenUi;
 
         // Dalamud's own settings button, on the plugin installer's entry for this plugin. It means
@@ -379,14 +378,38 @@ public sealed class Plugin : IDalamudPlugin
     /// <summary>Gives the frame capture its one look at the back buffer, on the render thread.</summary>
     private void TickFrameCapture() => Frames.Tick();
 
+    /// <summary>
+    /// Draws everything of the plugin's that the player can see, unless they have hidden the interface.
+    /// </summary>
+    /// <remarks>
+    /// Ordinarily Dalamud does this hiding itself, by not calling the draw callback at all while the
+    /// game's interface is hidden. A screenshot session asks it to keep calling — the frame is read
+    /// in the callback, and a session would otherwise stop dead the moment someone cleared the screen
+    /// to frame a shot — and that request is all or nothing: with it made, the windows kept drawing
+    /// too, and the wardrobe was the one thing on screen that Scroll Lock would not put away (#31).
+    /// So the frame capture stays on the callback unconditionally and the visible parts hang off
+    /// this, which asks the same question Dalamud would have. The guide is the one exception, and
+    /// only when asked for: it exists for exactly the moment the screen is cleared to frame a shot.
+    /// </remarks>
+    private void DrawInterface()
+    {
+        if (GameGui.GameUiHidden)
+        {
+            if (_config.CropGuideWhenUiHidden) _cropGuide.Draw();
+            return;
+        }
+
+        _windowSystem.Draw();
+        _ui.DrawFileDialog();
+        _cropGuide.Draw();
+    }
+
     public void Dispose()
     {
         Commands.RemoveHandler(CommandName);
         Commands.RemoveHandler(CommandAlias);
         PluginInterface.UiBuilder.Draw        -= TickFrameCapture;
-        PluginInterface.UiBuilder.Draw        -= _windowSystem.Draw;
-        PluginInterface.UiBuilder.Draw        -= _ui.DrawFileDialog;
-        PluginInterface.UiBuilder.Draw        -= _cropGuide.Draw;
+        PluginInterface.UiBuilder.Draw        -= DrawInterface;
         PluginInterface.UiBuilder.OpenMainUi   -= OpenUi;
         PluginInterface.UiBuilder.OpenConfigUi -= OpenSettings;
 

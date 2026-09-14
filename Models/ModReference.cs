@@ -59,6 +59,40 @@ public class ModReference
     /// </remarks>
     public List<string> SizeGroups { get; set; } = new();
 
+    /// <summary>
+    /// Group name → option name → what the card calls the option, for a size option whose own
+    /// name says nothing — a refit shipped as a mod of its own with a single toggle called "Top"
+    /// is better shown as "Muse".
+    /// </summary>
+    /// <remarks>
+    /// Only what differs: an option absent here is shown under the mod's own name. The mod's
+    /// options are still applied by their real names, and Penumbra is untouched — renaming there
+    /// is the mod author's business.
+    /// </remarks>
+    public Dictionary<string, Dictionary<string, string>> SizeOptionLabels { get; set; } = new();
+
+    /// <summary>
+    /// Group name → options left off the card's pick. A body mod can ship sixty sizes and one
+    /// character wears four of them; the rest are noise in a popup taller than the screen.
+    /// </summary>
+    /// <remarks>
+    /// The hidden ones rather than the shown, so an option a mod update adds turns up on the card
+    /// until somebody hides it, and an item that never hid anything shows the lot. The option the
+    /// item is at is always shown whether or not it is hidden, since the pick has to say where it
+    /// stands.
+    /// </remarks>
+    public Dictionary<string, List<string>> SizeHiddenOptions { get; set; } = new();
+
+    public bool IsSizeOptionHidden(string group, string option) =>
+        SizeHiddenOptions.TryGetValue(group, out var hidden) && hidden.Contains(option);
+
+    /// <summary>What the card calls this option: its label here, else its own name.</summary>
+    public string SizeOptionLabel(string group, string option) =>
+        SizeOptionLabels.TryGetValue(group, out var labels) &&
+        labels.TryGetValue(option, out var label) && !string.IsNullOrWhiteSpace(label)
+            ? label
+            : option;
+
     /// <summary>A copy sharing nothing with this one, for putting an item in another wardrobe.</summary>
     /// <remarks>
     /// The dictionaries are rebuilt rather than handed over. The whole point of copying an item
@@ -76,5 +110,8 @@ public class ModReference
         OptionStates = OptionStates.ToDictionary(kv => kv.Key,
                                                  kv => new Dictionary<string, bool>(kv.Value)),
         SizeGroups   = new List<string>(SizeGroups),
+        SizeOptionLabels = SizeOptionLabels.ToDictionary(kv => kv.Key,
+                                                         kv => new Dictionary<string, string>(kv.Value)),
+        SizeHiddenOptions = SizeHiddenOptions.ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value)),
     };
 }

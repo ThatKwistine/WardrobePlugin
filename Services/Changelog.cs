@@ -41,6 +41,55 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 6, 2, 1), "14 September 2026", new List<ChangelogSection>
+        {
+            new("What's new", new List<ChangelogNote>
+            {
+                new("One Size button, however many size groups an item has.",
+                    "An item with one size group reads its option — Size: nymph — and opens straight " +
+                    "to the list. With several, a body's dropdown and a refit shipped as a mod of its " +
+                    "own, it reads Size Options and opens to a menu per group, each named for the " +
+                    "group and where it stands, with the option in force ticked inside. The " +
+                    "right-click menu reads the same way. It was a line per group, and a card has " +
+                    "room for two."),
+                new("Sizes act as one set across groups.",
+                    "Pick a dropdown option and every toggle among the item's other size groups goes " +
+                    "off; pick a refit's toggle and it goes on over the dropdown, which is what is on " +
+                    "the character. Within a checkbox group of several sizes, picking one turns the " +
+                    "other sizes off and leaves anything else in the group — a fix, an extra — as " +
+                    "it was."),
+                new("Choose which options the card offers, and what it calls them.",
+                    "Under the Size option tick in Edit, On the card lists the group's options with " +
+                    "a tick each and a box for a name. None, then tick the four sizes your character " +
+                    "wears, and a sixty-option body mod is a four-line pick; type Muse beside a " +
+                    "refit's toggle called Top and that is what the card says. Options are still " +
+                    "applied by their real names, and Penumbra is never changed."),
+                new("The edit panel folds into sections.",
+                    "The picture, the name and the slot stay on screen. Game item, Glamourer design, " +
+                    "Mods, Mod Options, Tags, Notes, Linked items and Variants are collapsing " +
+                    "sections with their counts in the title, and which ones are open is remembered " +
+                    "from one item to the next and across launches. Tags starts open."),
+                new("Putting worn items back after a redraw is a setting.",
+                    "On by default, which is how it has worked since 1.6.1.1: after Penumbra redraws " +
+                    "you, the worn items, their dyes and the outfit's hat and weapon toggles go back " +
+                    "to Glamourer. Off, a redraw is left alone, so a piece you took off in Glamourer " +
+                    "stays off until you wear something from the wardrobe again. Settings → Wearing."),
+                new("Folders on the old toolbar.",
+                    "A Folders button beside Tags, opening the same panel as the menu bar's View → " +
+                    "Folders."),
+            }),
+
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("Hiding the game's interface hides the wardrobe during a screenshot session.",
+                    "A session keeps the plugin drawing while the interface is hidden, so it can " +
+                    "read each picture, and that kept every window on screen through Scroll Lock " +
+                    "for exactly as long as a session ran. The windows go now. Keep the guide when " +
+                    "the game's interface is hidden — under the Crop Guide setting, and on the " +
+                    "session HUD — leaves the crop guide up on the cleared screen if you want it."),
+            }),
+        }),
+
         new(new Version(1, 6, 2, 0), "13 September 2026", new List<ChangelogSection>
         {
             new("What's new", new List<ChangelogNote>

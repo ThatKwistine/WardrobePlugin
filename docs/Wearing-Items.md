@@ -31,6 +31,21 @@ already-enabled mod triggers a fresh reload that reads the correct state.
 The delayed re-applies (350 ms / 750 ms / 1800 ms / 4500 ms) exist because a mod with missing
 material files can keep reloading for several seconds, and each reload can undo the Glamourer state.
 
+## After a redraw
+
+Whenever Penumbra redraws your character — a zone change, a mod toggle, another plugin applying
+something — the wardrobe sends every worn item to Glamourer again, with its dyes and any advanced
+dye rows the outfit holds, and re-asserts the outfit's hat and weapon toggles. The outfit comes
+through the redraw intact.
+
+The other side of that: the wardrobe does not watch Glamourer, so a piece you take off in Glamourer
+— or one another plugin removes — is still down as worn, and comes straight back at the next redraw.
+Where the item sits on an Emperor's New piece, as many mod-only items do, that is what reappears in
+the slot. **Put worn items back after a redraw**, under [Wearing](Settings.md#wearing), turns this
+off: a redraw is then left alone, and what you change in Glamourer stays changed until you wear
+something from the wardrobe again. A base character's design is not part of this — it has its own
+switch on the base.
+
 ## Unequipping
 
 Click **Unequip** on a worn card (shown with a filled circle), or use `/wardrobe unequip`.
@@ -106,8 +121,11 @@ there, in the mod's own words. Pick one and the item's option changes, exactly a
 and if the item is on it is re-applied on the spot — no redraw, the same as Edit → Save on a worn
 item.
 
-An item with two size groups shows each under the group's own name instead of "Size", so a bust
-and a hips group can be told apart.
+An item with more than one size group — a body's dropdown and a refit that is a mod of its own —
+has one button reading **Size Options**, opening to a menu per group, each named for the group and
+where it stands, with the option in force ticked inside; hover the button for the same list. The
+groups still act as one set of sizes: pick in one and the toggles in the others go off. Options
+hidden in Edit are left off, and options read by the names given them there.
 
 Which group is the size is worked out on import for body and legs items, and can be ticked or
 unticked on any group in Edit — see [Size options](Items-and-Mods.md#size-options).

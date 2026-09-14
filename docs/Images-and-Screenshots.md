@@ -226,6 +226,11 @@ those you are watching a session from. Switching it off and back on keeps the mo
 setting it to **Always** and then using the toggle does not quietly move you onto **During
 sessions**.
 
+Hiding the game's interface (Scroll Lock by default) puts the wardrobe's windows away and, normally,
+the guide with them. Someone who clears the screen precisely to frame a shot may want it to stay:
+**Keep the guide when the game's interface is hidden**, under the same setting, leaves it up on the
+cleared screen. The windows go regardless.
+
 The guide is never in the resulting picture. The frame is read before any plugin window is drawn into
 it, which is the same property that keeps the wardrobe's own window out of your pictures. **Confirmed
 by testing**, not assumed.

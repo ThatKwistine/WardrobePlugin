@@ -37,6 +37,26 @@ In **Select** mode, right-clicking a ticked card acts on the whole selection —
 — and the entries that only make sense for one card step aside. Right-clicking an unticked card acts
 on that card alone.
 
+## The edit panel
+
+**Edit** on a card, or **Edit…** in its menu, opens the item in the panel on the right. The picture,
+its gallery, **Take Screenshot**, the name, the image path and the slot are always on screen; the rest
+is folded into sections under them:
+
+- **Game item** — what the mod was detected as, **Re-detect**, and the pickers for overruling it
+- **Glamourer design** — on customisation items only; see [A design applied with the item](#a-design-applied-with-the-item)
+- **Mods** — each mod's collection, and **+ Add Supplementary Mod**
+- **Mod Options** — every option group of every mod, read from disk when first opened
+- **Tags**, **Notes**, **Linked items** and **Variants**
+
+Sections with a list in them carry its count in their title — **Tags (3)**, **Linked items (2)** —
+and **Notes** gains a dot when there is a note, so nothing has to be opened to find out it is empty.
+Which sections are open is remembered, across items and across launches: open **Mod Options** once
+and it stays open until you fold it again. Only **Tags** starts open.
+
+An item on a gear slot with no game item detected says so in orange above the sections, whatever
+is folded — it is the one state in there that needs acting on.
+
 ## Quick view
 
 **View picture** on a card's right-click menu shows it full size, over the whole window — sized to
@@ -134,8 +154,8 @@ list — the batch tags stay set, so a second run down the list keeps them.
 
 ## Adding supplementary mods later
 
-The edit panel has its own **+ Add Supplementary Mod**, so an upscale or compatibility patch you
-missed can be attached without deleting and re-importing the item. Existing supplements can be
+The edit panel's **Mods** section has its own **+ Add Supplementary Mod**, so an upscale or
+compatibility patch you missed can be attached without deleting and re-importing the item. Existing supplements can be
 removed there too; both take effect when you save, so **Cancel** discards them like any other edit.
 
 Adding or removing a supplement applies to **every item built from the same mod**, not just the one
@@ -209,8 +229,8 @@ The **Game item** dropdown can only offer items that share the mod's detected mo
 it is no help when the right item shares neither with the mod — a piercing or a tattoo hung on an
 Emperor's New piece because it is invisible, or a mod whose model or recolour was detected wrongly.
 
-**Set game item manually** covers that. It is a collapsed section on each import slot row and in the
-edit panel, searching every equippable item for that slot by name. **Clear game item** below it
+**Set game item manually** covers that. It is a collapsed section on each import slot row and under
+**Game item** in the edit panel, searching every equippable item for that slot by name. **Clear game item** below it
 leaves the item with none, so wearing it enables the mod but equips nothing and unequipping it leaves
 the slot alone.
 
@@ -220,7 +240,7 @@ edit panel it saves immediately, like the dropdown above it.
 ## Re-detecting
 
 If a mod is updated and its file paths change, open the item in the edit panel and click
-**Re-detect** to re-run the analysis.
+**Re-detect**, under **Game item**, to re-run the analysis.
 
 Items imported before the wardrobe read recolours have none recorded, and keep whatever game item was
 detected for them at the time. **Re-detect** is what fills it in.
@@ -405,19 +425,31 @@ click there rather than a trip through Edit.
 
 Under each group in an item's **Mod Options** section is a **Size option** tick. Ticked, the group
 goes on the card as a small **Size: YAB+ M** under the buttons, and opening it lists the group's
-options by the mod's own names — nothing is renamed or translated. Picking one sets the option here,
-exactly as choosing it in Edit would, and if the item is on it is sent straight to Penumbra. See
+options by the mod's own names — nothing is translated. Picking one sets the option here, exactly
+as choosing it in Edit would, and if the item is on it is sent straight to Penumbra. See
 [Sizes](Wearing-Items.md#sizes).
+
+Under the tick, **On the card** lists the group's options, each with a tick for whether the card
+offers it and a box for what the card calls it. A body mod can ship sixty sizes of which one
+character wears four — untick the rest (**None**, then tick the four) and the card's pick is
+those four; an option left off is still here, and still applies if it is the one the item is at.
+A refit shipped as a mod of its own usually has a single toggle called "Top", which on the card
+says nothing about what it is; type "Muse" in its box and that is what the card says. Blank keeps
+the mod's own name. Options are always applied by their real names, and Penumbra is never changed
+by either.
 
 Most of this is ticked for you. Importing a body or legs item — and **Re-detect** on an older one —
 looks for a group the slot has a say in with two or more options that plainly read as sizes
 (*Small / Medium / Large*, *S / M / L*, *Flat / Big*, and the like) and marks it. It only ever
 marks where nothing is marked, so a tick you took off stays off; and it can be turned off under
-**Settings → Importing**. A mod whose sizes are named unrecognisably is a tick away.
+**Settings → Size Options**. A mod whose sizes are named unrecognisably is a tick away.
 
-Checkbox groups work too. The pick shows every option as the item has it ticked; picking a size
-turns the other sizes off with it, since they are alternatives, and picking anything else in the
-group — a fix, an extra — just toggles it, because that is what a checkbox is.
+Checkbox groups work too, and a refit's single on/off toggle is the usual one. An item with
+several size groups gets a **Size Options** button and a menu per group, but the groups act as one
+set of sizes: pick a dropdown option and every toggle among the other groups goes off; pick a
+toggle and it goes on over the dropdown, which is what is on the character. Within a checkbox
+group of several sizes, picking one turns the other sizes off and leaves anything else in the
+group — a fix, an extra — as it was.
 
 A tick is per item and per slot, on purpose — the legs of a set mark the mod's leg group, not the
 chest one — so saving it never writes onto the other items from the same mod, unlike the options
@@ -480,7 +512,8 @@ the hairstyle number out of the mod and switches you to it. A face has no single
 makes a sculpt look right is the face number *together with* the skin, eye and hair colouring around
 it, and a Glamourer design is the thing that already holds all of that.
 
-So a customisation item can name a **Glamourer design**, picked in its edit panel, applied whenever
+So a customisation item can name a **Glamourer design**, picked in the section of that name in its
+edit panel, applied whenever
 the item goes on. It is a live link and never a copy: only the design's id is stored, so editing it in
 Glamourer puts the edit in the next apply, with nothing to re-import.
 
