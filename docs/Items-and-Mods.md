@@ -445,8 +445,10 @@ marks where nothing is marked, so a tick you took off stays off; and it can be t
 **Settings → Size Options**. A mod whose sizes are named unrecognisably is a tick away.
 
 Checkbox groups work too, and a refit's single on/off toggle is the usual one. An item with
-several size groups gets a **Size Options** button and a menu per group, and each group is its own
-pick — choosing in one touches nothing in another. Within a checkbox group of several sizes,
+several size groups gets a **Size Options** button and a menu per group, each its own pick — or,
+by **Show an item's size groups as one list** in Settings, one list that acts as one set of sizes,
+where a body size picked turns the refit's toggle off and the toggle goes on over the body size.
+Within a checkbox group of several sizes,
 picking one turns the other sizes off and leaves anything else in the group — a fix, an extra —
 as it was.
 

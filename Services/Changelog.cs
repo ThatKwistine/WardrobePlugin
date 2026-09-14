@@ -41,6 +41,20 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 6, 2, 4), "14 September 2026", new List<ChangelogSection>
+        {
+            new("What's new", new List<ChangelogNote>
+            {
+                new("As one list, an item's size groups act as one set of sizes.",
+                    "With Show an item's size groups as one list on, a body's sizes and a refit's " +
+                    "toggle are one pick: choose a body size and the refit's toggle goes off, " +
+                    "choose the toggle and it goes on over the body size, and the button reads " +
+                    "what is in effect — Size: Muse while Muse is on, the body size once it is " +
+                    "off. Off, as it ships, each group is a menu of its own and nothing in one " +
+                    "changes anything in another."),
+            }),
+        }),
+
         new(new Version(1, 6, 2, 3), "14 September 2026", new List<ChangelogSection>
         {
             new("What's new", new List<ChangelogNote>

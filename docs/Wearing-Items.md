@@ -125,10 +125,12 @@ An item with more than one size group — a body's dropdown and a refit that is 
 has one button reading **Size Options**, opening to a menu per group, each named for the group and
 where it stands, with the option in force ticked inside; hover the button for the same list. If
 you would rather have them all under one finger, **Show an item's size groups as one list** under
-Settings → Size Options opens to one list with a rule between groups, and the button reads each
-group's option in turn. Each group is its own pick whichever shape it is in: choosing in one
-touches nothing in another. Options hidden in Edit are left off, and options read by the names
-given them there.
+Settings → Size Options opens to one list with a rule between groups — and the list is one set
+of sizes. Pick a body size and the refit's toggle goes off; pick the toggle and it goes on over the
+body size; the button reads what is in effect, so with Muse on you are wearing Muse, and "YAB
+mini" is what you go back to. As menus, each group is its own pick and nothing in one changes
+anything in another. Options hidden in Edit are left off, and options read by the names given
+them there.
 
 Which group is the size is worked out on import for body and legs items, and can be ticked or
 unticked on any group in Edit — see [Size options](Items-and-Mods.md#size-options).
