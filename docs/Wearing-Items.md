@@ -123,9 +123,9 @@ item.
 
 An item with more than one size group — a body's dropdown and a refit that is a mod of its own —
 has one button reading **Size Options**, opening to a menu per group, each named for the group and
-where it stands, with the option in force ticked inside; hover the button for the same list. The
-groups still act as one set of sizes: pick in one and the toggles in the others go off. Options
-hidden in Edit are left off, and options read by the names given them there.
+where it stands, with the option in force ticked inside; hover the button for the same list. Each
+group is its own pick: choosing in one touches nothing in another. Options hidden in Edit are left
+off, and options read by the names given them there.
 
 Which group is the size is worked out on import for body and legs items, and can be ticked or
 unticked on any group in Edit — see [Size options](Items-and-Mods.md#size-options).

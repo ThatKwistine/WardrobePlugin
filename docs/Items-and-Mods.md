@@ -445,11 +445,10 @@ marks where nothing is marked, so a tick you took off stays off; and it can be t
 **Settings → Size Options**. A mod whose sizes are named unrecognisably is a tick away.
 
 Checkbox groups work too, and a refit's single on/off toggle is the usual one. An item with
-several size groups gets a **Size Options** button and a menu per group, but the groups act as one
-set of sizes: pick a dropdown option and every toggle among the other groups goes off; pick a
-toggle and it goes on over the dropdown, which is what is on the character. Within a checkbox
-group of several sizes, picking one turns the other sizes off and leaves anything else in the
-group — a fix, an extra — as it was.
+several size groups gets a **Size Options** button and a menu per group, and each group is its own
+pick — choosing in one touches nothing in another. Within a checkbox group of several sizes,
+picking one turns the other sizes off and leaves anything else in the group — a fix, an extra —
+as it was.
 
 A tick is per item and per slot, on purpose — the legs of a set mark the mod's leg group, not the
 chest one — so saving it never writes onto the other items from the same mod, unlike the options

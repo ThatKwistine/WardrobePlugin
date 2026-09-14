@@ -41,6 +41,18 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 6, 2, 2), "14 September 2026", new List<ChangelogSection>
+        {
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("Size groups are independent of each other again.",
+                    "1.6.2.1 had a pick in one of an item's size groups switch off the toggles in " +
+                    "its other size groups — a body size chosen turned a refit's toggle off, and " +
+                    "the other way round. It should never have; each group is its own pick, and " +
+                    "choosing in one now touches nothing in another."),
+            }),
+        }),
+
         new(new Version(1, 6, 2, 1), "14 September 2026", new List<ChangelogSection>
         {
             new("What's new", new List<ChangelogNote>
@@ -52,12 +64,8 @@ public static class Changelog
                     "group and where it stands, with the option in force ticked inside. The " +
                     "right-click menu reads the same way. It was a line per group, and a card has " +
                     "room for two."),
-                new("Sizes act as one set across groups.",
-                    "Pick a dropdown option and every toggle among the item's other size groups goes " +
-                    "off; pick a refit's toggle and it goes on over the dropdown, which is what is on " +
-                    "the character. Within a checkbox group of several sizes, picking one turns the " +
-                    "other sizes off and leaves anything else in the group — a fix, an extra — as " +
-                    "it was."),
+                new("Within a checkbox group of sizes, picking one turns the other sizes off.",
+                    "Anything else in the group — a fix, an extra — is left as it was."),
                 new("Choose which options the card offers, and what it calls them.",
                     "Under the Size option tick in Edit, On the card lists the group's options with " +
                     "a tick each and a box for a name. None, then tick the four sizes your character " +

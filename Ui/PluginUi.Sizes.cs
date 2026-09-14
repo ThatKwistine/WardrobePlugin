@@ -80,9 +80,9 @@ public partial class PluginUi
     /// <para>
     /// One button however many groups feed it. With one group it reads the option and opens
     /// straight to the list; with several it reads "Size Options" and opens to a menu per group,
-    /// each named for the group and where it stands. The groups still act as one set of sizes —
-    /// picking in one switches off the toggles in the others, see <see cref="SwitchOffOtherToggles"/>.
-    /// Options hidden in Edit are left off unless they are the one the item is at.
+    /// each named for the group and where it stands. Each group is its own pick: choosing in one
+    /// touches nothing in another. Options hidden in Edit are left off unless they are the one the
+    /// item is at.
     /// </para>
     /// </remarks>
     private void DrawCardSizeRow(WardrobeItem item)
@@ -138,21 +138,20 @@ public partial class PluginUi
                 ImGui.TextDisabled(group);
                 ImGui.Separator();
             }
-            DrawGroupEntries(item, groups, mod, group, asMenu);
+            DrawGroupEntries(item, mod, group, asMenu);
             return;
         }
 
         foreach (var (mod, group) in groups)
         {
             if (!ImGui.BeginMenu($"{group}: {ShownFor(mod, group)}##{mod.ModDirectory}_{group}")) continue;
-            DrawGroupEntries(item, groups, mod, group, asMenu: true);
+            DrawGroupEntries(item, mod, group, asMenu: true);
             ImGui.EndMenu();
         }
     }
 
     /// <summary>One group's options, the ones in force ticked, hidden ones left off.</summary>
-    private void DrawGroupEntries(WardrobeItem item, List<(ModReference Mod, string Group)> groups,
-        ModReference mod, string group, bool asMenu)
+    private void DrawGroupEntries(WardrobeItem item, ModReference mod, string group, bool asMenu)
     {
         var def = SizeGroup(mod, group);
         if (def == null || def.OptionNames.Count == 0)
@@ -174,30 +173,23 @@ public partial class PluginUi
                 : ImGui.Selectable($"{name}##{option}", on);
             if (!picked) continue;
 
-            if (single) { if (option != current) PickSingle(item, groups, mod, def, option); }
-            else        PickCheckbox(item, groups, mod, def, option, !on);
+            if (single) { if (option != current) PickSingle(item, mod, def, option); }
+            else        PickCheckbox(item, mod, def, option, !on);
         }
     }
 
-    /// <summary>
-    /// Sets a dropdown to the pick, and switches off every toggle among the item's other size
-    /// groups — a body at "nymph" is not also wearing Muse.
-    /// </summary>
-    private void PickSingle(WardrobeItem item, List<(ModReference Mod, string Group)> groups,
-        ModReference mod, ModOptionGroup def, string chosen)
+    /// <summary>Sets a dropdown to the pick. The item's other size groups are not touched.</summary>
+    private void PickSingle(WardrobeItem item, ModReference mod, ModOptionGroup def, string chosen)
     {
         mod.Options[def.GroupName] = chosen;
-        var changed = new List<(ModReference, string)> { (mod, def.GroupName) };
-        changed.AddRange(SwitchOffOtherToggles(groups, mod, def.GroupName));
-        Commit(item, changed);
+        Commit(item, mod, def.GroupName);
     }
 
     /// <summary>
     /// Ticks or unticks one option of a checkbox group. Ticking a size unticks the other sizes in
-    /// the group, and every toggle among the item's other size groups.
+    /// the same group; nothing outside the group is touched.
     /// </summary>
-    private void PickCheckbox(WardrobeItem item, List<(ModReference Mod, string Group)> groups,
-        ModReference mod, ModOptionGroup def, string option, bool on)
+    private void PickCheckbox(WardrobeItem item, ModReference mod, ModOptionGroup def, string option, bool on)
     {
         // Every option this pick decides: the one clicked, and the other sizes when a size goes on.
         // Nothing else in the group is written, so an extra beside the sizes stays however it was
@@ -207,39 +199,7 @@ public partial class PluginUi
                 if (other != option && SizeGuess.ReadsAsSize(other)) decided[other] = false;
 
         WriteStates(mod, def.GroupName, decided);
-        var changed = new List<(ModReference, string)> { (mod, def.GroupName) };
-        if (on) changed.AddRange(SwitchOffOtherToggles(groups, mod, def.GroupName));
-        Commit(item, changed);
-    }
-
-    /// <summary>
-    /// Turns off what is on in the item's other checkbox size groups, and says which changed.
-    /// </summary>
-    /// <remarks>
-    /// A group with one option is a toggle — a refit's on/off — and the whole of it goes off. A
-    /// group with several is a set of sizes with, perhaps, an extra or two beside them, and only
-    /// the options that read as sizes go off; the extra stays. Dropdowns are left alone, since a
-    /// dropdown cannot be off — the toggle now on sits over whatever it says.
-    /// </remarks>
-    private List<(ModReference, string)> SwitchOffOtherToggles(
-        List<(ModReference Mod, string Group)> groups, ModReference pickedMod, string pickedGroup)
-    {
-        var changed = new List<(ModReference, string)>();
-        foreach (var (mod, group) in groups)
-        {
-            if (ReferenceEquals(mod, pickedMod) && group == pickedGroup) continue;
-            var def = SizeGroup(mod, group);
-            if (def == null || def.GroupType == ModGroupType.Single) continue;
-
-            var off = def.OptionNames
-                .Where(o => IsOn(mod, group, o) && (def.OptionNames.Count == 1 || SizeGuess.ReadsAsSize(o)))
-                .ToDictionary(o => o, _ => false);
-            if (off.Count == 0) continue;
-
-            WriteStates(mod, group, off);
-            changed.Add((mod, group));
-        }
-        return changed;
+        Commit(item, mod, def.GroupName);
     }
 
     /// <summary>Writes decided on/off states into whichever field the mod's checkbox options live in.</summary>
@@ -266,12 +226,11 @@ public partial class PluginUi
         }
     }
 
-    /// <summary>Saves, and sends every changed group if the item is on.</summary>
-    private void Commit(WardrobeItem item, List<(ModReference Mod, string Group)> changed)
+    /// <summary>Saves, and sends the changed group if the item is on.</summary>
+    private void Commit(WardrobeItem item, ModReference mod, string group)
     {
         _config.Save();
-        if (!_wardrobe.IsItemWorn(item)) return;
-        foreach (var (mod, group) in changed) _wardrobe.ReapplyGroup(item, mod, group);
+        if (_wardrobe.IsItemWorn(item)) _wardrobe.ReapplyGroup(item, mod, group);
     }
 
     /// <summary>The text, or as much of it as fits in the width with an ellipsis.</summary>
