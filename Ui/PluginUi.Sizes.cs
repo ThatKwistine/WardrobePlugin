@@ -115,18 +115,24 @@ public partial class PluginUi
         ImGui.EndPopup();
     }
 
-    /// <summary>"Size: nymph" for one group; "Size Options" for several, which open to a menu each.</summary>
-    private static string ButtonLabel(List<(ModReference Mod, string Group)> groups) =>
-        groups.Count == 1 ? $"Size: {ShownFor(groups[0].Mod, groups[0].Group)}" : "Size Options";
+    /// <summary>
+    /// "Size: nymph" for one group. For several, "Size Options" when they open to a menu each, or
+    /// every group's option in turn when they open to one list.
+    /// </summary>
+    private string ButtonLabel(List<(ModReference Mod, string Group)> groups) =>
+        groups.Count == 1          ? $"Size: {ShownFor(groups[0].Mod, groups[0].Group)}"
+        : _config.SizeOptionsOneList ? $"Size: {string.Join(" · ", groups.Select(g => ShownFor(g.Mod, g.Group)))}"
+        : "Size Options";
 
     /// <summary>What the card shows for one group: its stored option by its card name, or "as is".</summary>
     private static string ShownFor(ModReference mod, string group) =>
         StoredOption(mod, group) is { } option ? mod.SizeOptionLabel(group, option) : "as is";
 
     /// <summary>
-    /// The popup's contents: one group's options directly, or — as the View menu's Crop Guide
-    /// does — a submenu per group, each named for the group and the option it is at, with the
-    /// option in force ticked inside.
+    /// The popup's contents: one group's options directly; several as — as the View menu's Crop
+    /// Guide does — a submenu per group, each named for the group and the option it is at, with
+    /// the option in force ticked inside; or, by the setting, several as one list with a rule
+    /// between groups. The groups are independent in either shape.
     /// </summary>
     private void DrawSizeEntries(WardrobeItem item, List<(ModReference Mod, string Group)> groups, bool asMenu)
     {
@@ -139,6 +145,20 @@ public partial class PluginUi
                 ImGui.Separator();
             }
             DrawGroupEntries(item, mod, group, asMenu);
+            return;
+        }
+
+        if (_config.SizeOptionsOneList)
+        {
+            var first = true;
+            foreach (var (mod, group) in groups)
+            {
+                if (!first) ImGui.Separator();
+                first = false;
+                ImGui.PushID($"{mod.ModDirectory}|{group}");
+                DrawGroupEntries(item, mod, group, asMenu);
+                ImGui.PopID();
+            }
             return;
         }
 
@@ -280,6 +300,19 @@ public partial class PluginUi
         if (!enabled) return;
 
         ImGui.Indent();
+        var oneList = _config.SizeOptionsOneList;
+        if (ImGui.Checkbox("Show an item's size groups as one list", ref oneList))
+        {
+            _config.SizeOptionsOneList = oneList;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("An item with several size groups — a body's sizes and a refit's" + "\n" +
+                             "toggle — opens to one list of all of them, a rule between groups," + "\n" +
+                             "and the button reads each group's option in turn. Off, it opens" + "\n" +
+                             "to a menu per group. The groups are independent either way." + "\n\n" +
+                             "Items with one size group open to its list whichever this is.");
+
         var guess = _config.GuessSizeGroups;
         if (ImGui.Checkbox("Recognise size groups when importing", ref guess))
         {

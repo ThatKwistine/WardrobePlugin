@@ -159,6 +159,11 @@ so a top can be changed between bodies without opening Edit. See
 right-click menu, the tick under each group in Edit, and stops imports marking groups. Nothing is
 forgotten: the groups an item has marked are kept, and turning it back on finds them as they were.
 
+**Show an item's size groups as one list** — off by default. An item with several size groups — a
+body's sizes and a refit's toggle — opens to one list of all of them with a rule between groups,
+and its button reads each group's option in turn. Off, it opens to a menu per group. The groups
+are independent either way; an item with one size group opens to its list whichever this is.
+
 **Recognise size groups when importing** — on by default. A body or legs item whose mod has a group
 with options that plainly read as sizes — *Small / Medium / Large*, *S / M / L*, as a dropdown or
 as checkboxes — gets that group marked as its size on import and on Re-detect. It never changes a

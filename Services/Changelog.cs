@@ -41,6 +41,28 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 6, 2, 3), "14 September 2026", new List<ChangelogSection>
+        {
+            new("What's new", new List<ChangelogNote>
+            {
+                new("An item's size groups as one list, if you would rather.",
+                    "Show an item's size groups as one list, under Settings → Size Options, opens " +
+                    "an item with several size groups — a body's sizes and a refit's toggle — to " +
+                    "one list of all of them with a rule between groups, and the button reads each " +
+                    "group's option in turn. Off, as it ships, it opens to a menu per group. The " +
+                    "groups are independent either way."),
+            }),
+
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("Two mods on one item with a group of the same name can both be marked as a size.",
+                    "A main mod and a refit that each had a group called \"Body Size\" shared one " +
+                    "set of controls in Edit, so a tick on the second landed on the first — and " +
+                    "the same was true of their option pickers. Each mod's options are their own " +
+                    "now."),
+            }),
+        }),
+
         new(new Version(1, 6, 2, 2), "14 September 2026", new List<ChangelogSection>
         {
             new("Fixes", new List<ChangelogNote>

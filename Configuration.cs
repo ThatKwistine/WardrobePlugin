@@ -391,6 +391,19 @@ public class Configuration : IPluginConfiguration
     public bool SizeOptionsEnabled { get; set; } = true;
 
     /// <summary>
+    /// Whether an item with several size groups opens to one list of all their options, rather
+    /// than a menu per group.
+    /// </summary>
+    /// <remarks>
+    /// A layout choice with a case each way. A menu per group says which group is which and reads
+    /// where each stands from the outside; one list is a body's sizes and a refit's toggle under
+    /// one finger, which is how whoever has both thinks of them. Off by default, keeping the menus
+    /// this shipped with. Either way the groups are independent: a pick in one touches nothing in
+    /// another.
+    /// </remarks>
+    public bool SizeOptionsOneList { get; set; }
+
+    /// <summary>
     /// Whether importing an item, or Re-detect, marks a size group it can recognise by name.
     /// </summary>
     /// <remarks>

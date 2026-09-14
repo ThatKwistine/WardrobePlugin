@@ -917,6 +917,12 @@ public class ItemImportPanel : IDisposable
             {
                 var mod  = item.Mods[i];
                 var opts = _editModOptions[i];
+
+                // Every widget below is keyed on the group's name, and a supplementary mod can
+                // name a group the same as the main one — a refit with its own "Body Size". Without
+                // this the two shared one id, and a tick on the second landed on the first
+                ImGui.PushID($"modopts_{i}");
+
                 ImGui.TextUnformatted(mod.Label);
                 UiLayout.SameLineIfRoomForText($"({mod.ModName})");
                 ImGui.TextDisabled($"({mod.ModName})");
@@ -950,6 +956,7 @@ public class ItemImportPanel : IDisposable
                     }
                 }
                 ImGui.Spacing();
+                ImGui.PopID();
             }
         }
 
