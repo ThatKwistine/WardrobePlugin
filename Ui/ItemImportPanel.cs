@@ -117,6 +117,9 @@ public class ItemImportPanel : IDisposable
 
         /// <summary>Group → options left off the card, staged from <see cref="ModReference.SizeHiddenOptions"/>.</summary>
         public Dictionary<string, HashSet<string>> SizeHidden = new();
+
+        /// <summary>Size groups in the item's one set, staged from <see cref="ModReference.SizeSetGroups"/>.</summary>
+        public HashSet<string> SizeSet = new();
     }
     private readonly List<EditModOptions> _editModOptions = new();
 
@@ -353,6 +356,7 @@ public class ItemImportPanel : IDisposable
                                                                        kv => new Dictionary<string, string>(kv.Value));
             entry.SizeHidden       = mod.SizeHiddenOptions.ToDictionary(kv => kv.Key,
                                                                         kv => new HashSet<string>(kv.Value));
+            entry.SizeSet          = new HashSet<string>(mod.SizeSetGroups);
 
             if (entry.PathExists)
             {
@@ -542,6 +546,24 @@ public class ItemImportPanel : IDisposable
             ImGui.SetTooltip("Puts this group on the item's card as a quick pick of its options," + "\n" +
                              "for a size you change often. The pick sets the option above, the" + "\n" +
                              "same as choosing it here.");
+
+        // Whether this group is alternatives with the item's other set groups — a body size and a
+        // refit's toggle — or a pick of its own beside them, like a print. Only the item knows
+        if (on)
+        {
+            var inSet = opts.SizeSet.Contains(g.GroupName);
+            ImGui.SameLine();
+            if (ImGui.Checkbox($"One set##sizeset_{g.GroupName}", ref inSet))
+            {
+                if (inSet) opts.SizeSet.Add(g.GroupName);
+                else       opts.SizeSet.Remove(g.GroupName);
+            }
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("This group and the item's other One set groups are alternatives:" + "\n" +
+                                 "pick in one and the toggles in the others go off, so a refit is" + "\n" +
+                                 "never left on over a body size by mistake. Untick it for a group" + "\n" +
+                                 "that stands on its own beside the sizes, like a print.");
+        }
 
         // Which options the card offers and what it calls them, folded under the tick. A body
         // mod can ship sixty sizes of which one character wears four, and a refit shipped as its
@@ -1091,6 +1113,10 @@ public class ItemImportPanel : IDisposable
             _editTarget.Mods[i].SizeHiddenOptions = opts.SizeHidden
                 .Where(kv => opts.SizeGroups.Contains(kv.Key) && kv.Value.Count > 0)
                 .ToDictionary(kv => kv.Key, kv => kv.Value.ToList());
+            _editTarget.Mods[i].SizeSetGroups = groups
+                .Select(g => g.GroupName)
+                .Where(g => opts.SizeGroups.Contains(g) && opts.SizeSet.Contains(g))
+                .ToList();
 
             // Propagate to items in *other* slots only. Items sharing a mod across slots are
             // worn together and Penumbra holds one option state per mod, so what they both have

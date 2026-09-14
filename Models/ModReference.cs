@@ -83,6 +83,19 @@ public class ModReference
     /// </remarks>
     public Dictionary<string, List<string>> SizeHiddenOptions { get; set; } = new();
 
+    /// <summary>
+    /// Size groups of this mod that are one set with the item's other set groups: a pick in any of
+    /// them switches the toggles in the others off.
+    /// </summary>
+    /// <remarks>
+    /// Per group, because it is a fact about the item — a body size and a refit's toggle are
+    /// alternatives, a print beside them is not — and no setting can know which is which. A group
+    /// not in the set is its own pick and is never touched by another. A set of one is nothing.
+    /// </remarks>
+    public List<string> SizeSetGroups { get; set; } = new();
+
+    public bool InSizeSet(string group) => SizeSetGroups.Contains(group);
+
     public bool IsSizeOptionHidden(string group, string option) =>
         SizeHiddenOptions.TryGetValue(group, out var hidden) && hidden.Contains(option);
 
@@ -113,5 +126,6 @@ public class ModReference
         SizeOptionLabels = SizeOptionLabels.ToDictionary(kv => kv.Key,
                                                          kv => new Dictionary<string, string>(kv.Value)),
         SizeHiddenOptions = SizeHiddenOptions.ToDictionary(kv => kv.Key, kv => new List<string>(kv.Value)),
+        SizeSetGroups = new List<string>(SizeSetGroups),
     };
 }

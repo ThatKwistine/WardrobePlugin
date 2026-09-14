@@ -41,6 +41,21 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 6, 2, 5), "14 September 2026", new List<ChangelogSection>
+        {
+            new("What's new", new List<ChangelogNote>
+            {
+                new("Which size groups act as one set is the item's own tick.",
+                    "One set, beside the Size option tick in Edit. Groups ticked are alternatives " +
+                    "to each other — pick a body size and the refit's toggle goes off, pick the " +
+                    "toggle and it goes on over the body size — and a group without the tick, a " +
+                    "print beside the sizes, is its own pick and is never touched by another. It " +
+                    "was tied to the one-list setting in 1.6.2.4, which had every item behave the " +
+                    "same way; the one-list setting is layout only now. Only a checkbox toggle can " +
+                    "be switched off, so a set of two dropdowns changes nothing."),
+            }),
+        }),
+
         new(new Version(1, 6, 2, 4), "14 September 2026", new List<ChangelogSection>
         {
             new("What's new", new List<ChangelogNote>

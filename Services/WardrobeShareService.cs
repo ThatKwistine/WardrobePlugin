@@ -368,6 +368,7 @@ public class WardrobeShareService
                 copy.SizeOptionLabels[group] = new Dictionary<string, string>(labels);
             foreach (var (group, hidden) in mod.SizeHiddenOptions)
                 copy.SizeHiddenOptions[group] = new List<string>(hidden);
+            copy.SizeSetGroups.AddRange(mod.SizeSetGroups);
 
             shared.Mods.Add(copy);
         }
@@ -700,6 +701,7 @@ public class WardrobeShareService
                 copy.SizeOptionLabels[group] = new Dictionary<string, string>(labels);
             foreach (var (group, hidden) in mod.SizeHiddenOptions)
                 copy.SizeHiddenOptions[group] = new List<string>(hidden);
+            copy.SizeSetGroups.AddRange(mod.SizeSetGroups);
 
             item.Mods.Add(copy);
         }

@@ -284,4 +284,7 @@ public class SharedMod
 
     /// <summary>Group → options left off the card's pick.</summary>
     public Dictionary<string, List<string>> SizeHiddenOptions { get; set; } = new();
+
+    /// <summary>Size groups that are one set with the item's other set groups.</summary>
+    public List<string> SizeSetGroups { get; set; } = new();
 }

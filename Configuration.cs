@@ -395,12 +395,10 @@ public class Configuration : IPluginConfiguration
     /// than a menu per group.
     /// </summary>
     /// <remarks>
-    /// Two behaviours, not only two layouts. A menu per group says which group is which and reads
-    /// where each stands from the outside, and each group is its own pick — nothing in one changes
-    /// anything in another. One list is a body's sizes and a refit's toggle under one finger, which
-    /// is how whoever has both thinks of them, and so it acts as one set of sizes: pick a body size
-    /// and the refit's toggle goes off, pick the toggle and it goes on over the body size, and the
-    /// button reads what is in effect. Off by default, keeping the menus this shipped with.
+    /// A layout choice. A menu per group says which group is which and reads where each stands
+    /// from the outside; one list is a body's sizes and a refit's toggle under one finger, which is
+    /// how whoever has both thinks of them. Off by default, keeping the menus this shipped with.
+    /// Whether groups act as one set is the item's business — <see cref="ModReference.SizeSetGroups"/>.
     /// </remarks>
     public bool SizeOptionsOneList { get; set; }
 

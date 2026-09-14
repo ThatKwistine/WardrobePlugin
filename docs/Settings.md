@@ -161,10 +161,13 @@ forgotten: the groups an item has marked are kept, and turning it back on finds 
 
 **Show an item's size groups as one list** — off by default. An item with several size groups — a
 body's sizes and a refit's toggle — opens to one list of all of them with a rule between groups,
-and they act as one set: pick a body size and the refit's toggle goes off, pick the toggle and it
-goes on over the body size, and the button reads what is in effect. Off, it opens to a menu per
-group, and each group is its own pick — nothing in one changes anything in another. An item with
-one size group opens to its list whichever this is.
+and its button reads what is in effect. Off, it opens to a menu per group, and each group is its
+own pick — nothing in one changes anything in another. An item with one size group opens to its
+list whichever this is.
+
+Whether an item's size groups act as one set — a body size picked turning a refit's toggle off —
+is decided on the item, not here: **One set** beside the Size option tick in Edit. See
+[Size options](Items-and-Mods.md#size-options).
 
 **Recognise size groups when importing** — on by default. A body or legs item whose mod has a group
 with options that plainly read as sizes — *Small / Medium / Large*, *S / M / L*, as a dropdown or
