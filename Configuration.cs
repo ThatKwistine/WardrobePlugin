@@ -209,6 +209,14 @@ public class Configuration : IPluginConfiguration
         set => ActiveProfile.WornItems = value;
     }
 
+    /// <summary>The advanced dye rows the wardrobe has on the character. See <see cref="WardrobeProfile.AppliedAdvancedDyes"/>.</summary>
+    [Newtonsoft.Json.JsonIgnore]
+    public Dictionary<string, string> AppliedAdvancedDyes
+    {
+        get => ActiveProfile.AppliedAdvancedDyes;
+        set => ActiveProfile.AppliedAdvancedDyes = value;
+    }
+
     /// <summary>Where this lived before wardrobes could be per-character.</summary>
     /// <remarks>Kept only so an existing config still loads. Emptied by <see cref="MigrateProfiles"/>.</remarks>
     [Newtonsoft.Json.JsonProperty("WornItems")]

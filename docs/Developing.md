@@ -54,6 +54,14 @@ drawn by `Begin`. Pushing inside `Draw` fixes the body and leaves the title bar 
 
 If you add a new `Window`, it needs both.
 
+## The menu bar and the old toolbar
+
+Anything added to a menu in `Ui/PluginUi.Menu.cs` gets its button on the old toolbar in
+`Ui/PluginUi.Toolbar.cs` in the same change, with the same tooltip. The old toolbar was kept on
+purpose when the menu bar replaced it — a trade, not a leftover — and a feature on one and not the
+other is a bug. Settings are the one exception: the toolbar's Settings button opens the same window
+the menu does, and settings never get a button of their own.
+
 ## IPC surface used
 
 `Penumbra.Api.xml` ships next to `Penumbra.dll` in the installed plugin folder and is the

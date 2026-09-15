@@ -118,6 +118,26 @@ public class WardrobeProfile
     /// </remarks>
     public string ImagesFolder { get; set; } = string.Empty;
 
+    /// <summary>
+    /// The advanced dye rows the wardrobe last put on this character and has not yet put back:
+    /// Glamourer material key → the row as applied.
+    /// </summary>
+    /// <remarks>
+    /// The wardrobe's memory of what it dyed, kept so a plugin reload does not lose it. A row
+    /// belongs to a slot rather than to a piece, and nothing but an explicit revert takes one off —
+    /// so which rows are the wardrobe's to revert has to be known at the moment another outfit goes
+    /// on. That used to be worked out from the outfit in force and the worn list, both of which a
+    /// reload empties: an outfit worn before the reload kept its colours on whatever went into
+    /// its slots after it. Not cleared on load, unlike <see cref="WornItems"/>: a game restart does
+    /// wipe Glamourer's state, but putting back a row that is no longer there is a no-op, and a
+    /// plugin reload wipes nothing.
+    /// <para>
+    /// Only rows the wardrobe applied or captured. Rows somebody set by hand in Glamourer are never
+    /// here, so they are never reverted.
+    /// </para>
+    /// </remarks>
+    public Dictionary<string, string> AppliedAdvancedDyes { get; set; } = new();
+
     /// <summary>Variant groups the user has expanded, keyed on the original item's id.</summary>
     public HashSet<string> ExpandedVariantGroups { get; set; } = new();
 

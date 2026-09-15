@@ -41,6 +41,29 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 6, 2, 7), "15 September 2026", new List<ChangelogSection>
+        {
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("A glamour plate keeps its dyes when its attached mods go on.",
+                    "An upscale attached to a plate is applied as a mod only — the plate's own gear " +
+                    "stays and the mod re-skins it. Two places then put the mod's detected game " +
+                    "item over the plate's piece with no dye: the re-applies a few seconds after a " +
+                    "mod is switched on, and the re-apply after every redraw, which switching the " +
+                    "mod on is. Mod-only items are left out of both now, and a redraw puts the " +
+                    "outfit's own plain pieces back with their dyes instead. Along the way, " +
+                    "In-Game Look no longer leaves the previous outfit's hat and weapon toggles to " +
+                    "come back on the next redraw."),
+                new("An outfit's advanced dyes come off when the next outfit goes on, even after a " +
+                    "plugin reload.",
+                    "Which rows were the wardrobe's to put back was worked out from the outfit in " +
+                    "force and the worn list, and a plugin reload empties both — so an outfit worn " +
+                    "before a reload kept its colours on whatever the next outfit put in its slots. " +
+                    "The wardrobe keeps its own record of the rows it has on you now, and that " +
+                    "record survives a reload. Rows you set by hand in Glamourer are never in it."),
+            }),
+        }),
+
         new(new Version(1, 6, 2, 6), "15 September 2026", new List<ChangelogSection>
         {
             new("What's new", new List<ChangelogNote>

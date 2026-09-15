@@ -196,6 +196,13 @@ public class WardrobeService : IDisposable
             var item = _config.WardrobeItems.Find(x => x.Id == itemId);
             if (item?.GlamourerItemId is not { } glamId) continue;
 
+            // Never an item that was applied as a mod only. It equipped nothing on the way on, so
+            // there is nothing of its own to put back — and putting its detected game item back
+            // would replace the piece its mod exists to re-skin, at no dye. That is what took a
+            // plate's dyes off after the first redraw: the attached upscale's item went on over the
+            // plate's own piece, undyed, every time Penumbra reloaded (the enable itself reloads).
+            if (_config.WornModsOnly.Contains(item.Id)) continue;
+
             var dye = outfit != null ? GetDye(outfit, item.Id) : null;
             _glamourer.SetItem(item.Slot, glamId, dye?.Stain1 ?? 0, dye?.Stain2 ?? 0);
 
@@ -207,7 +214,12 @@ public class WardrobeService : IDisposable
         // A redraw resets the colour tables along with everything else, so these need putting back
         // for the same reason the stains above do
         if (advanced.Count > 0)
-            _glamourer.ApplyAdvancedDyes(advanced);
+            ApplyAdvancedRows(advanced);
+
+        // The outfit's plain pieces and their dyes, for the same reason as the items above. A
+        // plate outfit is mostly these — its items are the mods that go with it, not pieces of it
+        if (outfit != null)
+            WearVanillaItems(outfit, !outfit.IsGlamourPlate || outfit.PlateItemsEquip);
 
         ReapplyOutfitVisibility(objectIndex, outfit);
     }
@@ -273,7 +285,7 @@ public class WardrobeService : IDisposable
                     // After the item, always: a colour row describes the material of whatever is in
                     // the slot, so applying it before the reload lands would dye the outgoing piece
                     if (advanced is { Count: > 0 })
-                        _glamourer.ApplyAdvancedDyes(advanced);
+                        ApplyAdvancedRows(advanced);
                 });
             }
         });
@@ -542,12 +554,15 @@ public class WardrobeService : IDisposable
         // whatever occupies the slot, so applying them to the outgoing item would colour that
         var advanced = _config.AdvancedDyesEnabled ? dye?.Advanced : null;
         if (advanced is { Count: > 0 })
-            _glamourer.ApplyAdvancedDyes(advanced);
+            ApplyAdvancedRows(advanced);
 
         // Penumbra's async resource reload (triggered by SetModEnabled) completes 300ms-4s later
         // and causes Glamourer to re-apply its prior design state, undoing our SetItem call.
-        // Schedule repeated re-applies on the framework thread to win that race.
-        if (anyNewlyEnabled && item.GlamourerItemId.HasValue)
+        // Schedule repeated re-applies on the framework thread to win that race. Only where a
+        // SetItem was made: a mod applied without equipping has no call to win back, and re-sending
+        // its detected item would put that item, undyed, over the piece the mod is re-skinning —
+        // a plate's own gear, four times over the next few seconds
+        if (anyNewlyEnabled && item.GlamourerItemId.HasValue && equipItem)
             ScheduleGlamourerReapply(item.Slot, slotKey, item.GlamourerItemId.Value, item.Id, stain1, stain2,
                 advanced);
 
@@ -935,9 +950,18 @@ public class WardrobeService : IDisposable
             ? _config.Outfits.Find(o => o.Id == outfitId)
             : null;
 
-        if (_config.AdvancedDyesEnabled && activeOutfit != null &&
-            GetDye(activeOutfit, item.Id)?.Advanced is { Count: > 0 } worn)
-            _glamourer.RevertAdvancedDyes(worn);
+        if (_config.AdvancedDyesEnabled)
+        {
+            // The outfit's rows for this piece, and any row the wardrobe has on this slot from
+            // before — an outfit worn before a plugin reload is in the record and nowhere else
+            var worn = new Dictionary<string, string>();
+            if (activeOutfit != null && GetDye(activeOutfit, item.Id)?.Advanced is { Count: > 0 } fromOutfit)
+                foreach (var (key, row) in fromOutfit) worn[key] = row;
+            foreach (var (key, row) in _config.AppliedAdvancedDyes)
+                if (GlamourerIpc.KeyBelongsToSlot(key, item.Slot)) worn[key] = row;
+
+            if (worn.Count > 0) RevertAdvancedRows(worn);
+        }
 
         // Set the slot to the Emperor's New item so it appears empty in Glamourer.
         //
@@ -2296,6 +2320,10 @@ public class WardrobeService : IDisposable
         dye.Advanced       = rows;
         outfit.Dyes[key]   = dye;
 
+        // Captured rows are on the character and are now the wardrobe's to take off when the piece
+        // comes off, so they join the record as if the wardrobe had applied them
+        foreach (var (rowKey, row) in rows) _config.AppliedAdvancedDyes[rowKey] = row;
+
         _config.Save();
         _log.Debug($"[Wardrobe] Captured {rows.Count} advanced dye row(s) for '{item.Name}' in '{outfit.Name}'");
         return rows.Count;
@@ -2312,7 +2340,7 @@ public class WardrobeService : IDisposable
         // While it is on, forgetting the rows would leave them applied with nothing left to
         // describe them — so the character is put back first, then the record is dropped
         if (IsItemWorn(item))
-            _glamourer.RevertAdvancedDyes(dye.Advanced);
+            RevertAdvancedRows(dye.Advanced);
 
         dye.Advanced = new();
 
@@ -2603,10 +2631,13 @@ public class WardrobeService : IDisposable
             _log.Warning($"[Wardrobe] Outfit '{outfit.Name}': {missing} item(s) no longer exist and were skipped.");
 
         // Taken before anything is cleared, because it is a record of what is on the character right
-        // now — see the revert below, which is the only thing it is for.
+        // now — see the revert below, which is the only thing it is for. The outfit in force and the
+        // worn list say what this session put on; the persisted record says what any session did,
+        // which is the only source left after a plugin reload has emptied the other two
         var outgoingRows = AdvancedRowsOn(
             _activeOutfitId is { } previousId ? _config.Outfits.Find(o => o.Id == previousId) : null,
             _config.WornItems.Values);
+        foreach (var (key, row) in _config.AppliedAdvancedDyes) outgoingRows.TryAdd(key, row);
 
         // An outfit that clears its slots is saying it is the whole look rather than a layer, so the
         // slots it has nothing of its own for are emptied instead of being left holding what the last
@@ -2732,9 +2763,39 @@ public class WardrobeService : IDisposable
 
         if (stale.Count == 0) return;
 
-        _glamourer.RevertAdvancedDyes(stale);
+        RevertAdvancedRows(stale);
         _log.Debug($"[Wardrobe] Outfit '{outfit.Name}': put back {stale.Count} advanced dye row(s) " +
                    $"the previous outfit had left on the character");
+    }
+
+    /// <summary>
+    /// Sends rows to Glamourer and records them as the wardrobe's, so they can be put back later —
+    /// after a plugin reload as much as before one.
+    /// </summary>
+    private void ApplyAdvancedRows(IReadOnlyDictionary<string, string> rows)
+    {
+        if (rows.Count == 0) return;
+        _glamourer.ApplyAdvancedDyes(rows);
+
+        var changed = false;
+        foreach (var (key, row) in rows)
+        {
+            if (_config.AppliedAdvancedDyes.TryGetValue(key, out var had) && had == row) continue;
+            _config.AppliedAdvancedDyes[key] = row;
+            changed = true;
+        }
+        if (changed) _config.Save();
+    }
+
+    /// <summary>Puts rows back to their game values and strikes them from the record.</summary>
+    private void RevertAdvancedRows(IReadOnlyDictionary<string, string> rows)
+    {
+        if (rows.Count == 0) return;
+        _glamourer.RevertAdvancedDyes(rows);
+
+        var changed = false;
+        foreach (var key in rows.Keys) changed |= _config.AppliedAdvancedDyes.Remove(key);
+        if (changed) _config.Save();
     }
 
     /// <summary>
@@ -3969,6 +4030,10 @@ public class WardrobeService : IDisposable
         // the game has on them.
         _glamourer.RevertState();
 
+        // The outfit that was on is not any more — the game's own look is. Left set, the next redraw
+        // would put that outfit's plain pieces and its hat and weapon toggles back over the game's
+        _activeOutfitId = null;
+
         // The kept slots first and the base's own items second, so a base that names an item for a
         // slot wins over whatever merely happened to be worn there
         foreach (var item in keptItems) WearItem(item);
@@ -4055,6 +4120,10 @@ public class WardrobeService : IDisposable
 
         foreach (var item in items)
             WearItem(item, GetDye(outfit, item.Id), outfit.PlateItemsEquip);
+
+        // The plate is what is on the character now, so a redraw puts its pieces, its dyes and
+        // its hat and weapon toggles back rather than some earlier outfit's
+        _activeOutfitId = outfit.Id;
 
         _log.Information($"[Wardrobe] Plate '{outfit.Name}': applied {items.Count} attached mod(s)" +
                          (outfit.PlateItemsEquip ? " and equipped their items" : ", equipping nothing"));

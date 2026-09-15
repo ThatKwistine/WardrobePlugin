@@ -35,8 +35,13 @@ material files can keep reloading for several seconds, and each reload can undo 
 
 Whenever Penumbra redraws your character — a zone change, a mod toggle, another plugin applying
 something — the wardrobe sends every worn item to Glamourer again, with its dyes and any advanced
-dye rows the outfit holds, and re-asserts the outfit's hat and weapon toggles. The outfit comes
-through the redraw intact.
+dye rows the outfit holds, then the outfit's plain pieces and their dyes, and re-asserts the
+outfit's hat and weapon toggles. The outfit comes through the redraw intact.
+
+An item that was applied as a mod only — an upscale attached to a glamour plate — is left out of
+that. It equipped nothing on the way on, so there is nothing of its own to put back, and putting its
+detected game item back would replace the plate's own piece, undyed. The plate's pieces go back
+instead, dyes and all.
 
 The other side of that: the wardrobe does not watch Glamourer, so a piece you take off in Glamourer
 — or one another plugin removes — is still down as worn, and comes straight back at the next redraw.

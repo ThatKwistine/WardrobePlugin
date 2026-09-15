@@ -171,8 +171,11 @@ If ticking it finds nothing, the box stays clear and says so, rather than preten
 something.
 
 Captured rows are applied when the outfit is worn, re-applied after a Penumbra redraw the same way
-the plain dyes are, and put back to game values when the piece is unequipped — otherwise they would
-go on describing whatever is worn in that slot next.
+the plain dyes are, and put back to game values when the piece is unequipped or another outfit
+takes its slot — otherwise they would go on describing whatever is worn in that slot next. The
+wardrobe keeps its own record of which rows it has on you, and that record survives a plugin
+reload, so an outfit worn before one still has its rows put back when the next outfit goes on.
+Rows you set by hand in Glamourer are never in that record and are never touched.
 
 They are stored per item per outfit, so one piece can be plainly dyed in one outfit and elaborately
 dyed in another. Only the rows belonging to that item's slot are captured, so dyeing a hat and
