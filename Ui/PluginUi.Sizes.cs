@@ -125,23 +125,40 @@ public partial class PluginUi
         : "Size Options";
 
     /// <summary>
-    /// The options that are in effect: any switched-on toggles, else the dropdowns' choices.
+    /// What the groups in effect read: each dropdown's choice unless a toggle in its set is on
+    /// over it, and each toggle that is on. "as is" when that is nothing.
     /// </summary>
-    /// <remarks>
-    /// A refit shipped as a mod of its own is a toggle over the body underneath: with Muse on the
-    /// character is wearing Muse, and the base mod's "YAB mini" is what it will go back to, not what
-    /// it is at. So while any toggle is on the button reads the toggles, and only once they are all
-    /// off does it read the dropdowns. The tooltip and the list still show every group where it
-    /// stands.
-    /// </remarks>
     private static IEnumerable<string> InEffect(List<(ModReference Mod, string Group)> groups)
     {
-        var toggles = groups
-            .Where(g => !g.Mod.Options.ContainsKey(g.Group) && StoredOption(g.Mod, g.Group) != null)
+        var shown = groups
+            .Where(g => GroupInEffect(groups, g.Mod, g.Group))
             .Select(g => ShownFor(g.Mod, g.Group))
             .ToList();
-        if (toggles.Count > 0) return toggles;
-        return groups.Select(g => ShownFor(g.Mod, g.Group));
+        return shown.Count > 0 ? shown : new List<string> { "as is" };
+    }
+
+    /// <summary>
+    /// Whether what a group is at is what is on the character.
+    /// </summary>
+    /// <remarks>
+    /// A toggle is in effect while it is on and not otherwise — off, it is nothing, and reading
+    /// "as is" for it beside the body size was the visual fault in 1.6.2.5. A dropdown is always
+    /// at something, so it is in effect unless a toggle in the same set is on over it: a refit
+    /// shipped as a mod of its own sits over the body underneath, and with Muse on the base mod's
+    /// "YAB mini" is what the character goes back to, not what it is at. A dropdown outside any
+    /// set — a print beside the sizes — is in effect whatever the toggles do.
+    /// </remarks>
+    private static bool GroupInEffect(List<(ModReference Mod, string Group)> groups, ModReference mod, string group)
+    {
+        var isDropdown = mod.Options.ContainsKey(group);
+        if (!isDropdown) return StoredOption(mod, group) != null;
+        if (!mod.InSizeSet(group)) return true;
+
+        return !groups.Any(g =>
+            !(ReferenceEquals(g.Mod, mod) && g.Group == group) &&
+            g.Mod.InSizeSet(g.Group) &&
+            !g.Mod.Options.ContainsKey(g.Group) &&
+            StoredOption(g.Mod, g.Group) != null);
     }
 
     /// <summary>What the card shows for one group: its stored option by its card name, or "as is".</summary>
@@ -201,17 +218,22 @@ public partial class PluginUi
             return;
         }
 
-        var single  = def.GroupType == ModGroupType.Single;
-        var current = StoredOption(mod, group);
+        var single   = def.GroupType == ModGroupType.Single;
+        var current  = StoredOption(mod, group);
+        var inEffect = GroupInEffect(groups, mod, group);
         foreach (var option in def.OptionNames)
         {
             var on = single ? option == current : IsOn(mod, group, option);
             if (!on && mod.IsSizeOptionHidden(group, option)) continue;
 
-            var name   = mod.SizeOptionLabel(group, option);
+            // The dot is the selection: in a set, the one thing picked — a toggle on over the
+            // dropdown takes the dot with it, and the dropdown's choice gets it back once the
+            // toggle is off. Not the selected highlight, which is the same shade as the hover
+            // and so says nothing once the mouse is over the list
+            var name   = (on && inEffect ? "● " : "   ") + mod.SizeOptionLabel(group, option);
             var picked = asMenu
-                ? ImGui.MenuItem($"{name}##{option}", string.Empty, on)
-                : ImGui.Selectable($"{name}##{option}", on);
+                ? ImGui.MenuItem($"{name}##{option}")
+                : ImGui.Selectable($"{name}##{option}");
             if (!picked) continue;
 
             if (single) { if (option != current) PickSingle(item, groups, mod, def, option); }

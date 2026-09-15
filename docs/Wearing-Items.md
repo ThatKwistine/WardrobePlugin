@@ -131,8 +131,12 @@ is in effect — with Muse on you are wearing Muse, and "YAB mini" is what you g
 Whether picking in one group changes another is the item's own business. Groups ticked **One set**
 in Edit are alternatives to each other: pick a body size and the refit's toggle goes off, pick the
 toggle and it goes on over the body size. A group without the tick — a print beside the sizes — is
-its own pick and is never touched by another. Options hidden in Edit are left off, and options
-read by the names given them there.
+its own pick and is never touched by another.
+
+In the list, a dot (●) marks the selection, and the button reads the same: in a set that is the
+one thing you picked — the refit's toggle while it is on, the body size once it is off — and
+outside a set, whatever each group is set to. A toggle that is off is nothing. Options hidden in
+Edit are left off, and options read by the names given them there.
 
 Which group is the size is worked out on import for body and legs items, and can be ticked or
 unticked on any group in Edit — see [Size options](Items-and-Mods.md#size-options).

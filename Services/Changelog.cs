@@ -41,6 +41,28 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 6, 2, 6), "15 September 2026", new List<ChangelogSection>
+        {
+            new("What's new", new List<ChangelogNote>
+            {
+                new("A dot marks the size you picked.",
+                    "In the size list a dot sits on the selection, in place of the highlight, " +
+                    "which was the same shade as the mouse hovering and so said nothing once you " +
+                    "were over it. In a set it is the one thing you picked — the refit's toggle " +
+                    "while it is on, the body size once it is off — and outside a set, whatever " +
+                    "each group is set to."),
+            }),
+
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("The button no longer reads \"as is\" beside the body size.",
+                    "With a refit's toggle off, the one-list button read \"Size: as is · " +
+                    "Neolithe\" — the toggle was listed though it had nothing to say. A toggle " +
+                    "that is off is nothing now, so it reads \"Size: Neolithe\", and \"as is\" " +
+                    "only appears when nothing at all is set."),
+            }),
+        }),
+
         new(new Version(1, 6, 2, 5), "14 September 2026", new List<ChangelogSection>
         {
             new("What's new", new List<ChangelogNote>
