@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
+using Dalamud.Interface;
 using WardrobePlugin.Models;
 using WardrobePlugin.Services;
 
@@ -71,26 +72,57 @@ public partial class PluginUi
         return _sizeGroupCache[key] = found;
     }
 
+    /// <summary>Whether the card gets a size button: the feature on, and the item with a size group.</summary>
+    private bool HasSizeGroups(WardrobeItem item) =>
+        _config.SizeOptionsEnabled && item.Mods.Any(m => m.SizeGroups.Count > 0);
+
+    private static string SizePopupId(WardrobeItem item) => $"##sizepop_{item.Id}";
+
     /// <summary>
-    /// "Size: YAB+ M" under the card's buttons, opening one list of every size option the item has.
+    /// The size button proper: a ruler in the action row, beside Edit, that opens the size pick.
+    /// </summary>
+    /// <remarks>
+    /// The row is the one part of a card that is always there, at any scale — Edit shrinks to a
+    /// pencil rather than leaving. The text line under the row (<see cref="DrawCardSizeRow"/>) is
+    /// the more legible way in and stays wherever the card has the height for it; this is the way
+    /// in that never disappears, which it did at about 0.87x when the line was all there was.
+    /// </remarks>
+    private void DrawCardSizeButton(WardrobeItem item, float width)
+    {
+        bool clicked;
+        using (Plugin.PluginInterface.UiBuilder.IconFontHandle?.Push())
+            clicked = ImGui.Button($"{FontAwesomeIcon.Ruler.ToIconString()}##sizebtn_{item.Id}", new Vector2(width, 0));
+
+        if (clicked) ImGui.OpenPopup(SizePopupId(item));
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(SizeTooltip(item));
+    }
+
+    private string SizeTooltip(WardrobeItem item)
+    {
+        var groups = SizeGroupsOf(item).ToList();
+        return string.Join("\n", groups.Select(g => $"{g.Group}: {ShownFor(g.Mod, g.Group)}")) +
+               "\n\n" + "Click to change.";
+    }
+
+    /// <summary>
+    /// "Size: YAB+ M" under the card's buttons, reading where the item stands and opening the same
+    /// pick as the ruler beside Edit.
     /// </summary>
     /// <remarks>
     /// Small, under the action row, and only when the card has the height — the same terms as the
-    /// solo row it sits beside. The right-click menu has the same thing for a card that does not.
+    /// solo row it sits beside. The ruler in the row above is there whatever the height, and the
+    /// right-click menu has the same pick again; this line is the one that says the answer without
+    /// being hovered.
     /// <para>
-    /// One button however many groups feed it. With one group it reads the option and opens
-    /// straight to the list; with several it reads "Size Options" and opens to a menu per group,
-    /// each named for the group and where it stands, each its own pick. Or, by the setting, as one
-    /// list that is one set of sizes. Options hidden in Edit are left off unless they are the one
-    /// the item is at.
+    /// One line however many groups feed it. With one group it reads the option; with several it
+    /// reads "Size Options", or what is in effect when they open to one list. Options hidden in Edit
+    /// are left off unless they are the one the item is at.
     /// </para>
     /// </remarks>
     private void DrawCardSizeRow(WardrobeItem item)
     {
-        if (!_config.SizeOptionsEnabled) return;
-
+        if (!HasSizeGroups(item)) return;
         var groups = SizeGroupsOf(item).ToList();
-        if (groups.Count == 0) return;
 
         var needed = ImGui.GetTextLineHeight() + ImGui.GetStyle().ItemSpacing.Y * 2;
         if (ImGui.GetContentRegionAvail().Y < needed) return;
@@ -101,17 +133,20 @@ public partial class PluginUi
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(1f, 1f, 1f, 0.12f));
         ImGui.PushStyleColor(ImGuiCol.Text,          new Vector4(0.62f, 0.62f, 0.70f, 1f));
 
-        var popup = $"##sizepop_{item.Id}";
         if (ImGui.SmallButton($"{label}##size_{item.Id}"))
-            ImGui.OpenPopup(popup);
+            ImGui.OpenPopup(SizePopupId(item));
         if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(string.Join("\n", groups.Select(g => $"{g.Group}: {ShownFor(g.Mod, g.Group)}")) +
-                             "\n\n" + "Click to change.");
+            ImGui.SetTooltip(SizeTooltip(item));
 
         ImGui.PopStyleColor(3);
+    }
 
-        if (!ImGui.BeginPopup(popup)) return;
-        DrawSizeEntries(item, groups, asMenu: false);
+    /// <summary>The size pick itself, drawn once per card and opened by the ruler or the line.</summary>
+    private void DrawCardSizePopup(WardrobeItem item)
+    {
+        if (!HasSizeGroups(item)) return;
+        if (!ImGui.BeginPopup(SizePopupId(item))) return;
+        DrawSizeEntries(item, SizeGroupsOf(item).ToList(), asMenu: false);
         ImGui.EndPopup();
     }
 

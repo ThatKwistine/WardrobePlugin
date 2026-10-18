@@ -230,6 +230,30 @@ public partial class PluginUi : Window, IDisposable
     /// <summary>Confirmation for removing an installed icon pack, which deletes its folder.</summary>
     private const string IconPackRemovePopup = "Remove icon pack?###iconPackRemove";
 
+    /// <summary>
+    /// The backup picker. A modal for the same reason the bulk delete is one: it replaces the whole
+    /// wardrobe, and what happens to the current one — and when — is worth reading first.
+    /// </summary>
+    private const string RestoreBackupPopup = "Restore a backup?###restoreBackup";
+
+    /// <summary>The backups listed by the picker, read when it opens rather than every frame.</summary>
+    private IReadOnlyList<BackupEntry> _restoreBackups = Array.Empty<BackupEntry>();
+
+    /// <summary>The backup highlighted in the picker. Null until one is clicked.</summary>
+    private BackupEntry? _restoreSelected;
+
+    /// <summary>
+    /// What the highlighted backup holds, once read. Null while the read is in flight — it parses
+    /// megabytes, so it runs off the draw thread and the picker shows "Reading…" until it lands.
+    /// </summary>
+    private volatile BackupSummary? _restoreSummary;
+
+    /// <summary>Path the summary was read for, so a stale result cannot describe the wrong file.</summary>
+    private string? _restoreSummaryFor;
+
+    /// <summary>Outcome of the last stage or cancel, shown under the restore controls.</summary>
+    private string _restoreStatus = string.Empty;
+
     /// <summary>Pack the x was clicked on, waiting for the confirmation to open. Null when idle.</summary>
     private string? _iconPackPendingRemoval;
 
@@ -365,7 +389,13 @@ public partial class PluginUi : Window, IDisposable
 
     // First-run setup
     private int _onboardStep;
-    private const int OnboardLastStep = 7;
+    private const int OnboardLastStep = 8;
+
+    /// <summary>
+    /// How many backups the folder chosen on the restore step holds, remembered per folder so the
+    /// step is not a directory listing every frame.
+    /// </summary>
+    private (string Folder, int Count)? _onboardBackupCount;
 
     // Dependency probes, cached so the welcome step is not an IPC call every frame
     private (bool Available, string Version)? _penumbraCheck;
@@ -694,6 +724,7 @@ public partial class PluginUi : Window, IDisposable
             DrawDesyncNotice();
             DrawLeftoverCollectionNotice();
             DrawUncompressedTextureNotice();
+            DrawModConflictNotice();
             ImGui.Separator();
             DrawSlotFilter();
             ImGui.Separator();
@@ -890,15 +921,17 @@ public partial class PluginUi : Window, IDisposable
             switch (_onboardStep)
             {
                 case 0: DrawOnboardIntro();       break;
-                case 1: DrawOnboardCollection();  break;
+                // Before any question about settings: a restore brings every one of them with it
+                case 1: DrawOnboardRestore();     break;
+                case 2: DrawOnboardCollection();  break;
                 // Straight after the collection, which asks the same question in Penumbra's words:
                 // whether the things this plugin touches belong to one character or to several
-                case 2: DrawOnboardWardrobes();   break;
-                case 3: DrawOnboardContents();    break;
-                case 4: DrawOnboardLastWorn();    break;
-                case 5: DrawOnboardImages();      break;
-                case 6: DrawOnboardScreenshots(); break;
-                case 7: DrawOnboardBackups();     break;
+                case 3: DrawOnboardWardrobes();   break;
+                case 4: DrawOnboardContents();    break;
+                case 5: DrawOnboardLastWorn();    break;
+                case 6: DrawOnboardImages();      break;
+                case 7: DrawOnboardScreenshots(); break;
+                case 8: DrawOnboardBackups();     break;
             }
             UiLayout.PopWrap();
         }
@@ -1014,6 +1047,69 @@ public partial class PluginUi : Window, IDisposable
         ImGui.SameLine();
         ImGui.TextDisabled(status.Available ? $"— found (API {status.Version})" : "— not found");
         ImGui.TextDisabled($"    {why}");
+    }
+
+    /// <summary>
+    /// The way in for someone who has used Wardrobe before — a new PC, a reinstall — and has the
+    /// backup folder to show for it. Asked before any other question because a restore answers all
+    /// of them: the backup carries every setting the rest of the walkthrough asks about.
+    /// </summary>
+    /// <remarks>
+    /// Choosing a folder here sets the same <see cref="Configuration.BackupFolder"/> the last step
+    /// asks for, so someone who browses to it and then starts fresh after all finds it already
+    /// filled in there. Whether backups are switched on is still that step's question.
+    /// </remarks>
+    private void DrawOnboardRestore()
+    {
+        ImGui.TextUnformatted("Used Wardrobe before?");
+        ImGui.Spacing();
+        ImGui.TextWrapped("If you kept backups — on a previous PC, or before a reinstall — your " +
+                          "wardrobe can be brought back from one instead of starting again. Point " +
+                          "this at the folder the backups were written to.");
+        ImGui.Spacing();
+        ImGui.TextDisabled("Starting fresh? Press Next.");
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        if (string.IsNullOrEmpty(_config.BackupFolder))
+            ImGui.TextDisabled("No backup folder selected.");
+        else
+        {
+            ImGui.TextUnformatted(_config.BackupFolder);
+
+            if (_onboardBackupCount is not { } counted || counted.Folder != _config.BackupFolder)
+                _onboardBackupCount = counted = (_config.BackupFolder, _backup.ListConfigBackups().Count);
+
+            ImGui.TextDisabled(counted.Count == 0
+                ? "No backups in this folder — they are named WardrobePlugin_<date>-<time>.json."
+                : $"{counted.Count} backup(s) found.");
+        }
+
+        ImGui.Spacing();
+        if (ImGui.Button(" Browse…##onboardRestore "))
+        {
+            var start = Directory.Exists(_config.BackupFolder)
+                ? _config.BackupFolder
+                : Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+
+            _fileDialog.OpenFolderDialog("Select Backup Folder", (ok, path) =>
+            {
+                if (!ok) return;
+                _config.BackupFolder = path;
+                _config.Save();
+            }, start);
+        }
+
+        ImGui.SameLine();
+        DrawRestoreControls();
+
+        if (_backup.RestoreStaged)
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled("The backup brings its settings with it, so the rest of this setup " +
+                               "can be skipped.");
+        }
     }
 
     private void DrawOnboardCollection()
@@ -4679,6 +4775,18 @@ public partial class PluginUi : Window, IDisposable
         _config.Save();
     }
 
+    /// <summary>What the card tooltip adds for an item that is not worn: the worn mods it would share files with.</summary>
+    private string ConflictPreviewText(WardrobeItem item, bool worn)
+    {
+        if (worn || !_config.ShowModConflicts) return string.Empty;
+        if (Plugin.ModConflicts.Preview(item) is not { Count: > 0 } hits) return string.Empty;
+
+        var text = new System.Text.StringBuilder("\n\nWearing this would share files with:");
+        foreach (var (name, shared) in hits)
+            text.Append($"\n• {name} ({shared} file(s))");
+        return text.ToString();
+    }
+
     private void DrawCard(WardrobeItem item, ref Guid? pendingDelete)
     {
         var worn = _wardrobe.IsItemWorn(item);
@@ -4719,7 +4827,7 @@ public partial class PluginUi : Window, IDisposable
             ImGui.TextUnformatted(dispName);
             if (ImGui.IsItemHovered())
             {
-                ImGui.SetTooltip($"{item.Name}\n{DateAddedLabel(item)}\n\nDouble-click to rename.");
+                ImGui.SetTooltip($"{item.Name}\n{DateAddedLabel(item)}\n\nDouble-click to rename.{ConflictPreviewText(item, worn)}");
 
                 // Not offered in select mode, where a click on the card is a tick and a rename box
                 // would be sitting over the thing being ticked
@@ -4746,6 +4854,7 @@ public partial class PluginUi : Window, IDisposable
         }
 
         DrawTextureFlagBadge(item, worn);
+        DrawModConflictBadge(item, worn);
 
         // A pilcrow rather than a pencil or a note glyph: both of those live in the Dingbats block,
         // which the default font does not carry, and would draw as an empty box.
@@ -4850,8 +4959,10 @@ public partial class PluginUi : Window, IDisposable
 
         // Scaled down far enough, "Edit" no longer fits its button and ImGui clips it to "Edi".
         // A pencil says the same thing in the room that is left rather than most of a word.
+        // An item with a size gives up a little more of Edit's width to the size button beside it.
         ImGui.SameLine();
-        var editW = btnW - editGap;
+        var hasSize = HasSizeGroups(item);
+        var editW   = btnW - editGap - (hasSize ? deleteW + ImGui.GetStyle().ItemSpacing.X : 0f);
 
         if (ImGui.CalcTextSize("Edit").X + ImGui.GetStyle().FramePadding.X * 2 <= editW)
         {
@@ -4869,6 +4980,12 @@ public partial class PluginUi : Window, IDisposable
             if (ImGui.IsItemHovered()) ImGui.SetTooltip("Edit this item.");
         }
 
+        if (hasSize)
+        {
+            ImGui.SameLine();
+            DrawCardSizeButton(item, deleteW);
+        }
+
         ImGui.SameLine();
         if (DeleteButton("X", $"Deletes '{item.Name}' from the wardrobe.\n" +
                               "The Penumbra mod itself is not touched.", new Vector2(deleteW, 0)))
@@ -4876,6 +4993,7 @@ public partial class PluginUi : Window, IDisposable
 
         DrawSoloRow(item, worn, links);
         DrawCardSizeRow(item);
+        DrawCardSizePopup(item);
 
         DrawCardContextMenu(item, worn, links, ref pendingDelete);
 
@@ -4933,6 +5051,78 @@ public partial class PluginUi : Window, IDisposable
                            "block-compressed. Convert them in Lightless' Character Analysis window, " +
                            "under the tex tab — its own auto-compress never touches your own mods.");
         ImGui.Spacing();
+    }
+
+    /// <summary>
+    /// A banner for worn mods that conflict and have not been ordered, with the question on it.
+    /// </summary>
+    /// <remarks>
+    /// A badge on a card is easy to never see, and an unanswered conflict means which mod shows is
+    /// down to chance. Only pairs that need an answer are listed: ones Penumbra already orders by
+    /// differing priorities are the user's own settings and stay quiet, and ones already answered
+    /// here — including "leave as is" — are done. Answering clears the row.
+    /// </remarks>
+    private void DrawModConflictNotice()
+    {
+        if (!_config.ShowModConflicts) return;
+
+        var open = Plugin.ModConflicts.Pairs()
+            .Where(c => !c.Settled &&
+                        _config.ModPriorityChoices.Find(x => x.Matches(c.OwnDirectory, c.RivalDirectory)) == null)
+            .ToList();
+        if (open.Count == 0) return;
+
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(1f, 0.4f, 0.35f, 1f),
+            $"● {open.Count} worn mod conflict(s) are tied in Penumbra.");
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Each pair is at the same priority, so which mod shows is down to chance.");
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Resolve...")) ImGui.OpenPopup("##conflictResolve");
+
+        if (ImGui.BeginPopup("##conflictResolve"))
+        {
+            ImGui.TextUnformatted("Which should be on top?");
+            ImGui.TextDisabled("Your answer is remembered and applied whenever both are worn.");
+            foreach (var c in open)
+            {
+                ImGui.Separator();
+                DrawConflictChoices(c);
+            }
+            ImGui.EndPopup();
+        }
+
+        ImGui.Spacing();
+    }
+
+    /// <summary>One conflicting pair with every way of ending it, shared by the banner and the card popup.</summary>
+    private void DrawConflictChoices(ModConflict c)
+    {
+        ImGui.PushID(c.OwnDirectory + "|" + c.RivalDirectory);
+
+        ImGui.TextUnformatted($"{Truncate(c.OwnName, 40)}  vs  {Truncate(c.RivalName, 40)}");
+        ImGui.TextDisabled($"{c.Shared} shared file(s); may include options that are not selected");
+
+        var choice = _config.ModPriorityChoices.Find(x => x.Matches(c.OwnDirectory, c.RivalDirectory));
+        if (choice != null)
+            ImGui.TextDisabled(string.IsNullOrEmpty(choice.WinnerDirectory)
+                ? "Currently: left as it is"
+                : $"Currently: {(string.Equals(choice.WinnerDirectory, c.OwnDirectory, StringComparison.OrdinalIgnoreCase) ? c.OwnName : c.RivalName)} on top");
+
+        if (ImGui.Button($"{Truncate(c.OwnName, 24)} on top")) ChooseOnTop(c, c.OwnDirectory);
+        ImGui.SameLine();
+        if (ImGui.Button($"{Truncate(c.RivalName, 24)} on top")) ChooseOnTop(c, c.RivalDirectory);
+
+        if (ImGui.Button($"Take off {Truncate(c.OwnName, 20)}")) TakeOffConflicting(c.OwnDirectory);
+        ImGui.SameLine();
+        if (ImGui.Button($"Take off {Truncate(c.RivalName, 20)}")) TakeOffConflicting(c.RivalDirectory);
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Takes off the worn item(s) using that mod, as Unequip on their card would.\n" +
+                             "Nothing is remembered: this ends the conflict by removing one side.");
+        ImGui.SameLine();
+        if (ImGui.Button("Leave as is")) ChooseOnTop(c, string.Empty);
+
+        ImGui.PopID();
     }
 
     /// <summary>
@@ -4995,6 +5185,106 @@ public partial class PluginUi : Window, IDisposable
             "the tex tab.\n\n" +
             "That rewrites the files in place, so keep the mod's .pmp or .ttmp2 if you want\n" +
             "the originals back. The badge clears itself once they are converted.");
+    }
+
+    /// <summary>
+    /// Marks a worn item whose mod shares files with another worn mod, and asks which should be on
+    /// top (#35).
+    /// </summary>
+    /// <remarks>
+    /// Red when this mod is losing some of those files to the other, amber when it wins them all —
+    /// still worth knowing, since the other piece is the one that is being overruled. Only on a worn
+    /// card, for the same reason as the texture badge: two mods nobody is wearing contest nothing.
+    /// <para>
+    /// Clicking opens the question. The wardrobe never settles a conflict by itself: the answer is
+    /// the user's, it is remembered per pair, and it is applied again whenever both are worn.
+    /// </para>
+    /// </remarks>
+    private void DrawModConflictBadge(WardrobeItem item, bool worn)
+    {
+        if (!worn || !_config.ShowModConflicts) return;
+
+        var conflicts = Plugin.ModConflicts.For(item);
+        if (conflicts.Count == 0) return;
+
+        // Penumbra's own priorities come first: a pair that already differs has been ordered by the
+        // user, so it is shown quietly rather than as something to fix
+        var open   = conflicts.Where(c => !c.Settled).ToList();
+        var losing = open.Any(c => c.Lost > 0);
+
+        ImGui.SameLine();
+        ImGui.PushStyleColor(ImGuiCol.Text, open.Count == 0 ? new Vector4(0.6f, 0.6f, 0.68f, 1f)
+            : losing ? new Vector4(1f, 0.4f, 0.35f, 1f)
+            : new Vector4(1f, 0.85f, 0.3f, 1f));
+        using (Plugin.PluginInterface.UiBuilder.IconFontHandle?.Push())
+            ImGui.TextUnformatted(FontAwesomeIcon.CodeBranch.ToIconString());
+        ImGui.PopStyleColor();
+
+        if (ImGui.IsItemClicked()) ImGui.OpenPopup("##modConflict");
+
+        if (ImGui.IsItemHovered())
+        {
+            var text = new System.Text.StringBuilder(
+                "This item's mod changes some of the same files as another mod you are wearing.\n" +
+                (open.Count == 0
+                    ? "Your Penumbra priorities already decide which one is shown, so nothing is changed.\n"
+                    : "They are tied in Penumbra, so which one is shown is down to chance.\n"));
+
+            foreach (var c in conflicts)
+            {
+                var pri = c.Priority is { } mine && c.RivalPriority is { } theirs
+                    ? $"  (priority {mine} vs {theirs})"
+                    : string.Empty;
+                text.Append($"\n• {c.RivalName}: {c.Shared} shared file(s), this mod shows {c.Won}{pri}");
+            }
+
+            text.Append("\n\nCounts may include files from options that are not selected.");
+            if (open.Count > 0) text.Append("\nClick to choose which one goes on top.");
+            ImGui.SetTooltip(text.ToString());
+        }
+
+        if (!ImGui.BeginPopup("##modConflict")) return;
+
+        ImGui.TextUnformatted("These mods change the same files. Which should be on top?");
+        ImGui.TextDisabled("Your answer is remembered. Nothing changes until you pick.");
+
+        foreach (var c in conflicts)
+        {
+            ImGui.Separator();
+            DrawConflictChoices(c);
+        }
+
+        ImGui.EndPopup();
+    }
+
+    /// <summary>Ends a conflict by taking off the worn item(s) carrying one of the mods.</summary>
+    private void TakeOffConflicting(string modDirectory)
+    {
+        _wardrobe.TakeOffMod(modDirectory);
+        Plugin.ModConflicts.Invalidate();
+    }
+
+    /// <summary>Remembers which of two conflicting mods goes on top and puts it there now.</summary>
+    private void ChooseOnTop(ModConflict c, string winnerDirectory)
+    {
+        _config.ModPriorityChoices.RemoveAll(x => x.Matches(c.OwnDirectory, c.RivalDirectory));
+        _config.ModPriorityChoices.Add(new ModPriorityChoice
+        {
+            DirectoryA = c.OwnDirectory, NameA = c.OwnName,
+            DirectoryB = c.RivalDirectory, NameB = c.RivalName,
+            WinnerDirectory = winnerDirectory,
+        });
+        _config.Save();
+
+        if (winnerDirectory.Length > 0 && _wardrobe.FindWornMods(c.OwnDirectory, c.RivalDirectory) is { } pair)
+        {
+            var ownWins = string.Equals(winnerDirectory, c.OwnDirectory, StringComparison.OrdinalIgnoreCase);
+            // A is this card's mod, B the rival: FindWornMods keeps the order it was asked in
+            if (ownWins) _wardrobe.PutOnTop(pair.A, pair.B);
+            else         _wardrobe.PutOnTop(pair.B, pair.A);
+        }
+
+        Plugin.ModConflicts.Invalidate();
     }
 
     /// <summary>
@@ -10166,6 +10456,180 @@ public partial class PluginUi : Window, IDisposable
             ImGui.Spacing();
             ImGui.TextDisabled(_backup.LastResult);
         }
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+        DrawRestoreSettings();
+    }
+
+    /// <summary>
+    /// The way back from the backups above. Staging and applying are separate steps — see
+    /// <see cref="BackupService.ApplyStagedRestore"/> — so while a restore is waiting the panel says
+    /// so and offers to cancel it, in place of the picker.
+    /// </summary>
+    private void DrawRestoreSettings()
+    {
+        ImGui.TextUnformatted("Restore");
+        ImGui.TextDisabled("Puts a backup back in place of the wardrobe. It takes effect the next time the plugin loads.");
+        ImGui.Spacing();
+
+        DrawRestoreControls();
+    }
+
+    /// <summary>
+    /// The restore button, or the cancel button that stands in for it while a restore is waiting,
+    /// with the outcome underneath. Shared by the settings section and the setup step, which differ
+    /// only in what they say around it. Starts with a button so a caller can put it on the same
+    /// line as its Browse.
+    /// </summary>
+    private void DrawRestoreControls()
+    {
+        if (_backup.RestoreStaged)
+        {
+            if (ImGui.Button(" Cancel Restore "))
+            {
+                _backup.CancelRestore();
+                _restoreStatus = "Restore cancelled — the wardrobe stays as it is.";
+            }
+
+            // Still waiting: the cancel above only takes effect on the next frame's check
+            if (_backup.RestoreStaged)
+            {
+                ImGui.Spacing();
+                ImGui.TextColored(new Vector4(1f, 0.85f, 0.3f, 1f),
+                    $"A restore is waiting: {_backup.StagedFromName ?? "a backup"}.");
+                ImGui.TextDisabled("Restart the game, or reload the plugin, to finish it. Nothing changes until then.");
+            }
+        }
+        else
+        {
+            var none = string.IsNullOrEmpty(_config.BackupFolder);
+            if (none) ImGui.BeginDisabled();
+
+            if (ImGui.Button(" Restore from Backup… "))
+            {
+                _restoreBackups    = _backup.ListConfigBackups();
+                _restoreSelected   = null;
+                _restoreSummary    = null;
+                _restoreSummaryFor = null;
+                ImGui.OpenPopup(RestoreBackupPopup);
+            }
+
+            if (none) ImGui.EndDisabled();
+            if (none && ImGui.IsItemHovered(ImGuiHoveredFlags.AllowWhenDisabled))
+                ImGui.SetTooltip("Choose a backup folder first.");
+        }
+
+        if (!string.IsNullOrEmpty(_restoreStatus))
+        {
+            ImGui.Spacing();
+            ImGui.TextDisabled(_restoreStatus);
+        }
+
+        DrawRestoreBackupPicker();
+    }
+
+    /// <summary>
+    /// Lists the backups in the folder, newest first, and says what the chosen one holds before it
+    /// is staged. Stage rather than restore, because the button does not change the wardrobe: the
+    /// text under the list is what the user is agreeing to.
+    /// </summary>
+    private void DrawRestoreBackupPicker()
+    {
+        var vp     = ImGui.GetMainViewport();
+        var centre = new Vector2(vp.Pos.X + vp.Size.X * 0.5f, vp.Pos.Y + vp.Size.Y * 0.5f);
+        ImGui.SetNextWindowPos(centre, ImGuiCond.Appearing, new Vector2(0.5f, 0.5f));
+
+        if (!ImGui.BeginPopupModal(RestoreBackupPopup, ImGuiWindowFlags.AlwaysAutoResize)) return;
+
+        if (_restoreBackups.Count == 0)
+        {
+            ImGui.TextUnformatted("No backups found in");
+            ImGui.TextDisabled(_config.BackupFolder);
+            ImGui.Spacing();
+            ImGui.TextDisabled("Backups are named WardrobePlugin_<date>-<time>.json. Turn on hourly\n" +
+                               "backups above, or press Back Up Now, and one will appear here.");
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+            if (ImGui.Button(" Close ", UiScale.S(120, 0))) ImGui.CloseCurrentPopup();
+            ImGui.EndPopup();
+            return;
+        }
+
+        ImGui.TextUnformatted("Pick the backup to put back.");
+        ImGui.Spacing();
+
+        // Ten rows, then a scrollbar: the folder keeps up to the keep-count, which is dozens
+        var rowH = ImGui.GetTextLineHeightWithSpacing();
+        ImGui.BeginChild("##restoreList", new Vector2(UiScale.S(360), rowH * 10 + UiScale.S(8)), true);
+        foreach (var entry in _restoreBackups)
+        {
+            var label = $"{entry.Stamp:d MMM yyyy, HH:mm}   ·   {entry.Bytes / 1048576.0:0.0} MB##{entry.Path}";
+            if (ImGui.Selectable(label, entry == _restoreSelected))
+                SelectRestoreBackup(entry);
+        }
+        ImGui.EndChild();
+
+        ImGui.Spacing();
+        if (_restoreSelected == null)
+            ImGui.TextDisabled("Nothing chosen yet.");
+        else if (_restoreSummary is not { } summary)
+            ImGui.TextDisabled("Reading…");
+        else if (!summary.Usable)
+            ImGui.TextColored(new Vector4(1f, 0.85f, 0.3f, 1f), summary.Error);
+        else
+            ImGui.TextUnformatted($"{summary.Wardrobes} wardrobe(s)   ·   {summary.Items} item(s)   ·   {summary.Outfits} outfit(s)");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        ImGui.TextDisabled("Your current wardrobe is copied aside first, timestamped, in the plugin's config folder.\n" +
+                           "Anything added or changed since the backup was made is what you lose.");
+        ImGui.Spacing();
+        ImGui.TextDisabled("The restore takes effect the next time the plugin loads — restart the game,\n" +
+                           "or reload the plugin, to finish it.");
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var ready = _restoreSelected != null && _restoreSummary is { Usable: true };
+        if (!ready) ImGui.BeginDisabled();
+        if (ImGui.Button(" Restore ", UiScale.S(140, 0)) && _restoreSelected != null)
+        {
+            _backup.StageRestore(_restoreSelected, out _restoreStatus);
+            ImGui.CloseCurrentPopup();
+        }
+        if (!ready) ImGui.EndDisabled();
+
+        ImGui.SameLine();
+        if (ImGui.Button(" Cancel ", UiScale.S(120, 0)))
+            ImGui.CloseCurrentPopup();
+
+        ImGui.EndPopup();
+    }
+
+    /// <summary>
+    /// Highlights a backup and reads what is in it off the draw thread. The result is only kept if
+    /// this is still the highlighted file when it lands — clicking down the list faster than the
+    /// reads finish must not leave one file's counts under another's name.
+    /// </summary>
+    private void SelectRestoreBackup(BackupEntry entry)
+    {
+        if (entry == _restoreSelected) return;
+
+        _restoreSelected   = entry;
+        _restoreSummary    = null;
+        _restoreSummaryFor = entry.Path;
+
+        var path = entry.Path;
+        _ = System.Threading.Tasks.Task.Run(() =>
+        {
+            var summary = BackupService.Describe(path);
+            if (_restoreSummaryFor == path) _restoreSummary = summary;
+        });
     }
 
     /// <summary>
@@ -10591,6 +11055,43 @@ public partial class PluginUi : Window, IDisposable
         Hint("Nothing to show for an import? Check this first.",
             "In Penumbra, see Collections → Your Character, and check that no\n" +
             "Individual Assignment overrules it.");
+
+        ImGui.Spacing();
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        var showConflicts = _config.ShowModConflicts;
+        if (ImGui.Checkbox("Mark worn items whose mods conflict", ref showConflicts))
+        {
+            _config.ShowModConflicts = showConflicts;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Puts a branch icon on a worn card when its mod changes some of the " +
+                             "same files as another worn mod, and says which one is being shown.");
+
+        if (_config.ModPriorityChoices.Count > 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextUnformatted("Remembered conflict choices");
+            ModPriorityChoice? forget = null;
+            foreach (var c in _config.ModPriorityChoices)
+            {
+                var top = string.IsNullOrEmpty(c.WinnerDirectory) ? "left as is"
+                        : string.Equals(c.WinnerDirectory, c.DirectoryA, StringComparison.OrdinalIgnoreCase)
+                            ? $"{c.NameA} on top" : $"{c.NameB} on top";
+                ImGui.PushID(c.DirectoryA + "|" + c.DirectoryB);
+                if (ImGui.SmallButton("Forget")) forget = c;
+                ImGui.PopID();
+                ImGui.SameLine();
+                ImGui.TextUnformatted($"{c.NameA} / {c.NameB}: {top}");
+            }
+            if (forget != null)
+            {
+                _config.ModPriorityChoices.Remove(forget);
+                _config.Save();
+            }
+        }
 
         ImGui.Spacing();
         ImGui.Separator();

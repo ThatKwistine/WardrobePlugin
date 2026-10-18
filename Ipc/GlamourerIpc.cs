@@ -867,6 +867,7 @@ public class GlamourerIpc : IDisposable
             }
 
             token.Replace(new JValue(hairstyle));
+            StopParametersApplying(state);
 
             // The whole state is sent back, but only customisations are applied — equipment is
             // left to the normal SetItem path.
@@ -879,6 +880,26 @@ public class GlamourerIpc : IDisposable
             _log.Warning(ex, "[Wardrobe] Glamourer SetHairstyle failed");
             return false;
         }
+    }
+
+    /// <summary>
+    /// Turns off every advanced customisation in a state about to be handed back to Glamourer.
+    /// </summary>
+    /// <remarks>
+    /// Issue #32. The Customization flag carries the <c>Parameters</c> block along with the
+    /// Customize one, so sending a live state back wrote the hair, skin and eye colours the
+    /// character already had as advanced customisations. Glamourer treats those as overriding
+    /// the basic colour pickers and locks them, so after wearing a hair mod the hair colour
+    /// could no longer be changed until something in Advanced Customization was touched. A
+    /// hairstyle change has no business setting any of them, so each one is sent with
+    /// <c>Apply</c> off and the colours stay where Glamourer's own pickers can reach them.
+    /// </remarks>
+    private static void StopParametersApplying(JObject state)
+    {
+        if (state["Parameters"] is not JObject parameters) return;
+        foreach (var prop in parameters.Properties())
+            if (prop.Value is JObject entry)
+                entry["Apply"] = false;
     }
 
     // ── Advanced dyes ─────────────────────────────────────────────────────────

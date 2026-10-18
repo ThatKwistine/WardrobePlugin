@@ -360,6 +360,150 @@ public class WardrobeService : IDisposable
             _log.Debug($"[Wardrobe] Claimed '{mod.ModName}' — the wardrobe enabled it, so the wardrobe may disable it");
     }
 
+    // ── Mod priority (#35) ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The other worn items' mods that share a collection with <paramref name="mod"/>, with the
+    /// priority each currently holds.
+    /// </summary>
+    /// <remarks>
+    /// Separate from the raising itself so a conflict display can ask the same question: any rival
+    /// whose priority is not below this mod's is one that can overrule it where they redirect the
+    /// same file.
+    /// </remarks>
+    private List<(ModReference Mod, int Priority)> WornRivalPriorities(WardrobeItem item, ModReference mod)
+    {
+        var rivals = new List<(ModReference, int)>();
+        foreach (var other in _config.WardrobeItems)
+        {
+            if (other.Id == item.Id || !_config.WornItems.ContainsValue(other.Id)) continue;
+            foreach (var m in other.Mods)
+            {
+                if (string.IsNullOrEmpty(m.ModDirectory) || m.ModDirectory == mod.ModDirectory) continue;
+                if (!SameCollection(m, mod)) continue;
+                if (_penumbra.GetModPriority(m.Collection, m.ModDirectory, m.ModName) is { } p)
+                    rivals.Add((m, p));
+            }
+        }
+        return rivals;
+    }
+
+    /// <summary>
+    /// Applies the answers the user has already given for this mod against the other worn mods.
+    /// </summary>
+    /// <remarks>
+    /// Penumbra's own settings come first. A priority set by hand in Penumbra is a decision, and the
+    /// two mods having different priorities means somebody already ordered them — so a pair that is
+    /// not tied is never touched, whatever was remembered. A remembered choice only breaks a tie,
+    /// which is the one case where Penumbra has not said which should win. A pair nobody has
+    /// answered for is left exactly as it is.
+    /// </remarks>
+    private void ApplyRememberedChoices(WardrobeItem item, ModReference mod)
+    {
+        if (_config.ModPriorityChoices.Count == 0) return;
+
+        foreach (var (rival, _) in WornRivalPriorities(item, mod))
+        {
+            var choice = _config.ModPriorityChoices.Find(c => c.Matches(mod.ModDirectory, rival.ModDirectory));
+            if (choice == null || string.IsNullOrEmpty(choice.WinnerDirectory)) continue;
+
+            if (string.Equals(choice.WinnerDirectory, mod.ModDirectory, StringComparison.OrdinalIgnoreCase))
+                PutOnTop(mod, rival, onlyIfTied: true);
+            else
+                PutOnTop(rival, mod, onlyIfTied: true);
+        }
+    }
+
+    /// <summary>
+    /// Makes sure <paramref name="winner"/> has a higher priority than <paramref name="loser"/>,
+    /// raising it only as far as needed and never lowering anything.
+    /// </summary>
+    /// <param name="onlyIfTied">
+    /// For anything the wardrobe does on its own: leave the pair alone unless Penumbra has them at
+    /// the same priority. False only for an answer the user has just given.
+    /// </param>
+    /// <returns>Whether the winner is above the loser afterwards.</returns>
+    public bool PutOnTop(ModReference winner, ModReference loser, bool onlyIfTied = false)
+    {
+        if (_penumbra.GetModPriority(winner.Collection, winner.ModDirectory, winner.ModName) is not { } have ||
+            _penumbra.GetModPriority(loser.Collection, loser.ModDirectory, loser.ModName) is not { } other)
+            return false;
+
+        if (have > other) return true;
+        if (onlyIfTied && have != other)
+        {
+            _log.Debug($"[Wardrobe] '{winner.ModName}' ({have}) and '{loser.ModName}' ({other}) already differ " +
+                       "in Penumbra — leaving the priorities the user set");
+            return false;
+        }
+
+        var target = other + 1;
+        if (!_penumbra.SetModPriority(winner.Collection, winner.ModDirectory, winner.ModName, target))
+            return false;
+
+        // Only the first raise remembers: raising again must not overwrite the user's own number
+        _config.PriorityBeforeRaise.TryAdd(ModKey(winner), have);
+        _config.Save();
+        _log.Debug($"[Wardrobe] '{winner.ModName}' priority {have} → {target}, as chosen over '{loser.ModName}'");
+        return true;
+    }
+
+    /// <summary>
+    /// Takes off every worn item that carries the given mod, which is how a conflict is ended by
+    /// removing one side of it.
+    /// </summary>
+    /// <remarks>
+    /// Items rather than the mod: the mod only comes off once nothing worn uses it, and the item's own
+    /// other mods and its slot go with it, exactly as pressing Unequip on its card would.
+    /// </remarks>
+    /// <returns>How many items were taken off.</returns>
+    public int TakeOffMod(string modDirectory)
+    {
+        using var deferred = _config.DeferSaves();
+
+        var taken = 0;
+        foreach (var item in _config.WardrobeItems.ToList())
+        {
+            if (!_config.WornItems.ContainsValue(item.Id)) continue;
+            if (!item.Mods.Any(m => string.Equals(m.ModDirectory, modDirectory, StringComparison.OrdinalIgnoreCase)))
+                continue;
+
+            UnwearItem(item);
+            taken++;
+        }
+
+        return taken;
+    }
+
+    /// <summary>The worn mod references for two folders, for acting on a choice made from the UI.</summary>
+    public (ModReference A, ModReference B)? FindWornMods(string directoryA, string directoryB)
+    {
+        ModReference? a = null, b = null;
+        foreach (var item in _config.WardrobeItems)
+        {
+            if (!_config.WornItems.ContainsValue(item.Id)) continue;
+            foreach (var m in item.Mods)
+            {
+                if (string.Equals(m.ModDirectory, directoryA, StringComparison.OrdinalIgnoreCase)) a ??= m;
+                if (string.Equals(m.ModDirectory, directoryB, StringComparison.OrdinalIgnoreCase)) b ??= m;
+            }
+        }
+        return a != null && b != null ? (a, b) : null;
+    }
+
+    /// <summary>Puts back the priority a mod had before the wardrobe raised it, if it did.</summary>
+    private void RestorePriority(ModReference mod)
+    {
+        var key = ModKey(mod);
+        if (!_config.PriorityBeforeRaise.TryGetValue(key, out var original)) return;
+
+        if (_penumbra.SetModPriority(mod.Collection, mod.ModDirectory, mod.ModName, original))
+        {
+            _config.PriorityBeforeRaise.Remove(key);
+            _log.Debug($"[Wardrobe] Restored '{mod.ModName}' priority to {original}");
+        }
+    }
+
     /// <summary>
     /// Whether the wardrobe enabled this mod and may therefore turn it off again.
     /// </summary>
@@ -496,6 +640,9 @@ public class WardrobeService : IDisposable
                 _penumbra.ApplyModOptionStates(mod.Collection, mod.ModDirectory, mod.ModName, mod.OptionStates);
             else if (mod.MultiOptions.Count > 0)
                 _penumbra.ApplyMultiModSettings(mod.Collection, mod.ModDirectory, mod.ModName, mod.MultiOptions);
+
+            // Rivals are the items already recorded as worn, so this runs before this item joins them
+            if (success) ApplyRememberedChoices(item, mod);
         }
 
         if (success)
@@ -914,6 +1061,9 @@ public class WardrobeService : IDisposable
                            "uses it too");
                 continue;
             }
+
+            // Nothing else holds the mod, so the raise has served its purpose
+            RestorePriority(mod);
 
             // Only ever switch off what the wardrobe switched on, and switch it off where it was
             // switched on — which is not always where a claim made today would go
@@ -1464,6 +1614,8 @@ public class WardrobeService : IDisposable
         baseChar ??= _config.ActiveBaseCharacter;
         if (baseChar == null) return 0;
 
+        using var deferred = _config.DeferSaves();
+
         if (baseChar.DesignId is { } designId)
         {
             // Before the items below, so a base item always wins the slot it is in — the design is the
@@ -1560,6 +1712,8 @@ public class WardrobeService : IDisposable
     public void StripAll(bool ignoreBase = false, bool toNothing = false,
         bool stripAnimations = false)
     {
+        using var deferred = _config.DeferSaves();
+
         // Everything below already does the right thing when there is no base character, so ignoring
         // one is just pretending there isn't one. The only line that cannot be expressed that way is
         // the re-apply at the end, which reaches for the active base itself.
@@ -2625,6 +2779,10 @@ public class WardrobeService : IDisposable
     /// </param>
     public void WearOutfit(Outfit outfit, bool removeOthers, bool clearSlots = true)
     {
+        // One write at the end rather than one per item: see Configuration.DeferSaves
+        using var deferred = _config.DeferSaves();
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+
         var items = ResolveOutfit(outfit);
         var missing = outfit.ItemIds.Count - items.Count;
         if (missing > 0)
@@ -2700,7 +2858,7 @@ public class WardrobeService : IDisposable
         _config.Save();
         WardrobeChanged?.Invoke();
         _log.Information($"[Wardrobe] Wore outfit '{outfit.Name}' ({items.Count} item(s), " +
-                         $"{outfit.VanillaItems.Count} vanilla piece(s))");
+                         $"{outfit.VanillaItems.Count} vanilla piece(s)) in {watch.ElapsedMilliseconds}ms");
     }
 
     /// <summary>

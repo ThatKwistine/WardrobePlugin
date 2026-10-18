@@ -32,6 +32,9 @@ public class PenumbraIpc : IDisposable
 
     private readonly ICallGateSubscriber<Guid, string, string, bool, int> _setMod;
 
+    // TrySetModPriority.V5(collection, modDirectory, modName, priority) → ec
+    private readonly ICallGateSubscriber<Guid, string, string, int, int> _setModPriority;
+
     // Singular: sets a group to ONE option. Correct for Single-select groups only.
     private readonly ICallGateSubscriber<Guid, string, string, string, string, int> _setModSetting;
 
@@ -100,6 +103,9 @@ public class PenumbraIpc : IDisposable
 
         _setMod = pi.GetIpcSubscriber<Guid, string, string, bool, int>(
             "Penumbra.TrySetMod.V5");
+
+        _setModPriority = pi.GetIpcSubscriber<Guid, string, string, int, int>(
+            "Penumbra.TrySetModPriority.V5");
 
         _setModSetting = pi.GetIpcSubscriber<Guid, string, string, string, string, int>(
             "Penumbra.TrySetModSetting.V5");
@@ -328,6 +334,38 @@ public class PenumbraIpc : IDisposable
     }
 
     /// <summary>
+    /// For each game path Penumbra is redirecting on a character, the file on disk that won it.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="GetResolvedFilePaths"/> with the game side kept: it says which mod supplied each
+    /// path, and so which of two mods that both change a path is the one being shown. Vanilla and
+    /// swapped paths have no file on disk behind them and are left out. Keys are lower-cased.
+    /// </remarks>
+    public Dictionary<string, string>? GetResolvedGamePaths(ushort objectIndex = 0)
+    {
+        try
+        {
+            var result = _getGameObjectResourcePaths.InvokeFunc([objectIndex]);
+            var paths  = result is { Length: > 0 } ? result[0] : null;
+            if (paths == null) return null;
+
+            var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (actual, gamePaths) in paths)
+            {
+                if (string.IsNullOrEmpty(actual) || !Path.IsPathRooted(actual)) continue;
+                foreach (var gp in gamePaths) map[gp] = actual;
+            }
+
+            return map;
+        }
+        catch (Exception ex)
+        {
+            _log.Debug($"[Wardrobe] Penumbra GetGameObjectResourcePaths failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
     /// The folder a mod is filed under in Penumbra's own mod list, as "Gear/Dresses" — the sort
     /// path with the mod's own name taken off the end. Empty for a mod at the root, null when the
     /// mod has never been filed or Penumbra could not say.
@@ -507,6 +545,32 @@ public class PenumbraIpc : IDisposable
             return true;
         }
         catch (Exception ex) { _log.Warning(ex, "[Wardrobe] ActiveOptionsMatch query failed"); return true; }
+    }
+
+    /// <summary>The priority Penumbra holds for a mod in a collection, or null when it can't be read.</summary>
+    public int? GetModPriority(string collectionName, string modDirectory, string modName)
+    {
+        try
+        {
+            if (!TryGetCollectionGuid(collectionName, out var id)) return null;
+            var (ec, inner) = _getCurrentModSettings.InvokeFunc(id, modDirectory, modName, false);
+            if (ec != 0 || !inner.HasValue) return null;
+            return inner.Value.Item2;
+        }
+        catch (Exception ex) { _log.Warning(ex, "[Wardrobe] Penumbra GetModPriority failed"); return null; }
+    }
+
+    public bool SetModPriority(string collectionName, string modDirectory, string modName, int priority)
+    {
+        try
+        {
+            if (!TryGetCollectionGuid(collectionName, out var id)) return false;
+            var ec = _setModPriority.InvokeFunc(id, modDirectory, modName, priority);
+            if (ec != EcSuccess && ec != EcNothingChanged)
+                _log.Warning($"[Wardrobe] TrySetModPriority.V5 returned ec={ec} for '{modName}' priority={priority}");
+            return ec == EcSuccess || ec == EcNothingChanged;
+        }
+        catch (Exception ex) { _log.Warning(ex, "[Wardrobe] Penumbra SetModPriority failed"); return false; }
     }
 
     public bool SetModEnabled(string collectionName, string modDirectory, string modName, bool enabled)

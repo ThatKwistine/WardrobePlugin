@@ -37,6 +37,7 @@ public sealed class Plugin : IDalamudPlugin
     /// <summary>Reads the game's own back buffer. Experimental - see <see cref="FrameCaptureService"/>.</summary>
     public static FrameCaptureService   Frames      { get; private set; } = null!;
     public static TextureCompressionFlagService TextureFlags { get; private set; } = null!;
+    public static ModConflictService ModConflicts { get; private set; } = null!;
 
     private readonly Configuration            _config;
     private readonly WardrobeService          _wardrobeService;
@@ -65,6 +66,10 @@ public sealed class Plugin : IDalamudPlugin
     {
         PluginInterface = pi;
         pi.Inject(this);
+
+        // Before the config is read: a restore staged from the settings panel is a file waiting to
+        // be put in place of the config, and this is the one moment nothing holds the old one
+        BackupService.ApplyStagedRestore(pi, Log);
 
         _config = pi.GetPluginConfig() as Configuration ?? new Configuration();
 
@@ -134,6 +139,8 @@ public sealed class Plugin : IDalamudPlugin
         TextureFlags       = new TextureCompressionFlagService(Penumbra, Framework, Log);
 
         _wardrobeService   = new WardrobeService(Penumbra, Glamourer, _config, Log, Framework);
+        ModConflicts       = new ModConflictService(Penumbra, Framework, Log, _config, _analysisService);
+        _wardrobeService.WardrobeChanged += ModConflicts.Invalidate;
         _screenshotSession = new ScreenshotSessionService(_wardrobeService, _config, Framework, Log, Camera);
 
         // After the session service, which it asks whether a shoot is running: a session dresses the

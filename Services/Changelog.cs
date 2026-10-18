@@ -41,6 +41,45 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 6, 3, 0), "18 October 2026", new List<ChangelogSection>
+        {
+            new("What's new", new List<ChangelogNote>
+            {
+                new("Backups can be restored from Settings.",
+                    "Settings → Backups & Data → Backups → Restore from Backup… lists the backups in " +
+                    "your backup folder, newest first, and says how many wardrobes, items and outfits " +
+                    "the one you pick holds. The restore is applied the next time the plugin loads, " +
+                    "and the wardrobe being replaced is copied aside first."),
+                new("Worn items now say when their mod conflicts with another.",
+                    "A worn card gets a branch icon when its mod changes some of the same files as " +
+                    "another mod you are wearing. Hover it to see which mod, how many files, which " +
+                    "of the two Penumbra is showing, and both priorities. If the two are tied, click " +
+                    "it, or the banner at the top of the window, to say which should be on top; the answer is remembered and put back whenever " +
+                    "both are worn. Wardrobe never changes priorities you have already set in " +
+                    "Penumbra: two mods that already differ are shown as settled and left alone. " +
+                    "Settings → \"Mark worn items whose mods conflict\" turns it off and lists " +
+                    "your remembered answers."),
+                new("First-time setup asks whether you have used Wardrobe before.",
+                    "On a fresh install — a new PC, a reinstall — the second step of the setup " +
+                    "takes a backup folder and restores from it, so the rest of the setup can be " +
+                    "skipped: the backup brings its settings with it."),
+            }),
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("Wearing a hair mod no longer locks Glamourer's hair colour.",
+                    "Changing the hairstyle handed the character's existing hair, skin and eye " +
+                    "colours back to Glamourer as advanced customisations, which locked the basic " +
+                    "colour pickers. They are left alone now. A character already locked needs one " +
+                    "change in Advanced Customization to free it."),
+                new("The hourly backup no longer starts while the plugin is still loading.",
+                    "With backups on and more than an hour since the last one, the first backup " +
+                    "could begin while the plugin was still starting up and saving the config, and " +
+                    "the save failed against the file being copied — the plugin then did not " +
+                    "load. The first check now waits a minute, and a copy in progress no longer " +
+                    "blocks a save."),
+            }),
+        }),
+
         new(new Version(1, 6, 2, 7), "15 September 2026", new List<ChangelogSection>
         {
             new("Fixes", new List<ChangelogNote>

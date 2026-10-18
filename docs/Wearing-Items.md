@@ -119,12 +119,13 @@ and the toolbar button is not drawn at all.
 
 ## Sizes
 
-An item whose mod has a size group — a bust size, a thigh size — carries it on its card: a small
-**Size: YAB+ M** under the buttons, reading the mod's own option name, with the same entry on the
-right-click menu for a card too short to show it. Open it and the group's options are listed right
-there, in the mod's own words. Pick one and the item's option changes, exactly as it would in Edit,
-and if the item is on it is re-applied on the spot — no redraw, the same as Edit → Save on a worn
-item.
+An item whose mod has a size group — a bust size, a thigh size — carries it on its card three
+ways to the same pick: a ruler button beside **Edit**, which is there at any card size; a small
+**Size: YAB+ M** line under the buttons, reading the mod's own option name, wherever the card has
+the height for it; and the same entry on the right-click menu. Open any of them and the group's
+options are listed right there, in the mod's own words. Pick one and the item's option changes,
+exactly as it would in Edit, and if the item is on it is re-applied on the spot — no redraw, the
+same as Edit → Save on a worn item.
 
 An item with more than one size group — a body's dropdown and a refit that is a mod of its own —
 has one button reading **Size Options**, opening to a menu per group, each named for the group and

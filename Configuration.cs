@@ -1408,6 +1408,24 @@ public class Configuration : IPluginConfiguration
     /// </remarks>
     public HashSet<string> ModsEnabledByWardrobe { get; set; } = new();
 
+    /// <summary>
+    /// Which of two conflicting mods the user wants on top, remembered so it is applied whenever
+    /// both are worn again (#35). Never invented by the wardrobe: an entry exists only because the
+    /// user answered the question.
+    /// </summary>
+    public List<ModPriorityChoice> ModPriorityChoices { get; set; } = new();
+
+    /// <summary>Whether a worn card says so when its mod shares files with another worn mod.</summary>
+    public bool ShowModConflicts { get; set; } = true;
+
+    /// <summary>
+    /// A mod's priority from before the wardrobe raised it to honour a
+    /// <see cref="ModPriorityChoices"/> entry, as "collection|directory" → priority. Persisted for
+    /// the same reason as <see cref="ModsEnabledByWardrobe"/>: it is the only record that the
+    /// priority is ours to put back.
+    /// </summary>
+    public Dictionary<string, int> PriorityBeforeRaise { get; set; } = new();
+
     /// <summary>Whether the one-off explanation of mod ownership still needs showing.</summary>
     public OwnershipNoticeState ModOwnershipNotice { get; set; }
 
@@ -1538,7 +1556,64 @@ public class Configuration : IPluginConfiguration
     public void Save()
     {
         _revision++;
+
+        lock (_saveLock)
+        {
+            if (_deferDepth > 0)
+            {
+                _savePending = true;
+                return;
+            }
+        }
+
+        Write();
+    }
+
+    [NonSerialized] private readonly object _saveLock = new();
+    [NonSerialized] private int  _deferDepth;
+    [NonSerialized] private bool _savePending;
+
+    /// <summary>
+    /// Holds back saves until the returned scope is disposed, then writes once.
+    /// </summary>
+    /// <remarks>
+    /// Every save serialises the whole config and writes it to disk, and the wardrobe's is megabytes.
+    /// Putting on an outfit saves after each item, so a sixteen-item restore wrote that file more than
+    /// seventeen times on the draw thread — seconds of stall for one click. Anything that changes
+    /// many things in one go wraps itself in this: nothing is lost, since the one write at the end
+    /// holds everything the skipped ones would have. Nests, so an operation inside another is fine.
+    /// </remarks>
+    public IDisposable DeferSaves()
+    {
+        lock (_saveLock) _deferDepth++;
+        return new SaveDeferral(this);
+    }
+
+    private void EndDefer()
+    {
+        bool write;
+        lock (_saveLock)
+        {
+            write = --_deferDepth == 0 && _savePending;
+            if (write) _savePending = false;
+        }
+
+        if (write) Write();
+    }
+
+    private void Write()
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
         Plugin.PluginInterface.SavePluginConfig(this);
+        if (watch.ElapsedMilliseconds >= 50)
+            Plugin.Log.Debug($"[Wardrobe] Config save took {watch.ElapsedMilliseconds}ms");
+    }
+
+    private sealed class SaveDeferral : IDisposable
+    {
+        private Configuration? _owner;
+        public SaveDeferral(Configuration owner) => _owner = owner;
+        public void Dispose() { _owner?.EndDefer(); _owner = null; }
     }
 
     /// <summary>

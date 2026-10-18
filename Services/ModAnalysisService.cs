@@ -623,6 +623,37 @@ public class ModAnalysisService
                 replace, new HashSet<EquipSlot>(_modelSlots), Coverage());
     }
 
+    /// <summary>
+    /// Every game path a mod can change, whichever option it sits behind, lower-cased.
+    /// </summary>
+    /// <remarks>
+    /// The whole of what the mod ships, not what is currently selected — so it is the set of paths a
+    /// mod <i>could</i> contest, which <see cref="ModConflictService"/> then narrows against what
+    /// Penumbra is actually resolving.
+    /// </remarks>
+    public HashSet<string> GamePaths(string modFolderPath)
+    {
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!Directory.Exists(modFolderPath)) return paths;
+
+        var meta = ReadMeta(Path.Combine(modFolderPath, "meta.json"));
+
+        var defaultFile = Path.Combine(modFolderPath, "default_mod.json");
+        if (File.Exists(defaultFile))
+            paths.UnionWith(ReadFileKeys(defaultFile));
+        paths.UnionWith(PathKeys(meta?.DefaultData));
+
+        foreach (var groupFile in Directory.GetFiles(modFolderPath, "group_*.json"))
+            if (TryReadGroup(groupFile) is { } g)
+                foreach (var opt in g.Options) paths.UnionWith(PathKeys(opt));
+
+        foreach (var g in meta?.Groups ?? new List<GroupJson>())
+            foreach (var opt in g.Options) paths.UnionWith(PathKeys(opt));
+
+        paths.UnionWith(ProteusPaths(modFolderPath));
+        return paths;
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// <summary>

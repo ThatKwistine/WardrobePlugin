@@ -28,19 +28,26 @@ The sections below follow that order.
 
 ## First run
 
-On a fresh install the window opens into a short eight-step setup covering the things that cause the
+On a fresh install the window opens into a short nine-step setup covering the things that cause the
 most trouble when left unset:
 
 1. **Intro**
-2. **Which Penumbra collection does your character use?**
-3. **Do you play more than one character?** Whether each gets a wardrobe of their own
-4. **What should the wardrobe hold?** Gear is always managed; animations, VFX and mounts are optional
-5. **Pick up where you left off?** Whether to be offered your last look back when you log in
-6. **Where should item images live?**
-7. **Where does FFXIV save your screenshots?**
-8. **Keep backups of your wardrobe?**
+2. **Used Wardrobe before?** Bring a wardrobe back from a backup folder instead of starting again
+3. **Which Penumbra collection does your character use?**
+4. **Do you play more than one character?** Whether each gets a wardrobe of their own
+5. **What should the wardrobe hold?** Gear is always managed; animations, VFX and mounts are optional
+6. **Pick up where you left off?** Whether to be offered your last look back when you log in
+7. **Where should item images live?**
+8. **Where does FFXIV save your screenshots?**
+9. **Keep backups of your wardrobe?**
 
-Step 3 is the one worth answering now rather than later. Everything else here can be changed at any
+Step 2 comes first because it makes the rest moot: a backup carries every setting the later steps
+ask about. Point it at the folder the backups were written to, press **Restore from Backup…** and
+pick one — see [Restoring](#restoring) for what happens next. The restore is applied when the plugin
+next loads, so the setup can be skipped and the game restarted. Browsing to a folder here also fills
+in the backup folder for step 9, for someone who looks and then starts fresh after all.
+
+Step 4 is the one worth answering now rather than later. Everything else here can be changed at any
 time with no consequences; splitting a wardrobe afterwards means deciding, piece by piece, which
 character each of several hundred items belonged to.
 
@@ -52,6 +59,27 @@ up.
 only what you change is changed. Wardrobe items and images are never touched.
 
 ---
+
+## Mod conflicts
+
+**Mark worn items whose mods conflict** puts a branch icon on a worn card when its mod changes some of
+the same files as another worn mod. Hovering it names the other mod, how many files are contested,
+how many of them this mod is the one showing, and both priorities. The counts are read from the mod
+folders against what Penumbra is resolving for your character, so they can include files from
+options that are not selected.
+
+Your Penumbra settings always come first. If the two mods already have different priorities, somebody
+has ordered them: the icon goes grey, says so, and nothing is changed. Only when they are **tied**
+does Wardrobe ask. Red means this mod is losing some of the files, amber that it wins them all;
+click the icon to choose which should be on top. The answer is remembered per pair and applied when
+both are worn again — and only while they are still tied, so a priority you set later in Penumbra is
+never overridden. A raised priority is put back when the piece comes off. **Leave as is** is an answer
+too. Remembered answers are listed under the checkbox, each with a **Forget** button.
+
+Pairs that are tied and unanswered also get a red banner at the top of the window, with the
+choices on it, so a conflict is not something you have to hover a card to find. Answering clears it.
+
+Hovering a card that is not worn lists the worn mods it would share files with.
 
 ## Collection
 
@@ -563,8 +591,32 @@ only when the content hash differs from the previous backup, so an idle session 
 Files are named `WardrobePlugin_<timestamp>.json`, plus `CameraPresets_<timestamp>.json` if a preset
 path is set. Anything past the keep-count is deleted oldest-first.
 
-These are plain copies of the live config. Restoring means closing the game and putting the file
-back over `%AppData%\XIVLauncher\pluginConfigs\WardrobePlugin.json`.
+These are plain copies of the live config.
+
+### Restoring
+
+**Restore from Backup…** lists the `WardrobePlugin_*.json` files in the backup folder, newest first.
+Picking one reads it and shows how many wardrobes, items and outfits it holds, so the wrong file is
+visible before anything happens. **Restore** then stages it: the backup is copied under the plugin's
+config folder, and nothing else changes yet.
+
+The restore is applied **the next time the plugin loads** — restart the game, or reload the plugin.
+At that point the current config is copied aside first as
+`WardrobePlugin.pre-restore_<timestamp>.json` in `%AppData%\XIVLauncher\pluginConfigs\WardrobePlugin\`
+(the newest five are kept), and the backup takes its place. It then goes through the same load and
+migration path as any other config, which is why a backup from an older version restores cleanly.
+
+While a restore is waiting, the section says so and offers **Cancel Restore**, which throws the staged
+copy away. It is not applied while the plugin is running because everything holds the live config by
+reference, and a swap under it would be a second, partial copy of the load logic.
+
+Anything added or changed since the backup was made is lost — that is the point of a restore. The
+copy taken aside is the way back from picking the wrong one: close the game and put it back over
+`%AppData%\XIVLauncher\pluginConfigs\WardrobePlugin.json`.
+
+Camera presets are not part of this. Their file lives wherever **Camera Presets File** points; to
+restore it, close the game and copy a `CameraPresets_*.json` backup over it. Do not point the setting
+at the backup copy itself — the folder is pruned, and the file would be written to in place.
 
 ---
 
