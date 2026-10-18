@@ -732,8 +732,9 @@ public class ItemImportPanel : IDisposable
 
         if (now != open)
         {
+            // Every copy, not one: a list that has picked up duplicates must still close
+            _config.EditSectionsOpen.RemoveAll(k => k == key);
             if (now) _config.EditSectionsOpen.Add(key);
-            else     _config.EditSectionsOpen.Remove(key);
             _config.Save();
         }
 

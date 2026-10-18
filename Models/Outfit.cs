@@ -235,6 +235,16 @@ public class Outfit : IImageOwner
     /// </remarks>
     public bool ClearSlotsFirst { get; set; }
 
+    /// <summary>
+    /// Slash commands to run after this outfit is worn, one per line (#34). Only used while
+    /// <see cref="Configuration.RunOutfitCommands"/> is on.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately never part of a share: <c>WardrobeShareService</c> copies outfits field by field
+    /// and this is not one of them, so an outfit someone sends cannot run anything on the receiver.
+    /// </remarks>
+    public string Commands { get; set; } = string.Empty;
+
     /// <inheritdoc cref="WardrobeItem.SharedFromId"/>
     public Guid? SharedFromId { get; set; }
 
@@ -273,6 +283,7 @@ public class Outfit : IImageOwner
             HatVisible             = HatVisible,
             WeaponVisible          = WeaponVisible,
             ClearSlotsFirst        = ClearSlotsFirst,
+            Commands               = Commands,
             SharedFromId           = SharedFromId,
             CopiedFromId           = Id,
             Hidden                 = Hidden,

@@ -38,6 +38,7 @@ public sealed class Plugin : IDalamudPlugin
     public static FrameCaptureService   Frames      { get; private set; } = null!;
     public static TextureCompressionFlagService TextureFlags { get; private set; } = null!;
     public static ModConflictService ModConflicts { get; private set; } = null!;
+    public static OutfitCommandService OutfitCommands { get; private set; } = null!;
 
     private readonly Configuration            _config;
     private readonly WardrobeService          _wardrobeService;
@@ -139,6 +140,7 @@ public sealed class Plugin : IDalamudPlugin
         TextureFlags       = new TextureCompressionFlagService(Penumbra, Framework, Log);
 
         _wardrobeService   = new WardrobeService(Penumbra, Glamourer, _config, Log, Framework);
+        OutfitCommands     = new OutfitCommandService(_config, Framework, Log);
         ModConflicts       = new ModConflictService(Penumbra, Framework, Log, _config, _analysisService);
         _wardrobeService.WardrobeChanged += ModConflicts.Invalidate;
         _screenshotSession = new ScreenshotSessionService(_wardrobeService, _config, Framework, Log, Camera);
@@ -427,6 +429,7 @@ public sealed class Plugin : IDalamudPlugin
         _lastWornWindow.Dispose();
         _italicFont.Dispose();
         _backupService.Dispose();
+        OutfitCommands.Dispose();
         _lastWorn.Dispose();
         _profiles.Dispose();
         _screenshotSession.Dispose();

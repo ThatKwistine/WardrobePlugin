@@ -124,6 +124,18 @@ There is no plain copy of a plate because there is nothing sensible for one to b
 a mirror of plate N; a second mirror of the same plate would leave two cards claiming it, and only
 one of them would ever be resynced.
 
+## Commands when worn
+
+With **Settings → Run commands when an outfit is worn** on, the outfit's edit panel gets a
+**Commands to run when worn** box: one slash command per line, up to five, each starting with `/`.
+They are sent through the chat box a moment after the outfit goes on, as if you had typed them —
+which is how an outfit can start an idle from another plugin or run a macro line.
+
+It is off by default, because that is exactly what it does: whatever a line says is run as you, so
+only put in what you would type yourself. They run only when you press Wear (or Only this) yourself —
+never on a login restore, a re-apply or a screenshot session — and a list already running is never
+started again, so a command that wears another outfit cannot loop. They are never part of a share.
+
 ## Dyes
 
 Each row carries **Dye 1** and **Dye 2** pickers, listing the game's dyes with a colour swatch and a

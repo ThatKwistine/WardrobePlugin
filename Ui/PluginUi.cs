@@ -5725,7 +5725,11 @@ public partial class PluginUi : Window, IDisposable
         if (ImGui.Button(worn ? "Remove" : "Wear", new Vector2(btnW, 0)))
         {
             if (worn) _wardrobe.UnwearOutfit(outfit);
-            else      _wardrobe.WearOutfit(outfit, removeOthers: true);
+            else
+            {
+                _wardrobe.WearOutfit(outfit, removeOthers: true);
+                Plugin.OutfitCommands.Run(outfit);
+            }
         }
 
         // Same reason as on the card: while the outfit is on, this button says Remove, and without
@@ -8169,7 +8173,10 @@ public partial class PluginUi : Window, IDisposable
             ImGui.PushStyleColor(ImGuiCol.Button,        new Vector4(0.13f, 0.38f, 0.13f, 1f));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, new Vector4(0.18f, 0.55f, 0.18f, 1f));
             if (ImGui.Button("Wear", new Vector2(btnW, 0)))
+            {
                 _wardrobe.WearOutfit(outfit, removeOthers: false);
+                Plugin.OutfitCommands.Run(outfit);
+            }
             ImGui.PopStyleColor(2);
             if (ImGui.IsItemHovered())
             {
@@ -8221,7 +8228,10 @@ public partial class PluginUi : Window, IDisposable
         else
         {
             if (ImGui.Button("Only this", new Vector2(btnW, 0)))
+            {
                 _wardrobe.WearOutfit(outfit, removeOthers: true);
+                Plugin.OutfitCommands.Run(outfit);
+            }
             if (ImGui.IsItemHovered())
                 ImGui.SetTooltip("Wear these items and remove everything else the wardrobe has on.");
         }
@@ -8413,6 +8423,32 @@ public partial class PluginUi : Window, IDisposable
             : "Goes on over what you are wearing, leaving slots it has nothing for alone.");
     }
 
+    /// <summary>The commands box of the outfit editor, shown only while the setting is on.</summary>
+    private void DrawOutfitCommands(Outfit outfit)
+    {
+        if (!_config.RunOutfitCommands) return;
+
+        ImGui.Spacing();
+        ImGui.TextDisabled("Commands to run when worn");
+
+        var text = outfit.Commands;
+        if (ImGui.InputTextMultiline("##outfitcommands", ref text, 1000,
+                new Vector2(-1, ImGui.GetTextLineHeight() * 5 + 8)))
+        {
+            outfit.Commands = text;
+            _config.Save();
+        }
+
+        var lines = OutfitCommandService.Parse(text);
+        Hint(lines.Count == 0
+                ? "One slash command per line."
+                : $"{lines.Count} command(s) will run a moment after you wear this.",
+            $"Each line must start with / and be at most {OutfitCommandService.MaxLength} characters; " +
+            $"only the first {OutfitCommandService.MaxLines} are used.\n" +
+            "They run as if you typed them in chat, only when you press Wear yourself —\n" +
+            "never on a login restore or a screenshot session — and are never shared with an outfit.");
+    }
+
     /// <summary>A leave-alone / show / hide picker over a nullable bool.</summary>
     /// <remarks>
     /// Null first and selected by default, so the neutral answer is the one a glance lands on and the
@@ -8564,6 +8600,7 @@ public partial class PluginUi : Window, IDisposable
         ImGui.Spacing();
 
         DrawOutfitClearSlots(outfit);
+        DrawOutfitCommands(outfit);
 
         ImGui.Spacing();
         ImGui.Separator();
@@ -11059,6 +11096,18 @@ public partial class PluginUi : Window, IDisposable
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
+
+        var runCommands = _config.RunOutfitCommands;
+        if (ImGui.Checkbox("Run commands when an outfit is worn", ref runCommands))
+        {
+            _config.RunOutfitCommands = runCommands;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Lets an outfit carry slash commands, set in its editor, and sends them " +
+                             "through the chat box as you when you press Wear.\nOff by default: they run " +
+                             "exactly as if you had typed them, so only put in what you would type yourself.\n" +
+                             "Never run on automatic restores, and never included when an outfit is shared.");
 
         var showConflicts = _config.ShowModConflicts;
         if (ImGui.Checkbox("Mark worn items whose mods conflict", ref showConflicts))

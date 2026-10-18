@@ -543,6 +543,17 @@ public class Configuration : IPluginConfiguration
     {
         var changed = false;
 
+        // The default for EditSectionsOpen is a non-empty list, and the JSON loader adds the saved
+        // entries to a list that already has the default in it rather than replacing it, so every
+        // load added another "tags". Removing one copy on collapse then left the rest, and the
+        // section could not be closed. Repaired here on every load for configs already carrying them.
+        var sections = EditSectionsOpen.Distinct(StringComparer.Ordinal).ToList();
+        if (sections.Count != EditSectionsOpen.Count)
+        {
+            EditSectionsOpen = sections;
+            changed = true;
+        }
+
         foreach (var baseChar in BaseCharacters)
         {
             var slots = baseChar.KeepSlots.Distinct(StringComparer.Ordinal).ToList();
@@ -1076,6 +1087,7 @@ public class Configuration : IPluginConfiguration
     /// starts open as the section most edits go on to; the rest start folded so the panel opens
     /// on the picture, the name and the slot rather than on a scroll.
     /// </remarks>
+    [Newtonsoft.Json.JsonProperty(ObjectCreationHandling = Newtonsoft.Json.ObjectCreationHandling.Replace)]
     public List<string> EditSectionsOpen { get; set; } = new() { "tags" };
 
     /// <summary>
@@ -1414,6 +1426,12 @@ public class Configuration : IPluginConfiguration
     /// user answered the question.
     /// </summary>
     public List<ModPriorityChoice> ModPriorityChoices { get; set; } = new();
+
+    /// <summary>
+    /// Whether wearing an outfit may run the slash commands it carries (#34). Off by default: the
+    /// commands are sent through the chat box as the player.
+    /// </summary>
+    public bool RunOutfitCommands { get; set; }
 
     /// <summary>Whether a worn card says so when its mod shares files with another worn mod.</summary>
     public bool ShowModConflicts { get; set; } = true;

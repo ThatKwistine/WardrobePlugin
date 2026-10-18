@@ -106,7 +106,8 @@ internet.
 
 A few things are missing from it compared with a page of your own wardrobe, and each is missing
 because a bundle does not carry it: there are no favourites, since whose favourite would they be, and
-no "Added" date, since the sender's import date is not a fact about your wardrobe. A plate or a
+no "Added" date, since the sender's import date is not a fact about your wardrobe, and no outfit
+commands: an outfit you are sent can never run anything for you. A plate or a
 design card carries a badge saying what it was before it was shared.
 
 ### Outfits you were sent

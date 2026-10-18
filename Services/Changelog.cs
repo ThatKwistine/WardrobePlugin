@@ -41,6 +41,25 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 6, 3, 1), "18 October 2026", new List<ChangelogSection>
+        {
+            new("What's new", new List<ChangelogNote>
+            {
+                new("Outfits can run slash commands when worn.",
+                    "Settings → \"Run commands when an outfit is worn\" adds a box to the outfit " +
+                    "editor, one command per line, sent through the chat box a moment after you press " +
+                    "Wear — an idle from another plugin, a macro line. Off by default. They run only " +
+                    "when you wear the outfit yourself, never on a login restore, and are never " +
+                    "included when an outfit is shared."),
+            }),
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("The Tags section of the edit panel can be collapsed again.",
+                    "Its open state picked up another copy of itself every time the plugin loaded, " +
+                    "and closing it only removed one. Existing copies are cleaned up on load."),
+            }),
+        }),
+
         new(new Version(1, 6, 3, 0), "18 October 2026", new List<ChangelogSection>
         {
             new("What's new", new List<ChangelogNote>
