@@ -126,7 +126,7 @@ one of them would ever be resynced.
 
 ## Commands when worn
 
-With **Settings → Run commands when an outfit is worn** on, the outfit's edit panel gets a
+With **Settings → Glamourer & Outfits → Outfit Commands → Run commands when an outfit is worn** on, the outfit's edit panel gets a
 **Commands to run when worn** box: one slash command per line, up to five, each starting with `/`.
 They are sent through the chat box a moment after the outfit goes on, as if you had typed them —
 which is how an outfit can start an idle from another plugin or run a macro line.
@@ -139,7 +139,8 @@ started again, so a command that wears another outfit cannot loop. They are neve
 ## Dyes
 
 Each row carries **Dye 1** and **Dye 2** pickers, listing the game's dyes with a colour swatch and a
-search box.
+search box. Click the **star** beside a dye to make it a favourite: favourites are listed at the top of
+every dye list, in the order you starred them. Click it again to remove it.
 
 Dyes are stored on the **outfit**, not the item, so the same piece can be dyed differently in
 different outfits. They are applied through Glamourer when the outfit is worn, and re-applied after a
@@ -150,6 +151,11 @@ Customisation items cannot be dyed and say so.
 Above the list, a **Dye all items** pair of pickers sets either channel across every dyeable item in
 the outfit at once, for the common case of one dye through a whole set. Individual rows can then be
 changed afterwards; once they disagree, the picker at the top reads **Mixed**.
+
+**Copy dyes from Glamourer** works the other way round. Wear the outfit, dye it in Glamourer where you
+can see the colours live, then press it: the dyes each worn piece shows are saved onto the outfit,
+replacing what its pickers had. With advanced dyes turned on, each piece's advanced dye rows are copied
+too. Pieces that are not worn have no slot to read from and are left as they were.
 
 Items worn on their own, outside an outfit, are always applied undyed.
 

@@ -272,6 +272,9 @@ public partial class PluginUi : Window, IDisposable
     /// <summary>What the last vanilla capture found, so pressing the button always shows a result.</summary>
     private string _vanillaStatus = string.Empty;
 
+    /// <summary>What the last copy of Glamourer's dyes did, for the same reason.</summary>
+    private string _dyeCopyStatus = string.Empty;
+
     /// <summary>Tag being typed into the outfit editor.</summary>
     private string _outfitTagInput = string.Empty;
 
@@ -9198,8 +9201,8 @@ public partial class PluginUi : Window, IDisposable
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip("Replaces this outfit's items with everything you have on,\n" +
                              "so pieces swapped by hand are kept.\n\n" +
-                             "Items still in the outfit keep their dyes, and a piece swapped\n" +
-                             "into a slot takes over the dye the old one had there.\n" +
+                             "Dyes are taken from Glamourer as your character shows them,\n" +
+                             "advanced dyes included when those are on.\n" +
                              "The name and preview image are left alone.");
     }
 
@@ -9240,6 +9243,34 @@ public partial class PluginUi : Window, IDisposable
     }
 
     /// <summary>
+    /// Keeps the dyes set in Glamourer as the outfit's own.
+    /// </summary>
+    /// <remarks>
+    /// For dyeing in Glamourer, where the colour is seen on the character as it is picked, rather
+    /// than here one combo at a time. Pieces not worn have no slot to read and are left as they are.
+    /// </remarks>
+    private void DrawCopyGlamourerDyes(Outfit outfit)
+    {
+        if (ImGui.Button("Copy dyes from Glamourer", new Vector2(-1, 0)))
+        {
+            var (copied, notWorn) = _wardrobe.CopyDyesFromGlamourer(outfit);
+            _dyeCopyStatus = copied == 0
+                ? "Nothing copied — wear the outfit first, so its pieces are in their slots."
+                : $"Copied dyes for {copied} item(s)." +
+                  (notWorn > 0 ? $" {notWorn} not worn, left as they were." : string.Empty);
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Saves the dyes Glamourer shows on your character onto\n" +
+                             "this outfit's worn pieces, replacing what is set below." +
+                             (_config.AdvancedDyesEnabled ? "\n\nAdvanced dyes are copied too." : string.Empty));
+
+        if (!string.IsNullOrEmpty(_dyeCopyStatus))
+            ImGui.TextDisabled(_dyeCopyStatus);
+
+        ImGui.Spacing();
+    }
+
+    /// <summary>
     /// Dye pickers that set one channel across every dyeable item in the outfit at once.
     /// </summary>
     /// <remarks>
@@ -9253,6 +9284,7 @@ public partial class PluginUi : Window, IDisposable
         if (!items.Any(i => i.Slot.SupportsDye())) return;
 
         DrawInheritDesignDyes(outfit);
+        DrawCopyGlamourerDyes(outfit);
 
         ImGui.TextDisabled("Dye all items");
         if (ImGui.IsItemHovered())
@@ -9542,13 +9574,50 @@ public partial class PluginUi : Window, IDisposable
             ImGui.InputTextWithHint($"##search_{id}", "Search dyes…", ref _dyeSearch, 64);
             ImGui.Separator();
 
-            foreach (var (stainId, stainName, colour) in stains)
+            // Starred dyes first, in the order they were starred, then everything else as the sheet
+            // has it. Read once per open frame: a star clicked below changes the list next frame.
+            var favourites = _config.FavouriteDyes;
+            var ordered = favourites
+                .Select(f => stains.FirstOrDefault(s => s.Id == f))
+                .Where(s => s.Name != null)
+                .Concat(stains.Where(s => !favourites.Contains(s.Id)))
+                .ToList();
+
+            var favouritesShown = 0;
+            var separated       = favourites.Count == 0;
+
+            foreach (var (stainId, stainName, colour) in ordered)
             {
                 if (!string.IsNullOrWhiteSpace(_dyeSearch) &&
                     stainName.IndexOf(_dyeSearch.Trim(), StringComparison.OrdinalIgnoreCase) < 0)
                     continue;
 
+                var favourite = favourites.Contains(stainId);
+                if (favourite) favouritesShown++;
+                else if (!separated)
+                {
+                    separated = true;
+                    if (favouritesShown > 0) ImGui.Separator();
+                }
+
                 ImGui.PushID(stainId);
+
+                // A star rather than a menu: text, not a button, so clicking it toggles the favourite
+                // without the combo taking it as a pick and closing
+                using (Plugin.PluginInterface.UiBuilder.IconFontHandle?.Push())
+                {
+                    if (favourite) ImGui.TextColored(new Vector4(1f, 0.8f, 0.2f, 1f), FontAwesomeIcon.Star.ToIconString());
+                    else ImGui.TextDisabled(FontAwesomeIcon.Star.ToIconString());
+                }
+                if (ImGui.IsItemClicked())
+                {
+                    if (favourite) favourites.Remove(stainId);
+                    else favourites.Add(stainId);
+                    _config.Save();
+                }
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip(favourite ? "Remove from favourites" : "Add to favourites — shown at the top");
+                ImGui.SameLine();
 
                 // Swatch, then the name as the clickable row
                 var pos  = ImGui.GetCursorScreenPos();
@@ -11096,51 +11165,6 @@ public partial class PluginUi : Window, IDisposable
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
-
-        var runCommands = _config.RunOutfitCommands;
-        if (ImGui.Checkbox("Run commands when an outfit is worn", ref runCommands))
-        {
-            _config.RunOutfitCommands = runCommands;
-            _config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Lets an outfit carry slash commands, set in its editor, and sends them " +
-                             "through the chat box as you when you press Wear.\nOff by default: they run " +
-                             "exactly as if you had typed them, so only put in what you would type yourself.\n" +
-                             "Never run on automatic restores, and never included when an outfit is shared.");
-
-        var showConflicts = _config.ShowModConflicts;
-        if (ImGui.Checkbox("Mark worn items whose mods conflict", ref showConflicts))
-        {
-            _config.ShowModConflicts = showConflicts;
-            _config.Save();
-        }
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Puts a branch icon on a worn card when its mod changes some of the " +
-                             "same files as another worn mod, and says which one is being shown.");
-
-        if (_config.ModPriorityChoices.Count > 0)
-        {
-            ImGui.Spacing();
-            ImGui.TextUnformatted("Remembered conflict choices");
-            ModPriorityChoice? forget = null;
-            foreach (var c in _config.ModPriorityChoices)
-            {
-                var top = string.IsNullOrEmpty(c.WinnerDirectory) ? "left as is"
-                        : string.Equals(c.WinnerDirectory, c.DirectoryA, StringComparison.OrdinalIgnoreCase)
-                            ? $"{c.NameA} on top" : $"{c.NameB} on top";
-                ImGui.PushID(c.DirectoryA + "|" + c.DirectoryB);
-                if (ImGui.SmallButton("Forget")) forget = c;
-                ImGui.PopID();
-                ImGui.SameLine();
-                ImGui.TextUnformatted($"{c.NameA} / {c.NameB}: {top}");
-            }
-            if (forget != null)
-            {
-                _config.ModPriorityChoices.Remove(forget);
-                _config.Save();
-            }
-        }
 
         ImGui.Spacing();
         ImGui.Separator();

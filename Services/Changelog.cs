@@ -41,12 +41,45 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 6, 3, 2), "25 October 2026", new List<ChangelogSection>
+        {
+            new("What's new", new List<ChangelogNote>
+            {
+                new("Copy dyes from Glamourer into an outfit.",
+                    "A Copy dyes from Glamourer button above the outfit's dye pickers saves the colours " +
+                    "your character is showing onto each worn piece of the outfit, advanced dyes " +
+                    "included when those are turned on. Dye in Glamourer, where you see it live, then " +
+                    "keep it with one click."),
+                new("Favourite dyes.",
+                    "Click the star beside a dye in any dye list and it is listed at the top from then on."),
+            }),
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("Update from what I'm wearing takes your dyes too.",
+                    "It replaced the outfit's pieces but kept the dyes the outfit already had, so a " +
+                    "colour changed in Glamourer never made it in — and advanced dyes were dropped " +
+                    "outright. Dyes are now read off your character, advanced ones included when " +
+                    "those are on."),
+                new("A redraw no longer wipes dyes you set in Glamourer.",
+                    "After every redraw — wearing a hair or face mod, a Penumbra reload — the wardrobe " +
+                    "put each worn piece back with the outfit's dye, or with none for an item worn on " +
+                    "its own, over whatever you had dyed it in Glamourer, and the advanced dyes on that " +
+                    "slot went with it. Pieces still in place after a redraw are now left exactly as " +
+                    "they are; only ones the redraw actually knocked off are put back."),
+                new("The outfit command and mod conflict options are where you would look for them.",
+                    "They were both tucked into the Collection section of Penumbra & Mods, and a " +
+                    "search for \"command\" or \"conflict\" found neither. Outfit commands now have " +
+                    "their own section under Glamourer & Outfits, mod conflicts one under Penumbra & " +
+                    "Mods, and both come up in the settings search."),
+            }),
+        }),
+
         new(new Version(1, 6, 3, 1), "18 October 2026", new List<ChangelogSection>
         {
             new("What's new", new List<ChangelogNote>
             {
                 new("Outfits can run slash commands when worn.",
-                    "Settings → \"Run commands when an outfit is worn\" adds a box to the outfit " +
+                    "Settings → Glamourer & Outfits → Outfit Commands adds a box to the outfit " +
                     "editor, one command per line, sent through the chat box a moment after you press " +
                     "Wear — an idle from another plugin, a macro line. Off by default. They run only " +
                     "when you wear the outfit yourself, never on a login restore, and are never " +

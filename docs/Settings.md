@@ -9,8 +9,8 @@ anything you know the name of can be found without knowing which category it was
 
 | Category | Holds |
 |---|---|
-| **Penumbra & Mods** | Collection, importing, other mod types, uncompressed textures |
-| **Glamourer & Outfits** | Wearing, what you were last wearing, advanced dyes, Glamourer designs |
+| **Penumbra & Mods** | Collection, mod conflicts, importing, other mod types, uncompressed textures |
+| **Glamourer & Outfits** | Wearing, outfit commands, what you were last wearing, advanced dyes, Glamourer designs |
 | **Characters** | Base character, per-character wardrobes |
 | **Grid & Cards** | Toolbar, card size, slot icons, variants |
 | **Tags & Styles** | Tag picker, tag colours, tags from Glamourer |
@@ -60,7 +60,7 @@ only what you change is changed. Wardrobe items and images are never touched.
 
 ---
 
-## Mod conflicts
+## Mod Conflicts
 
 **Mark worn items whose mods conflict** puts a branch icon on a worn card when its mod changes some of
 the same files as another worn mod. Hovering it names the other mod, how many files are contested,

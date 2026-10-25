@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Dalamud.Plugin.Services;
+using Newtonsoft.Json.Linq;
 using WardrobePlugin.Ipc;
 using WardrobePlugin.Models;
 using WardrobePlugin.Ui;
@@ -191,6 +192,16 @@ public class WardrobeService : IDisposable
         var advanced = new Dictionary<string, string>();
         var keepAdvanced = _config.AdvancedDyesEnabled;
 
+        // What Glamourer has on the character now. Its state outlives a redraw, so a piece still
+        // there is still dyed however it was dyed — by the outfit or by hand in Glamourer since —
+        // and sending it again would only overwrite that: with the outfit's dye, or with none for an
+        // item worn on its own. A changed dye also drops the slot's advanced rows, because Glamourer
+        // ties each row to the piece and dye it was made on. Empty when it could not be read, which
+        // falls back to putting everything back as before.
+        var live = _glamourer.GetEquippedPieces();
+        var liveRows = keepAdvanced && live.Count > 0 ? _glamourer.GetAdvancedDyes() : null;
+        var untouched = 0;
+
         foreach (var itemId in _config.WornItems.Values.ToList())
         {
             var item = _config.WardrobeItems.Find(x => x.Id == itemId);
@@ -204,22 +215,32 @@ public class WardrobeService : IDisposable
             if (_config.WornModsOnly.Contains(item.Id)) continue;
 
             var dye = outfit != null ? GetDye(outfit, item.Id) : null;
-            _glamourer.SetItem(item.Slot, glamId, dye?.Stain1 ?? 0, dye?.Stain2 ?? 0);
+            var intact = live.TryGetValue(item.Slot, out var piece) && piece.ItemId == glamId;
+
+            if (intact) untouched++;
+            else _glamourer.SetItem(item.Slot, glamId, dye?.Stain1 ?? 0, dye?.Stain2 ?? 0);
 
             if (dye == null || !keepAdvanced) continue;
             foreach (var (key, row) in dye.Advanced)
+            {
+                // A piece left alone keeps its rows in Glamourer, edited there or not; only one the
+                // state has lost goes back, so a row reworked by hand is not reverted to the stored one
+                if (intact && liveRows?[key] != null) continue;
                 advanced[key] = row;
+            }
         }
 
-        // A redraw resets the colour tables along with everything else, so these need putting back
-        // for the same reason the stains above do
+        if (untouched > 0)
+            _log.Debug($"[Wardrobe] Redraw: {untouched} worn piece(s) still in place — left with the dyes they have");
+
+        // Rows for the pieces that had to go back on, which arrive at their game colours
         if (advanced.Count > 0)
             ApplyAdvancedRows(advanced);
 
         // The outfit's plain pieces and their dyes, for the same reason as the items above. A
         // plate outfit is mostly these — its items are the mods that go with it, not pieces of it
         if (outfit != null)
-            WearVanillaItems(outfit, !outfit.IsGlamourPlate || outfit.PlateItemsEquip);
+            WearVanillaItems(outfit, !outfit.IsGlamourPlate || outfit.PlateItemsEquip, live);
 
         ReapplyOutfitVisibility(objectIndex, outfit);
     }
@@ -570,6 +591,11 @@ public class WardrobeService : IDisposable
         // again on the way in, for a single click
         var forceRedraw = item.ForcesRedraw();
 
+        // Read before anything below touches the character: a hair or face wear redraws, switches
+        // the hairstyle and may apply a design, and any of those can cost dyes set by hand in
+        // Glamourer. Only read when one of them is coming — it is a full state round trip.
+        var handSetDyes = forceRedraw || item.Slot.IsCustomization() ? HandSetAdvancedDyes() : null;
+
         // Unequip the previous item in this slot, if any
         if (_config.WornItems.TryGetValue(slotKey, out var prevId) && prevId != item.Id)
         {
@@ -702,6 +728,9 @@ public class WardrobeService : IDisposable
         var advanced = _config.AdvancedDyesEnabled ? dye?.Advanced : null;
         if (advanced is { Count: > 0 })
             ApplyAdvancedRows(advanced);
+
+        if (handSetDyes is { Count: > 0 })
+            KeepHandSetAdvancedDyes(handSetDyes, slotKey, item.Id);
 
         // Penumbra's async resource reload (triggered by SetModEnabled) completes 300ms-4s later
         // and causes Glamourer to re-apply its prior design state, undoing our SetItem call.
@@ -2505,6 +2534,64 @@ public class WardrobeService : IDisposable
     }
 
     /// <summary>
+    /// Stores the dyes Glamourer has on the character as the outfit's own, for every piece of it
+    /// that is worn.
+    /// </summary>
+    /// <remarks>
+    /// The other direction from wearing: dye the look in Glamourer, where the preview is live, then
+    /// keep the result here instead of finding every colour again in the pickers. Only worn pieces
+    /// are copied, because a dye is read off the slot and says nothing about an item that is not in
+    /// it. Advanced rows come along when that feature is on, replacing what was stored for the
+    /// piece — a slot with none in Glamourer now has none here, since that is what it shows.
+    /// </remarks>
+    /// <returns>How many pieces were copied, and how many dyeable ones were skipped as not worn.</returns>
+    public (int Copied, int NotWorn) CopyDyesFromGlamourer(Outfit outfit)
+    {
+        var live = _glamourer.GetEquippedPieces();
+        if (live.Count == 0) return (0, 0);
+
+        var materials = _config.AdvancedDyesEnabled ? _glamourer.GetAdvancedDyes() : null;
+
+        int copied = 0, notWorn = 0;
+        foreach (var item in ResolveOutfit(outfit))
+        {
+            if (!item.Slot.SupportsDye()) continue;
+            if (!IsItemWorn(item) || !live.TryGetValue(item.Slot, out var piece))
+            {
+                notWorn++;
+                continue;
+            }
+
+            var key = item.Id.ToString();
+            var dye = outfit.Dyes.TryGetValue(key, out var prev) ? prev : new OutfitDye();
+            dye.Stain1 = piece.Stain1;
+            dye.Stain2 = piece.Stain2;
+
+            if (materials != null)
+            {
+                // Rows the slot no longer has are off the character already, so they leave the
+                // record too rather than being reverted by the piece coming off later
+                foreach (var gone in dye.Advanced.Keys) _config.AppliedAdvancedDyes.Remove(gone);
+
+                dye.Advanced = materials.Properties()
+                    .Where(p => GlamourerIpc.KeyBelongsToSlot(p.Name, item.Slot))
+                    .ToDictionary(p => p.Name, p => p.Value.ToString(Newtonsoft.Json.Formatting.None));
+
+                foreach (var (rowKey, row) in dye.Advanced) _config.AppliedAdvancedDyes[rowKey] = row;
+            }
+
+            if (dye.IsUndyed) outfit.Dyes.Remove(key);
+            else outfit.Dyes[key] = dye;
+            copied++;
+        }
+
+        _config.Save();
+        _log.Debug($"[Wardrobe] Copied Glamourer's dyes onto {copied} piece(s) of '{outfit.Name}'" +
+                   (notWorn > 0 ? $", {notWorn} not worn and left alone" : string.Empty));
+        return (copied, notWorn);
+    }
+
+    /// <summary>
     /// Sets one dye channel on every dyeable item in an outfit, leaving the other channel alone.
     /// </summary>
     /// <remarks>
@@ -2591,12 +2678,13 @@ public class WardrobeService : IDisposable
     }
 
     /// <summary>
-    /// Replaces an outfit's contents with whatever is worn right now, keeping its dyes.
+    /// Replaces an outfit's contents, dyes included, with whatever is worn right now.
     /// </summary>
     /// <remarks>
     /// For editing an outfit by wearing it and changing pieces on the character, which is the only
-    /// way to see what a swap actually looks like. Items still in the outfit keep the dye they had.
-    /// A piece swapped into a slot inherits the dye of the piece it replaced, since the dye is
+    /// way to see what a swap actually looks like. Dyes are read off the character, as Glamourer
+    /// shows them. Where they cannot be, an item still in the outfit keeps the dye it had, and
+    /// a piece swapped into a slot inherits the dye of the piece it replaced, since the dye is
     /// usually chosen for the outfit rather than the item — the new row can be re-dyed afterwards
     /// like any other. Dyes for items no longer worn are dropped: they are no longer part of the
     /// outfit, and keeping them would resurrect an old colour if the item were ever added back.
@@ -2632,11 +2720,22 @@ public class WardrobeService : IDisposable
 
             // Copied rather than shared: two items pointing at one OutfitDye would re-dye each
             // other when either row is edited
-            dyes[id.ToString()] = new OutfitDye { Stain1 = dye.Stain1, Stain2 = dye.Stain2 };
+            dyes[id.ToString()] = new OutfitDye
+            {
+                Stain1   = dye.Stain1,
+                Stain2   = dye.Stain2,
+                Advanced = new Dictionary<string, string>(dye.Advanced),
+            };
         }
 
         outfit.ItemIds = wornIds;
         outfit.Dyes    = dyes;
+
+        // Then what the character is actually showing wins, for every piece it can be read off: a
+        // dye changed in Glamourer while editing the look is as much a part of "what I'm wearing" as
+        // a swapped piece, and keeping the old record over it made the button look broken. The
+        // carried-over dyes above stay only for pieces Glamourer has nothing to say about.
+        CopyDyesFromGlamourer(outfit);
 
         // After ItemIds, so the slots the new contents cover are the ones excluded from the capture
         CaptureVanillaItems(outfit);
@@ -2736,7 +2835,12 @@ public class WardrobeService : IDisposable
     /// exactly what an attached upscale is there to re-skin, and holding the slot back would leave
     /// it empty.
     /// </param>
-    private void WearVanillaItems(Outfit outfit, bool itemsEquip = true)
+    /// <param name="keepIfWorn">
+    /// What Glamourer has on the character, from a redraw: a slot already showing its piece is left
+    /// alone, so a dye changed in Glamourer since is not put back to the stored one.
+    /// </param>
+    private void WearVanillaItems(Outfit outfit, bool itemsEquip = true,
+        Dictionary<EquipSlot, (ulong ItemId, byte Stain1, byte Stain2)>? keepIfWorn = null)
     {
         if (outfit.VanillaItems.Count == 0) return;
 
@@ -2748,6 +2852,8 @@ public class WardrobeService : IDisposable
         {
             if (!Enum.TryParse<EquipSlot>(slotName, out var slot)) continue;
             if (covered.Contains(slot)) continue;
+            if (keepIfWorn != null && keepIfWorn.TryGetValue(slot, out var now) && now.ItemId == piece.ItemId)
+                continue;
 
             _glamourer.SetItem(slot, piece.ItemId, piece.Stain1, piece.Stain2);
         }
@@ -2943,6 +3049,62 @@ public class WardrobeService : IDisposable
             changed = true;
         }
         if (changed) _config.Save();
+    }
+
+    /// <summary>
+    /// The advanced dye rows on the character that somebody set in Glamourer, rather than the
+    /// wardrobe, or null when Glamourer could not be read.
+    /// </summary>
+    private Dictionary<string, string>? HandSetAdvancedDyes()
+    {
+        if (_glamourer.GetAdvancedDyes() is not { } materials) return null;
+
+        var rows = new Dictionary<string, string>();
+        foreach (var prop in materials.Properties())
+        {
+            // The wardrobe's own rows are put on and taken off by the items they belong to; keeping
+            // one here would bring back a row the outgoing item had just reverted
+            if (_config.AppliedAdvancedDyes.ContainsKey(prop.Name)) continue;
+            if (prop.Value is JObject row && row["Revert"]?.Value<bool>() == true) continue;
+            rows[prop.Name] = prop.Value.ToString(Newtonsoft.Json.Formatting.None);
+        }
+        return rows;
+    }
+
+    /// <summary>
+    /// Puts hand-set advanced dyes back after a wear that redraws or recustomises the character.
+    /// </summary>
+    /// <remarks>
+    /// Wearing a hair mod lost the dyes somebody had just set up in Glamourer: the redraw resets the
+    /// colour tables, and only the wardrobe's own rows were ever sent back afterwards. Sent now and
+    /// again once the redraw has had time to land, the same race <see cref="ScheduleGlamourerReapply"/>
+    /// is run against. Sent straight to Glamourer and never recorded, so they stay the user's: no
+    /// item will revert them on the way off.
+    /// </remarks>
+    private void KeepHandSetAdvancedDyes(Dictionary<string, string> rows, string wornKey, Guid itemId)
+    {
+        // Rows the wardrobe has claimed since the snapshot — this item's own — win over the snapshot
+        void Send()
+        {
+            var keep = rows.Where(kv => !_config.AppliedAdvancedDyes.ContainsKey(kv.Key))
+                           .ToDictionary(kv => kv.Key, kv => kv.Value);
+            if (keep.Count > 0) _glamourer.ApplyAdvancedDyes(keep);
+        }
+
+        Send();
+        _log.Debug($"[Wardrobe] Keeping {rows.Count} advanced dye row(s) set in Glamourer across this wear");
+
+        _ = Task.Run(async () =>
+        {
+            foreach (var delayMs in new[] { 750, 2000 })
+            {
+                await Task.Delay(delayMs);
+                if (!_config.WornItems.TryGetValue(wornKey, out var curId) || curId != itemId)
+                    return; // swapped again — that wear keeps them itself
+
+                await _framework.RunOnFrameworkThread(Send);
+            }
+        });
     }
 
     /// <summary>Puts rows back to their game values and strikes them from the record.</summary>

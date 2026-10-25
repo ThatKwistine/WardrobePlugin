@@ -3,6 +3,7 @@ using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
+using WardrobePlugin.Models;
 
 namespace WardrobePlugin.Ui;
 
@@ -58,6 +59,9 @@ public partial class PluginUi
             {
                 new SettingsSection("Collection", "penumbra collection character active default",
                     DrawCollectionSettings),
+                new SettingsSection("Mod Conflicts",
+                    "conflict conflicts priority tied banner on top overlap files branch icon remembered",
+                    DrawModConflictSettings),
                 new SettingsSection("Importing",
                     "import hide support already imported mods stripe shade band alternating rows bulk",
                     DrawImportSettings),
@@ -75,6 +79,9 @@ public partial class PluginUi
             {
                 new SettingsSection("Wearing", "hair hairstyle apply equip wear redraw restore glamourer",
                     DrawWearingSettings),
+                new SettingsSection("Outfit Commands",
+                    "command commands slash macro chat run emote idle encore outfit wear",
+                    DrawOutfitCommandSettings),
                 new SettingsSection("What You Were Last Wearing",
                     "last worn remember restore login session automatic again reapply",
                     DrawLastWornSettings),
@@ -359,5 +366,67 @@ public partial class PluginUi
 
         if (more != null && ImGui.IsItemHovered())
             ImGui.SetTooltip(more);
+    }
+
+    /// <summary>Settings → Glamourer &amp; Outfits → Outfit Commands.</summary>
+    private void DrawOutfitCommandSettings()
+    {
+        ImGui.TextWrapped("An outfit can carry slash commands that are sent through the chat box when you " +
+                          "wear it — an idle from another plugin, a macro line.");
+        ImGui.Spacing();
+
+        var runCommands = _config.RunOutfitCommands;
+        if (ImGui.Checkbox("Run commands when an outfit is worn", ref runCommands))
+        {
+            _config.RunOutfitCommands = runCommands;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Lets an outfit carry slash commands, set in its editor, and sends them " +
+                             "through the chat box as you when you press Wear.\nOff by default: they run " +
+                             "exactly as if you had typed them, so only put in what you would type yourself.\n" +
+                             "Never run on automatic restores, and never included when an outfit is shared.");
+
+        ImGui.Spacing();
+        Hint("Off by default.",
+            "Commands are typed as you, so only put in what you would type yourself.\n" +
+            "Set them in an outfit's edit panel once this is on.");
+    }
+
+    /// <summary>Settings → Penumbra &amp; Mods → Mod Conflicts.</summary>
+    private void DrawModConflictSettings()
+    {
+        var showConflicts = _config.ShowModConflicts;
+        if (ImGui.Checkbox("Mark worn items whose mods conflict", ref showConflicts))
+        {
+            _config.ShowModConflicts = showConflicts;
+            _config.Save();
+        }
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Puts a branch icon on a worn card when its mod changes some of the " +
+                             "same files as another worn mod, and says which one is being shown.");
+
+        if (_config.ModPriorityChoices.Count > 0)
+        {
+            ImGui.Spacing();
+            ImGui.TextUnformatted("Remembered conflict choices");
+            ModPriorityChoice? forget = null;
+            foreach (var c in _config.ModPriorityChoices)
+            {
+                var top = string.IsNullOrEmpty(c.WinnerDirectory) ? "left as is"
+                        : string.Equals(c.WinnerDirectory, c.DirectoryA, StringComparison.OrdinalIgnoreCase)
+                            ? $"{c.NameA} on top" : $"{c.NameB} on top";
+                ImGui.PushID(c.DirectoryA + "|" + c.DirectoryB);
+                if (ImGui.SmallButton("Forget")) forget = c;
+                ImGui.PopID();
+                ImGui.SameLine();
+                ImGui.TextUnformatted($"{c.NameA} / {c.NameB}: {top}");
+            }
+            if (forget != null)
+            {
+                _config.ModPriorityChoices.Remove(forget);
+                _config.Save();
+            }
+        }
     }
 }

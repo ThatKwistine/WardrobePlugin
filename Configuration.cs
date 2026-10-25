@@ -1106,6 +1106,12 @@ public class Configuration : IPluginConfiguration
     /// </remarks>
     public bool AdvancedDyesEnabled { get; set; }
 
+    /// <summary>Stain ids starred in the dye picker, listed above the rest in the order starred.</summary>
+    /// <remarks>
+    /// Global rather than per profile: a favourite colour is the person's, not one wardrobe's.
+    /// </remarks>
+    public List<byte> FavouriteDyes { get; set; } = new();
+
     /// <summary>
     /// Write the camera's fields to the log when a preset is saved, and offer a button that does it
     /// on demand.
