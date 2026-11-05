@@ -4650,6 +4650,31 @@ public partial class PluginUi : Window, IDisposable
         text.Length <= max ? text : text[..max] + "…";
 
     /// <summary>
+    /// Short labels for two names that can be told apart, starting at the word where they differ.
+    /// </summary>
+    /// <remarks>
+    /// Names that fit are left whole. Otherwise the shared lead-in is dropped back to the start of the
+    /// word where they part, so "[Anno] Whimsical Nyan Maid Vol.2" and "… Vol.2 YAB" become "…Vol.2"
+    /// and "…Vol.2 YAB" rather than two identical cut-offs of the same prefix.
+    /// </remarks>
+    private static (string A, string B) DistinctLabels(string a, string b, int max)
+    {
+        if (a.Length <= max && b.Length <= max) return (a, b);
+
+        var shortest = Math.Min(a.Length, b.Length);
+        var p = 0;
+        while (p < shortest && char.ToLowerInvariant(a[p]) == char.ToLowerInvariant(b[p])) p++;
+
+        var start = p;
+        while (start > 0 && !char.IsWhiteSpace(a[start - 1])) start--;
+
+        if (start == 0) return (Truncate(a, max), Truncate(b, max));
+
+        string From(string s) => Truncate("…" + s[start..].TrimStart(), max);
+        return (From(a), From(b));
+    }
+
+    /// <summary>
     /// Heart toggle, right-aligned on the card's name row. A single glyph is used for both states
     /// (tinted when set, dimmed when not) so this does not depend on an outline glyph being present
     /// in the font. The filled star is already spoken for by the worn indicator.
@@ -5112,16 +5137,29 @@ public partial class PluginUi : Window, IDisposable
                 ? "Currently: left as it is"
                 : $"Currently: {(string.Equals(choice.WinnerDirectory, c.OwnDirectory, StringComparison.OrdinalIgnoreCase) ? c.OwnName : c.RivalName)} on top");
 
-        if (ImGui.Button($"{Truncate(c.OwnName, 24)} on top")) ChooseOnTop(c, c.OwnDirectory);
-        ImGui.SameLine();
-        if (ImGui.Button($"{Truncate(c.RivalName, 24)} on top")) ChooseOnTop(c, c.RivalDirectory);
+        // Two variants of one mod — "Maid Vol.2" and "Maid Vol.2 YAB" — share everything a plain
+        // truncation keeps, which left two buttons reading the same. Labelled from where they differ.
+        var (ownTop, rivalTop)   = DistinctLabels(c.OwnName, c.RivalName, 24);
+        var (ownOff, rivalOff)   = DistinctLabels(c.OwnName, c.RivalName, 20);
+        if (ownTop == rivalTop || ownOff == rivalOff)
+        {
+            (ownTop, rivalTop) = DistinctLabels(c.OwnDirectory, c.RivalDirectory, 24);
+            (ownOff, rivalOff) = DistinctLabels(c.OwnDirectory, c.RivalDirectory, 20);
+        }
 
-        if (ImGui.Button($"Take off {Truncate(c.OwnName, 20)}")) TakeOffConflicting(c.OwnDirectory);
+        if (ImGui.Button($"{ownTop} on top")) ChooseOnTop(c, c.OwnDirectory);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip($"Put {c.OwnName} on top");
         ImGui.SameLine();
-        if (ImGui.Button($"Take off {Truncate(c.RivalName, 20)}")) TakeOffConflicting(c.RivalDirectory);
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Takes off the worn item(s) using that mod, as Unequip on their card would.\n" +
-                             "Nothing is remembered: this ends the conflict by removing one side.");
+        if (ImGui.Button($"{rivalTop} on top")) ChooseOnTop(c, c.RivalDirectory);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip($"Put {c.RivalName} on top");
+
+        const string takeOffNote = "\n\nTakes off the worn item(s) using that mod, as Unequip on their card would.\n" +
+                                   "Nothing is remembered: this ends the conflict by removing one side.";
+        if (ImGui.Button($"Take off {ownOff}")) TakeOffConflicting(c.OwnDirectory);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip($"Take off {c.OwnName}{takeOffNote}");
+        ImGui.SameLine();
+        if (ImGui.Button($"Take off {rivalOff}")) TakeOffConflicting(c.RivalDirectory);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip($"Take off {c.RivalName}{takeOffNote}");
         ImGui.SameLine();
         if (ImGui.Button("Leave as is")) ChooseOnTop(c, string.Empty);
 

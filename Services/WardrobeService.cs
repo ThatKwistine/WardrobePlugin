@@ -96,6 +96,47 @@ public class WardrobeService : IDisposable
         return applied;
     }
 
+    /// <summary>
+    /// Puts the worn outfit's design back after a redraw, in place of the base's.
+    /// </summary>
+    /// <remarks>
+    /// The outfit beats the base: that is the order wearing it set up, and a redraw has no business
+    /// reversing it. An outfit without a design has nothing to say about the face or the colouring, so
+    /// the base stays underneath it and this answers false to let the base go back on.
+    /// <para>
+    /// Its equipment only when worn items are being put back after redraws as well. With that off,
+    /// a design applied whole would knock the outfit's own items out of their slots and nothing
+    /// would put them back.
+    /// </para>
+    /// </remarks>
+    /// <returns>Whether a design was applied.</returns>
+    private bool ReapplyActiveOutfitDesign()
+    {
+        if (_activeOutfitId is not { } activeId) return false;
+        if (_config.Outfits.Find(o => o.Id == activeId) is not { DesignId: { } designId } outfit) return false;
+
+        var applied = ApplyDesign(designId,
+            outfit.DesignAppliesEquipment && _config.RestoreWornAfterRedraw,
+            outfit.DesignAppliesHairstyle, $"'{outfit.Name}'");
+
+        if (applied)
+            _log.Debug($"[Wardrobe] Outfit '{outfit.Name}': design put back after a redraw, over the base");
+        else
+            _log.Warning($"[Wardrobe] Outfit '{outfit.Name}': could not put design '{outfit.DesignName}' " +
+                         $"back after a redraw — it may have been deleted in Glamourer.");
+        return applied;
+    }
+
+    /// <summary>Sets the hairstyle a worn hair mod needs again, after a design may have changed it.</summary>
+    private void ReapplyWornHairstyle()
+    {
+        foreach (var id in _config.WornItems.Values.ToList())
+        {
+            var item = _config.WardrobeItems.Find(x => x.Id == id);
+            if (item is { Slot: EquipSlot.Hair }) ApplyHairstyleFor(item);
+        }
+    }
+
     /// <summary>Puts back the designs worn customisation items ask for, after a redraw.</summary>
     /// <remarks>
     /// Only the items actually on, and only the ones carrying a design, which is almost none of them
@@ -149,9 +190,12 @@ public class WardrobeService : IDisposable
 
         if (DateTime.UtcNow - _lastDesignReapply >= DesignReapplyCooldown)
         {
-            // Before the worn items below, so an item still wins the slot it is in — the base design
-            // is the look underneath, exactly as it is in ApplyBase
-            var appliedDesign = ReapplyBaseDesign();
+            // Before the worn items below, so an item still wins the slot it is in — the design is the
+            // look underneath, exactly as it is in ApplyBase and WearOutfit. A worn design outfit's
+            // design rather than the base's: wearing the outfit put it over the base, and putting the
+            // base back on every redraw turned that round — the outfit's face, colouring and hair
+            // lasted until the first reload and the base's came back in their place.
+            var appliedDesign = ReapplyActiveOutfitDesign() || ReapplyBaseDesign();
 
             // And after it, for the same reason it goes after the base design in ApplyBase: a worn
             // sculpt's design is the more specific answer. Needed at all because wearing a
@@ -159,6 +203,12 @@ public class WardrobeService : IDisposable
             // lands a frame or two before the base design goes back on over the top of it — the same
             // trap the outfit's hat and weapon toggles fell into, and fixed the same way.
             appliedDesign |= ReapplyItemDesigns();
+
+            // Last of all, for the reason WearItem sets it after the item's design: a worn hair mod's
+            // own number is the most specific answer there is. Any design above carries a hairstyle,
+            // and one that applies it leaves the mod enabled and invisible (#32). Only after a design
+            // went on — nothing else in a redraw changes the hairstyle.
+            if (appliedDesign) ReapplyWornHairstyle();
 
             if (appliedDesign) _lastDesignReapply = DateTime.UtcNow;
         }
