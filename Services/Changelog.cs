@@ -41,6 +41,26 @@ public static class Changelog
     /// <summary>Newest first, which is the order they are shown in.</summary>
     public static readonly IReadOnlyList<ChangelogEntry> Entries = new List<ChangelogEntry>
     {
+        new(new Version(1, 6, 3, 3), "5 November 2026", new List<ChangelogSection>
+        {
+            new("Fixes", new List<ChangelogNote>
+            {
+                new("An outfit's design stays on over your base character.",
+                    "With a base character set to keep its design applied, every redraw put the base's " +
+                    "design back over the outfit you were wearing, so the outfit's face, colouring and " +
+                    "hairstyle were replaced by the base's after the first reload. While an outfit with " +
+                    "a design is worn, a redraw now puts the outfit's design back instead."),
+                new("Hair mods keep their hairstyle after a redraw.",
+                    "A design going back on after a redraw could switch you off the hairstyle a worn hair " +
+                    "mod replaces, leaving the mod enabled in Penumbra but not showing. The hair mod's " +
+                    "hairstyle is now set again after any design goes back on."),
+                new("Conflicting mods with similar names can be told apart.",
+                    "The buttons for choosing which of two conflicting mods goes on top cut both names " +
+                    "short, so two versions of the same mod read identically. They now show the part " +
+                    "of each name that differs, and hovering a button shows the full name."),
+            }),
+        }),
+
         new(new Version(1, 6, 3, 2), "25 October 2026", new List<ChangelogSection>
         {
             new("What's new", new List<ChangelogNote>
